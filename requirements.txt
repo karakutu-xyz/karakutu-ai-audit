@@ -1,0 +1,37 @@
+# RUNTIME dependencies only — this file is what the container image installs.
+# Test and lint tooling lives in requirements-dev.txt so pytest never ships to prod.
+# Mirrored by [project.dependencies] in pyproject.toml; keep the two in step.
+#
+# Versions are pinned exactly on purpose: the pipeline is calibrated against them, and
+# pydantic-ai in particular must stay at 0.0.49 (the code uses result_type= / system_prompt=
+# / result.data, which the newer API renames — see hard rule 4 in AGENTS.md).
+
+# Core
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.5
+httpx==0.28.1
+python-dotenv==1.0.1
+anyio==4.7.0
+
+# Agent framework
+pydantic-ai==0.0.49
+openai==2.32.0  # OpenAI-compatible client, used by LocalProvider for LM Studio
+
+# TRANSITIVE PIN, load-bearing. pydantic-ai 0.0.49 does an unconditional
+#   `from opentelemetry._events import Event`   (pydantic_ai/messages.py)
+# That private module was REMOVED in opentelemetry-api 1.44.0. Because only the direct
+# dependencies were pinned, a fresh `pip install -r requirements.txt` silently resolved to
+# 1.44 and the service died on import with `ModuleNotFoundError: opentelemetry._events` —
+# the container would not boot at all, while an older developer venv (1.41.0) kept working.
+# Caught 2026-09-25 by building the image and actually starting it; CI now does this on
+# every push. Unpin only together with pydantic-ai.
+opentelemetry-api==1.41.0
+opentelemetry-sdk==1.41.0
+opentelemetry-semantic-conventions==0.62b0
+
+# Karakutu Server API auth (Arweave wallet RSA-PSS signing)
+cryptography==46.0.7
+
+# Search
+ddgs==9.14.4  # DuckDuckGo client, used by DuckDuckGoSearchProvider (sync; run off-loop)

@@ -1,0 +1,89 @@
+# Single-replica deployment: the API + the in-process job worker, and (optionally) SearXNG.
+#
+#   docker compose up -d --build                      # app only (WEB_SEARCH_PROVIDER=stub default)
+#   docker compose --profile searxng up -d --build    # app + self-hosted SearXNG
+#
+# Configuration comes from `.env` (optional; Compose v2.24+ for `required: false`). The same
+# file feeds the ${…} interpolation below. Nothing secret is committed here:
+#   KARAKUTU_WALLET_FILE  host path of the Arweave keyfile; mounted READ-ONLY. Unset = no
+#                         wallet (/dev/null is mounted, the archive client stays disabled).
+#   SEARXNG_SECRET        SearXNG's server secret (openssl rand -hex 32). Required for the
+#                         searxng profile; SearXNG refuses to start without it.
+#
+# Run ONE replica: the SQLite job store and the per-audit apply ledger assume a single writer.
+
+services:
+  karakutu-audit:
+    build: .
+    image: karakutu-audit:local
+    container_name: karakutu-audit
+    # Loopback only. Put a TLS-terminating reverse proxy in front for anything else, and set
+    # FORWARDED_ALLOW_IPS to its address so --proxy-headers trusts it.
+    ports:
+      - "127.0.0.1:${PORT:-2200}:2200"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Container-side paths win over whatever a host-oriented .env says.
+      PORT: "2200"
+      KARAKUTU_WALLET_PATH: /run/secrets/karakutu-wallet.json
+      # The compose service name, not localhost (localhost is this container).
+      SEARXNG_URL: http://searxng:8080
+    volumes:
+      # Job store + apply ledger (DATA_DIR=/data → /data/karakutu-audit.sqlite3) — persistent.
+      - audit-data:/data
+      # IPTC concept cache — persisted so a restart with the archive down still classifies.
+      - concepts-cache:/app/.cache
+      - type: bind
+        source: ${KARAKUTU_WALLET_FILE:-/dev/null}
+        target: /run/secrets/karakutu-wallet.json
+        read_only: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # uvicorn waits up to UVICORN_GRACEFUL_TIMEOUT (45 s) for connections, THEN gives the current
+    # job JOB_SHUTDOWN_GRACE_S (30 s): the waits add up, so this is their sum plus a margin.
+    stop_grace_period: 90s
+    restart: unless-stopped
+
+  # Self-hosted metasearch. Only needed when WEB_SEARCH_PROVIDER=searxng; the service runs
+  # fine without it on the `stub` default. Fans one query out to several engines and merges
+  # them — querying DuckDuckGo alone missed relocations that were plainly live.
+  searxng:
+    profiles: ["searxng"]
+    # Pinned by tag AND digest: 2026.7.16 is the build the recorded audit runs used. Bump deliberately: a SearXNG upgrade can change engine behaviour and therefore
+    # which pages step 6 reads.
+    image: searxng/searxng:2026.7.16-f2432e33d@sha256:9aae08475a1c254c096f936ed05119568d291ad7ee5e2f805452a48acba6caea
+    container_name: karakutu-searxng
+    # Loopback only — for host-side operator scripts (SEARXNG_URL=http://localhost:8888).
+    # The app reaches it over the compose network as http://searxng:8080.
+    ports:
+      - "127.0.0.1:8888:8080"
+    volumes:
+      - ./searxng:/etc/searxng:ro
+    environment:
+      SEARXNG_BASE_URL: http://localhost:8888/
+      # Interpolated with an empty default so the app-only `docker compose up` works without
+      # it; the entrypoint below refuses to start SearXNG while it is empty.
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-}
+      # The config dir is mounted read-only from the repo: never chown host files.
+      FORCE_OWNERSHIP: "false"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        if [ -z "$${SEARXNG_SECRET:-}" ] || [ "$${SEARXNG_SECRET}" = ultrasecretkey ];
+        then echo "SEARXNG_SECRET is not set; generate one with: openssl rand -hex 32" >&2; exit 1; fi;
+        exec /usr/local/searxng/entrypoint.sh
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  audit-data:
+  concepts-cache:

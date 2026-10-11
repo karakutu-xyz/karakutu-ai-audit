@@ -1,0 +1,40 @@
+# The build context was ~290 MB without this file: the venv, campaign runs and docs
+# were all streamed to the daemon on every build. Only what the image needs ships.
+.git
+.gitignore
+.venv*/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.idea/
+.vscode/
+.DS_Store
+
+# Never let key material or a real env file into an image layer.
+arweave-keyfile*.json
+wallet.json
+.wallet*.json
+*.jwk
+.env
+.env.*
+
+# Local state and artifacts — not needed at runtime. private/ holds unpublishable material
+# (archive samples, campaign ledgers) and must never reach an image layer either.
+.cache/
+data/
+runs/
+private/
+docs/
+.github/
+.claude/
+tests/
+scripts/
+searxng/
+*.odt
+*.md
+!README.md

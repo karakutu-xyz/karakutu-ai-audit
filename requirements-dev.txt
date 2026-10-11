@@ -1,0 +1,10 @@
+# Development and CI tooling. Install on top of the runtime set:
+#   pip install -r requirements.txt -r requirements-dev.txt
+# Mirrored by [project.optional-dependencies].dev in pyproject.toml.
+-r requirements.txt
+
+pytest==8.3.4
+pytest-asyncio==0.24.0
+pytest-cov==6.0.0
+pyyaml==6.0.2  # tests/test_contract_alignment.py parses the OpenAPI contract
+ruff==0.9.2
