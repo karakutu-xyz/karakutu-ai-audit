@@ -4,6 +4,35 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed (behaviour change: classification output)
+- Step 1 (IPTC classification) now follows an archive reviewer's feedback on the 2026-10-01
+  batch. The coarse call sees up to 10,000 characters of the article (`COARSE_ARTICLE_CHARS`,
+  was 1,500) and the fine call up to 5,500 (`FINE_ARTICLE_CHARS`, was 800). Both stay within the
+  8,192-token context. The prompts give the main subject and each separate section a topic,
+  wherever it appears. The old rule that a topic must cover "roughly a fifth" of the article is
+  gone. The prompts also say where subjects hidden by the short definitions are filed, and they
+  correct three mislabels: LGBTİ+ people are not an ethnic minority, protests are not press
+  freedom, and defendants who are free are not political prisoners.
+- A new code rule drops the vague umbrellas people, values, social problem and social condition
+  when a list holds a more specific topic. Drops are recorded in `details.vague_dropped`.
+- Both prompts now tell the model to answer only through the `final_result` function. With the
+  old wording, gemma wrote "field: value" text on a third of the calls, and each one cost a
+  hidden retry.
+
+### Fixed
+- A list field the model sends as a JSON-encoded string (`"[\"medtop:…\"]"`) is now decoded.
+  Before, the field failed validation, and when the retry did the same, a correct answer was
+  lost and the case had no classification.
+
+Measured with local gemma-4-12b on 40 held-out gold cases, two runs: must-have recall rose from
+0.50 to 0.58–0.60, tags the reviewer rejected fell from 5 to 1–2, and vague tags fell from 10 to
+2. On 22 untouched cases from other outlets, recall rose from 0.61 to 0.68–0.73, with no rejected
+tags. Step 1 still takes a median 40 s on the reference machine. It now sends about 3,000 more
+input tokens per article, which matters for hosted inference costs. Rendered comments for
+existing records are unchanged (golden tests).
+
 ## [1.0.0] - 2026-10-11
 
 First public release. Audit results (verdicts, stage outputs, classification, flags and

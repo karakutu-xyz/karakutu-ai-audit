@@ -362,3 +362,111 @@ async def test_run_applies_the_confidence_floor_and_reports_it(catalog):
     assert [t.label for t in out.classification.subject_tags] == ["corruption"]
     assert out.details["low_confidence_dropped"] == [{"notation": "medtop:20000084", "confidence": 0.3}]
     assert "rated below 50%" in out.explanation
+
+
+# --- reviewer feedback, 2026-10-13: umbrellas, windows, section rules ------------------------------
+
+UMBRELLA_TOPICS = TOPICS + [
+    topic("medtop:14000000", "society", None, "14000000"),
+    topic("medtop:20000802", "social problem", "medtop:14000000", "14000000.20000802"),
+    topic("medtop:20000808", "values", "medtop:14000000", "14000000.20000808"),
+    topic("medtop:20000775", "discrimination", "medtop:14000000", "14000000.20000775"),
+]
+
+
+@pytest.fixture
+def umbrella_catalog():
+    return ConceptCatalog(UMBRELLA_TOPICS, GENRES)
+
+
+def test_vague_umbrellas_go_only_beside_a_concrete_topic(umbrella_catalog):
+    from src.workflow.classification import VAGUE_UMBRELLAS, drop_vague_umbrellas
+    c = umbrella_catalog.get
+    kept, dropped = drop_vague_umbrellas([c("medtop:20000802"), c("medtop:20000775"), c("medtop:20000808")])
+    assert [k.notation for k in kept] == ["medtop:20000775"]
+    assert dropped == ["medtop:20000802", "medtop:20000808"]
+    only = [c("medtop:20000802"), c("medtop:20000808")]          # nothing else to say → kept as is
+    assert drop_vague_umbrellas(only) == (only, [])
+    assert drop_vague_umbrellas([]) == ([], [])
+    # a top-level is broader than an umbrella: the umbrella stays, drop_root_fillers takes the root
+    beside_root = [c("medtop:20000802"), c("medtop:14000000")]
+    assert drop_vague_umbrellas(beside_root) == (beside_root, [])
+    assert VAGUE_UMBRELLAS == {"medtop:20000502", "medtop:20000808", "medtop:20000802", "medtop:20000799"}
+
+
+async def test_run_drops_vague_umbrellas_and_reports_them(umbrella_catalog):
+    out = await cls.run(ARTICLE, agents(
+        {"top_level_topics": ["medtop:14000000"], "genre": "genre:Opinion", "geographic_scope": "national", "gist": "g"},
+        {"topics": ["medtop:20000775", "medtop:20000802"], "confidences": [0.9, 0.8]}), umbrella_catalog)
+    assert [t.label for t in out.classification.subject_tags] == ["discrimination"]
+    assert out.details["vague_dropped"] == ["medtop:20000802"]
+    assert "1 vague umbrella topic(s) were dropped" in out.explanation
+
+
+def test_the_windows_reach_past_the_opening():
+    # 1,500 / 800 characters hid most later sections (median article 6,600 chars). The windows
+    # are sized to the 8,192-token context (see the constants' comment): COARSE, which chooses the
+    # subtrees, sees 10,000 characters; FINE, which also carries a menu of up to 200 nodes, 5,500.
+    assert cls.COARSE_ARTICLE_CHARS == 10000 and cls.FINE_ARTICLE_CHARS == 5500
+    cat = ConceptCatalog(TOPICS, GENRES)
+    prose = "a" * 5000 + "MID SECTION" + "b" * 4000 + "LATE SECTION" + "c" * 2000
+    coarse = coarse_prompt(ARTICLE, prose, cat, cls.COARSE_ARTICLE_CHARS)
+    fine = fine_prompt(ARTICLE, prose, "g", fine_menu([cat.get("medtop:02000000")], cat), cls.FINE_ARTICLE_CHARS)
+    assert "MID SECTION" in coarse and "LATE SECTION" in coarse
+    assert "MID SECTION" in fine and "LATE SECTION" not in fine
+
+
+def test_prompts_carry_the_section_and_meaning_rules():
+    from src.workflow.prompts import CLASSIFICATION_COARSE_PROMPT, CLASSIFICATION_FINE_PROMPT
+    C = " ".join(CLASSIFICATION_COARSE_PROMPT.split())
+    F = " ".join(CLASSIFICATION_FINE_PROMPT.split())
+    assert "READ PAST THE OPENING" in C and "WHERE SUBJECTS ARE FILED" in C and "separate SECTION" in C
+    assert "medtop:14000000 society" in C and "medtop:16000000 conflict, war and peace" in C
+    assert "each separate SECTION" in F and "also when it comes late in the text" in F
+    assert "not an ethnic minority" in F and "protests and demonstrations" in F
+    assert "roughly a fifth" not in F   # the rule that suppressed real sections is gone
+
+
+async def test_an_umbrella_beats_a_top_level_filler(umbrella_catalog):
+    out = await cls.run(ARTICLE, agents(
+        {"top_level_topics": ["medtop:14000000"], "genre": "genre:Opinion", "geographic_scope": "national", "gist": "g"},
+        {"topics": ["medtop:20000802", "medtop:14000000"], "confidences": [0.9, 0.8]}), umbrella_catalog)
+    assert [t.label for t in out.classification.subject_tags] == ["social problem"]
+    assert out.details["vague_dropped"] == []
+
+
+async def test_umbrellas_go_before_the_rule_of_three_so_a_folded_parent_survives():
+    kids = [topic(f"medtop:2100000{i}", f"problem {i}", "medtop:20000802", f"14000000.20000802.2100000{i}") for i in range(4)]
+    cat = ConceptCatalog(UMBRELLA_TOPICS + kids, GENRES)
+    out = await cls.run(ARTICLE, agents(
+        {"top_level_topics": ["medtop:14000000"], "genre": "genre:Opinion", "geographic_scope": "national", "gist": "g"},
+        {"topics": [k.notation for k in kids] + ["medtop:20000775"], "confidences": [0.9] * 5}), cat)
+    assert [t.label for t in out.classification.subject_tags] == ["social problem", "discrimination"]
+    assert out.details["siblings_folded"][0]["parent"] == "medtop:20000802" and out.details["vague_dropped"] == []
+
+
+def test_prompts_name_the_function_the_agents_really_expose():
+    # gemma answered in plain "field: value" text on 6 of 18 calls with the old wording (a hidden
+    # pydantic-ai retry each time, sometimes a lost answer); naming the function stopped it (0 of
+    # 12, 2026-10-13). The name is pydantic-ai 0.0.49's default result tool, so pin it here.
+    a = build_agents(TestModel())
+    for agent, prompt in ((a.coarse, cls.prompts.CLASSIFICATION_COARSE_PROMPT),
+                          (a.fine, cls.prompts.CLASSIFICATION_FINE_PROMPT)):
+        assert list(agent._result_schema.tools) == ["final_result"]
+        assert "calling the final_result function" in " ".join(prompt.split())
+
+
+def test_a_list_sent_as_a_json_string_is_decoded():
+    c = CoarseClassification.model_validate(
+        {"top_level_topics": '["medtop:02000000", "medtop:11000000"]', "genre": "genre:Current"})
+    assert c.top_level_topics == ["medtop:02000000", "medtop:11000000"]
+    f = FineClassification.model_validate({"topics": '["medtop:20000093"]', "confidences": "[0.9]"})
+    assert f.topics == ["medtop:20000093"] and f.confidences == [0.9]
+    with pytest.raises(ValueError):                    # not a list → still a validation error
+        CoarseClassification.model_validate({"top_level_topics": "medtop:02000000"})
+
+
+async def test_run_survives_a_json_string_list_from_the_model(catalog):
+    out = await cls.run(ARTICLE, agents({**GOOD_COARSE, "top_level_topics": '["medtop:02000000"]'},
+                                        {"topics": '["medtop:20000093"]', "confidences": [0.9]}), catalog)
+    assert [t.label for t in out.classification.subject_tags] == ["corruption"]

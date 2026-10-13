@@ -20,18 +20,32 @@ co-listed ancestor as *derived*, never as a chosen topic):
   * most specific   — a tag is dropped when another chosen tag lies beneath it (consumers infer
                       broader terms from the tree; `details.collapsed` says what was folded);
   * no filler       — a top-level topic is dropped when anything more specific is present.
-The prompt asks for 1–3 topics by default (5 hard cap), each a substantial part of the article,
-primary first, no near-synonyms. Variable length is intended: an empty slot is not a defect.
+The prompt asks for 1–3 topics by default (5 hard cap): the main subject plus one per separate
+section, primary first, no near-synonyms. Variable length is intended: an empty slot is not a
+defect.
+
+Reviewer feedback on the T24 batch (2026-10-13; 14 discussion comments plus human tag edits on ~60
+audits, turned into a 96-case gold set): the lists missed real sections that came after the
+opening, picked vague umbrellas (people, values, social problem) and hook topics. Half the misses
+were unreachable — COARSE never chose the top-level the facet lives under — and most of the rest
+sat beyond the 1,500 / 800 characters the two calls used to see. Hence the larger text windows
+(COARSE, which chooses the subtrees, sees the most; FINE is bounded by its long menu)
+below, the section rules and the filing notes in the prompts, and one more rule in code:
+  * no umbrellas    — VAGUE_UMBRELLAS are dropped when a concrete (non-top-level) topic is present.
+Measured on 40 held-out gold cases (two runs): must-have recall 0.50 → 0.58–0.60, reviewer-
+rejected tags 5 → 1–2, vague tags 10 → 2; on 22 untouched cases from other outlets, recall
+0.61 → 0.68–0.73 with no rejected tags.
 
 Classification is metadata. It never fails the audit: a total model failure yields
 `classification=None` with an explanation, and the pipeline continues.
 """
+import json
 import logging
 import re
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Sequence, Set, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
@@ -51,8 +65,13 @@ MAX_TOP_LEVELS = 3
 # must fail in seconds, not minutes — the retry is what actually fixes it.
 COARSE_MAX_TOKENS = 350
 FINE_MAX_TOKENS = 300
-COARSE_ARTICLE_CHARS = 1500
-FINE_ARTICLE_CHARS = 800
+# Article text each call sees (prose_of, then truncated; the retry halves it). Sized to the
+# 8,192-token context, measured 2026-10-13 with real prompt_tokens on the longest case (35k chars)
+# and the largest three-top-level fine menu (196 nodes): coarse 5,501 + 350 out, fine 6,028 + 300
+# out — about 1,600 tokens of margin with the tool schema. ~3.4 Turkish chars per token. The
+# earlier 1,500 / 800 hid most later sections (median article 6,600 chars).
+COARSE_ARTICLE_CHARS = 10000
+FINE_ARTICLE_CHARS = 5500
 # Subtree budgeting for the FINE call (the loaded context is 8,192 tokens). A top-level whose
 # depth-<=4 subtree exceeds FINE_DEEP_LIMIT nodes (economy: 253, sport: 334) is listed to
 # depth 3 only; the whole menu is capped at FINE_MAX_NODES (later top-levels are trimmed to
@@ -62,6 +81,17 @@ FINE_MAX_NODES = 200
 DEFINE_UP_TO_DEPTH = 2        # definitions shown for depth<=2 nodes; deeper nodes are label-only
 MAX_DEFINITION_CHARS = 140
 
+# Depth-2 umbrellas the archive reviewer called vague filler (2026-10-13). Each either only groups
+# concrete subjects (values, social problem, social condition) or names a register rather than a
+# subject (people). None was a must-have in any gold case. Kept OUT on purpose — a story can be
+# about them: ethics, language, culture, demographic group, communities, fundamental rights.
+VAGUE_UMBRELLAS = frozenset({
+    "medtop:20000502",  # people (human interest)
+    "medtop:20000808",  # values (society)
+    "medtop:20000802",  # social problem (society)
+    "medtop:20000799",  # social condition (society)
+})
+
 SCOPE_MEANINGS = {
     GeographicScope.LOCAL: "one town, district or province; matters mainly to the people there",
     GeographicScope.REGIONAL: "a region spanning several provinces, or a cross-border region",
@@ -70,12 +100,29 @@ SCOPE_MEANINGS = {
 }
 
 
+def _list_from_json_string(value):
+    """gemma sometimes sends a list field as a JSON-encoded string ('["medtop:…", …]') instead of
+    an array. Measured 2026-10-13: 6 of 62 coarse calls; when the retry did the same, a correct
+    answer was lost and the case got no classification. Decode it; anything else is left to
+    validation as before."""
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except ValueError:
+            return value
+        if isinstance(decoded, list):
+            return decoded
+    return value
+
+
 class CoarseClassification(BaseModel):
     """Model-authored, call 1. Every field is re-validated against the catalog in code."""
     top_level_topics: List[str] = Field(default_factory=list)
     genre: str = ""
     geographic_scope: str = ""
     gist: str = ""
+
+    _decode_lists = field_validator("top_level_topics", mode="before")(_list_from_json_string)
 
 
 CONFIDENCE_MIN = 0.5    # a topic the model itself rates below this is not "well established" — drop it
@@ -88,6 +135,8 @@ class FineClassification(BaseModel):
         default_factory=list,
         description="One number from 0 to 1 per topic, in the same order: how well the text "
                     "establishes that topic. Leave a weak topic out rather than listing it low.")
+
+    _decode_lists = field_validator("topics", "confidences", mode="before")(_list_from_json_string)
 
 
 @dataclass
@@ -149,6 +198,7 @@ async def run(article: Article, agents: ClassificationAgents,
     siblings_folded: List[Tuple[str, List[str]]] = []
     roots_dropped: List[str] = []
     low_confidence: List[Tuple[str, float]] = []
+    vague: List[str] = []
     if top_levels:
         menu = fine_menu(top_levels, catalog)
         fine = await _call(agents.fine,
@@ -164,6 +214,8 @@ async def run(article: Article, agents: ClassificationAgents,
             #   rule of three — four or more children of one parent become the parent;
             #   most specific level — a tag never sits next to its own ancestor;
             #   no filler — a top-level topic goes when anything more specific is present.
+            # Umbrellas go first, so a parent the rule of three creates is never removed after.
+            tags, vague = drop_vague_umbrellas(tags)
             tags, siblings_folded = collapse_siblings(tags, catalog)
             tags, collapsed = collapse_hierarchy(tags)
             tags, roots_dropped = drop_root_fillers(tags)
@@ -194,6 +246,7 @@ async def run(article: Article, agents: ClassificationAgents,
         + (f" {len(siblings_folded)} group(s) of four or more sibling topics were replaced by their parent."
            if siblings_folded else "")
         + (f" {len(roots_dropped)} top-level filler topic(s) were dropped." if roots_dropped else "")
+        + (f" {len(vague)} vague umbrella topic(s) were dropped." if vague else "")
         + (f" {len(low_confidence)} topic(s) the model itself rated below {CONFIDENCE_MIN:.0%} were left out."
            if low_confidence else "")
     )
@@ -212,6 +265,7 @@ async def run(article: Article, agents: ClassificationAgents,
             "collapsed": [{"dropped": a, "covered_by": b} for a, b in collapsed],
             "siblings_folded": [{"parent": p_, "children": kids} for p_, kids in siblings_folded],
             "roots_dropped": roots_dropped,
+            "vague_dropped": vague,
             "low_confidence_dropped": [{"notation": n, "confidence": c} for n, c in low_confidence],
         },
     )
@@ -371,6 +425,17 @@ def collapse_siblings(tags: Sequence[Concept], catalog: ConceptCatalog
         if all(k.notation != c.notation for k in kept):
             kept.append(c)
     return kept, folded
+
+
+def drop_vague_umbrellas(tags: Sequence[Concept]) -> Tuple[List[Concept], List[str]]:
+    """Drop the VAGUE_UMBRELLAS when the list holds a concrete topic: one that is neither an
+    umbrella nor a top-level filler (a top-level is broader still, and drop_root_fillers removes
+    it next to an umbrella). Otherwise the list stays as it is. Order is kept.
+    Returns (kept, dropped_notations)."""
+    if not any(t.notation not in VAGUE_UMBRELLAS and t.depth > 1 for t in tags):
+        return list(tags), []
+    kept = [t for t in tags if t.notation not in VAGUE_UMBRELLAS]
+    return kept, [t.notation for t in tags if t.notation in VAGUE_UMBRELLAS]
 
 
 def drop_root_fillers(tags: Sequence[Concept]) -> Tuple[List[Concept], List[str]]:
