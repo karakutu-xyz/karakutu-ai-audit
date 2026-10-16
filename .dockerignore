@@ -1,0 +1,38 @@
+# Only what the image needs ships; the venv, batch output and notes stay out of the context.
+.git
+.gitignore
+.venv*/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.idea/
+.vscode/
+.DS_Store
+
+# Never let key material or a real env file into an image layer.
+arweave-keyfile*.json
+wallet.json
+.wallet*.json
+*.jwk
+.env
+.env.*
+
+# Local state and operator material — not needed at runtime and never allowed into an image layer.
+.cache/
+data/
+runs/
+private/
+docs/
+.github/
+.claude/
+tests/
+scripts/
+searxng/
+*.odt
+*.md
+!README.md

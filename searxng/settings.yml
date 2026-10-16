@@ -1,0 +1,36 @@
+# SearXNG settings for karakutu-audit.
+#
+# The ONLY non-default thing that matters for results is `formats: [json]`. SearXNG ships with
+# the JSON API DISABLED (HTML only), so without this the provider gets an HTTP 403 on every
+# query and step 6 silently sees zero hits. If searches mysteriously return nothing, check
+# this first.
+#
+# Mounted read-only at /etc/searxng by docker-compose.yml (profile `searxng`).
+
+use_default_settings: true
+
+server:
+  # NO secret is committed. SearXNG reads server.secret_key from the SEARXNG_SECRET
+  # environment variable, which overrides this file; docker-compose.yml passes it from .env.
+  # Generate one with:  openssl rand -hex 32
+  # Left unset, SearXNG falls back to its upstream placeholder and refuses to start.
+  #
+  # The bot limiter is ON. The only intended client is this service on the compose network,
+  # but the port may be reachable from the host, and an open metasearch proxy gets abused.
+  # The limiter needs a valkey/redis backend to keep state; without one SearXNG logs a
+  # warning and serves requests unlimited (see the deploy notes before relying on it).
+  limiter: true
+  public_instance: false
+  image_proxy: false
+
+search:
+  # THE line that makes the JSON API work.
+  formats:
+    - html
+    - json
+  # Turkish news is the corpus; SEARXNG_LANGUAGE overrides per-query anyway.
+  default_lang: "tr"
+  safe_search: 0
+
+ui:
+  static_use_hash: true

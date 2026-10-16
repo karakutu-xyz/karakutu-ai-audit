@@ -1,0 +1,22 @@
+# SearXNG bot-limiter configuration (read when settings.yml has `server.limiter: true`).
+#
+# The limiter's bot detection rejects requests that do not look like a browser (Accept,
+# Accept-Language and User-Agent heuristics). This service's own JSON API calls are NOT browser
+# requests, so they must be allow-listed or step 6 would silently get zero hits and the audit
+# results would change. The pass list covers loopback and the private ranges a compose/K8s
+# network uses; anything arriving from elsewhere is still subject to the limiter.
+#
+# The limiter keeps its counters in valkey/redis. With no valkey configured (the default
+# compose file runs none) SearXNG logs an error and serves requests unlimited; the pass list
+# matters once a valkey backend is added.
+
+[botdetection.ip_lists]
+pass_ip = [
+  '127.0.0.0/8',
+  '::1',
+  '10.0.0.0/8',
+  '172.16.0.0/12',
+  '192.168.0.0/16',
+  'fd00::/8',
+]
+pass_searxng_org = false

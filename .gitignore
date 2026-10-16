@@ -1,0 +1,65 @@
+# ─── Secrets ────────────────────────────────────────────────────────────────
+# Arweave wallet keyfiles are RSA-4096 PRIVATE KEY MATERIAL. The patterns are
+# deliberately broad: a wallet must never reach the remote, whatever it is named.
+arweave-keyfile*.json
+wallet.json
+.wallet*.json
+*.jwk
+
+# Real environment files. `.env.example` and `.env.lmstudio` are the tracked
+# templates and are re-allowed below; everything else stays local.
+.env
+.env.*
+!.env.example
+!.env.lmstudio
+
+# ─── Virtual environments ───────────────────────────────────────────────────
+# Any `.venv*`.
+.venv*/
+venv/
+ENV/
+
+# ─── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# ─── Testing / coverage ─────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+
+# ─── Local caches and batch runs ────────────────────────────────────────────
+# `runs/` is per-operator batch output and is never shared.
+.cache/
+runs/
+
+# The job store (JOB_STORE_URL=sqlite:///data/…) when run outside the container.
+data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Operator material that is never published (data samples, run output, evaluation sets, notes).
+private/
+
+# Local operator notes and agent-specific instruction files are not published; AGENTS.md is
+# the one tracked agent guide.
+docs/
+CLAUDE.md
+*.odt
+
+# ─── OS / IDE ───────────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+
+# Batch output that happens to land under scripts/ (drafts, apply/post ledgers).
+# Code only in scripts/.
+scripts/open_audit/*.json

@@ -1,0 +1,128 @@
+[project]
+name = "karakutu-audit"
+version = "1.0.0"
+description = "Six-step audit pipeline and article-audit service for removed news articles (Karakutu archive)."
+readme = "README.md"
+requires-python = "==3.11.*"
+# SPDX id; the full text is in LICENSE. The table form keeps the setuptools>=68 floor below.
+license = { text = "Apache-2.0" }
+authors = [{ name = "Karakutu Audit contributors" }]
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3.11",
+  "Framework :: FastAPI",
+  "Private :: Do Not Upload",  # not published to PyPI; deployed as a container image
+]
+# Runtime dependencies. Pinned exactly: this service's behaviour is calibrated against
+# specific library versions (notably pydantic-ai 0.0.49 — see hard rule 4 in
+# AGENTS.md) and a silent minor bump has broken the pipeline before.
+dependencies = [
+  "fastapi==0.115.6",
+  "uvicorn[standard]==0.34.0",
+  "pydantic==2.10.5",
+  "httpx==0.28.1",
+  "python-dotenv==1.0.1",
+  "anyio==4.7.0",
+  "pydantic-ai==0.0.49",
+  # Load-bearing transitive pin — see the long note in requirements.txt. opentelemetry-api
+  # 1.44.0 removed the private `opentelemetry._events` that pydantic-ai 0.0.49 imports, and
+  # an unpinned resolve makes the service unbootable.
+  "opentelemetry-api==1.41.0",
+  "opentelemetry-sdk==1.41.0",
+  "opentelemetry-semantic-conventions==0.62b0",
+  "openai==2.32.0",      # OpenAI-compatible client; LocalProvider's LM Studio branch only
+  "cryptography==46.0.7", # Arweave wallet RSA-PSS signing (src/clients/auth.py)
+  "ddgs==9.14.4",        # DuckDuckGo client; imported at module top in src/search/duckduckgo.py
+]
+
+[project.optional-dependencies]
+# Test and lint tooling. Deliberately NOT in the runtime set so the container image does
+# not ship pytest: `pip install -e .` for prod, `pip install -e ".[dev]"` for development.
+dev = [
+  "pytest==8.3.4",
+  "pytest-asyncio==0.24.0",
+  "pytest-cov==6.0.0",
+  "pyyaml==6.0.2",       # tests/test_contract_alignment.py reads the OpenAPI contract
+  "ruff==0.9.2",
+]
+
+[project.urls]
+Repository = "https://github.com/karakutu-xyz/karakutu-ai-audit"
+Issues = "https://github.com/karakutu-xyz/karakutu-ai-audit/issues"
+Changelog = "https://github.com/karakutu-xyz/karakutu-ai-audit/blob/main/CHANGELOG.md"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+# ── pytest ──────────────────────────────────────────────────────────────────────
+# Moved here from pytest.ini so there is one tooling file, not two. Settings are
+# unchanged; `asyncio_mode = auto` and `pythonpath = .` are both load-bearing.
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-v --tb=short --strict-markers --disable-warnings"
+markers = [
+  "asyncio: mark test as async",
+  "integration: mark test as integration test",
+  "slow: mark test as slow running",
+]
+
+# ── ruff ────────────────────────────────────────────────────────────────────────
+# Lint only, no reformatting. This codebase's dense explanatory comments and its
+# deliberate multi-statement lines are intentional; a formatter would churn every
+# file and destroy the blame history that makes those comments checkable.
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".venv311", "runs", "docs", "private"]
+
+[tool.ruff.lint]
+# Chosen to catch BUGS, not to impose a style. The codebase is 4.5k lines of carefully
+# commented domain logic; a mass rewrite would churn every file and destroy the blame
+# history that makes those measurement comments checkable.
+select = [
+  "F",      # pyflakes — undefined names, unused imports/variables
+  "E4",     # import placement
+  "E7",     # statement-level mistakes
+  "E9",     # syntax / IO errors
+  "W6",     # deprecated constructs
+  "B",      # bugbear — real bug patterns (mutable defaults, loop-variable capture, ...)
+  "ASYNC",  # blocking calls inside async functions — a live risk here (see ddgs)
+  "C4",     # comprehensions
+  "S",      # bandit — security
+]
+ignore = [
+  "E501",  # line length: measurement comments and URLs are worth more than a wrap
+  "B008",  # FastAPI's Depends()-in-defaults idiom
+  "S101",  # assert
+  "E731",  # lambda assignment — used deliberately in the report builders
+]
+
+# DEFERRED, on purpose: "I" (import sorting) and "UP" (pyupgrade) would rewrite 350+ lines
+# across every module — `List[str]` -> `list[str]`, `Optional[X]` -> `X | None`, import
+# reordering. All cosmetic, none of it a bug. Turn them on in a single dedicated commit so
+# the diff is reviewable and does not hide behind a feature change.
+
+[tool.ruff.lint.per-file-ignores]
+# Operator tooling, not library code: these chdir and mutate sys.path before importing the
+# package, which necessarily puts imports after statements, and they use terse multi-import
+# and multi-statement lines throughout.
+"scripts/**" = ["E402", "E401", "E702", "E701", "E741", "S603", "S607", "ASYNC230"]
+# The auth tests must contain fake tokens and keys; that is what they are testing.
+"tests/**" = ["S105", "S106", "S108", "E402", "E701", "E741"]
+# Prompt literals and settings read from the environment.
+"src/workflow/prompts.py" = ["E501"]
+# S105 fires on `StageOutcome.PASS = "pass"` — an enum member, not a credential.
+"src/api/models.py" = ["S105"]
+# Moved VERBATIM from scripts/open_audit/comment_templates.py; golden tests pin its
+# output byte-for-byte, so its terse multi-statement lines stay as they were.
+"src/archive_flow/comments.py" = ["E702"]

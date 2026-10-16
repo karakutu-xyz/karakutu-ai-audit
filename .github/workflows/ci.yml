@@ -1,0 +1,157 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Third-party actions are pinned to full commit SHAs (tag in the trailing comment) so a moved
+# tag cannot change what runs with this repository's token.
+# A second push to the same branch cancels the first run rather than queueing behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: lint + test (py3.11)
+    runs-on: ubuntu-latest
+    # The suite must pass with NO .env, NO wallet keyfile, NO LM Studio and NO network:
+    # the defaults are TestModel + the stub search provider, and conftest stubs the
+    # concept-catalog load. If a test ever needs one of those, it is the test that is wrong.
+    env:
+      PROVIDER_TYPE: local
+      WEB_SEARCH_PROVIDER: stub
+      MODEL_ENABLED: "false"
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Test
+        # `tests/test_settings.py::test_existing_settings_unchanged` and two lifespan tests in
+        # test_search.py assert against the IMPORT-TIME settings singleton rather than the
+        # reload fixture, so a runner that exports PORT or LOG_LEVEL would fail them for no
+        # real reason. Clear them explicitly instead of hoping the runner is clean.
+        run: |
+          unset PORT LOG_LEVEL
+          pytest --cov=src --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: ignore
+
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    # Operators hold an Arweave RSA-4096 wallet keyfile (kept outside the checkout, but a
+    # mistake is one `git add` away). A scan is cheap next to leaking a whitelisted key.
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Free for personal repos. ORGANISATION-owned repos need GITLEAKS_LICENSE set as a
+          # secret, otherwise this step errors. The filename check below is dependency-free
+          # and keeps working either way.
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+      - name: Reject tracked key material
+        # Belt and braces: gitleaks looks for known patterns, this looks for the filenames
+        # we know carry private keys in this project.
+        run: |
+          if git ls-files | grep -Ei '(^|/)(arweave-keyfile.*\.json|wallet\.json|.*\.jwk)$'; then
+            echo "::error::Key material is tracked by git. Remove it and rotate the wallet."
+            exit 1
+          fi
+          if git ls-files | grep -E '^\.venv'; then
+            echo "::error::A virtualenv is tracked by git."
+            exit 1
+          fi
+          # private/ and runs/ hold operator material (archive data, batch output, evaluation
+          # sets) that is never published (see .gitignore).
+          if git ls-files | grep -E '^(private|runs)/'; then
+            echo "::error::private/ or runs/ content is tracked by git."
+            exit 1
+          fi
+          echo "No tracked key material, virtualenv or private material."
+
+  audit-deps:
+    name: dependency audit (advisory)
+    runs-on: ubuntu-latest
+    # Advisory: the runtime set is pinned exactly on purpose (pydantic-ai 0.0.49 and its
+    # opentelemetry pin are load-bearing), so a finding is a prompt to review, not an
+    # automatic bump. It never fails the build.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: pip-audit (runtime requirements)
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          pip-audit -r requirements.txt --progress-spinner off
+
+  docker:
+    name: docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Compose file is valid
+        run: |
+          docker compose config -q
+          SEARXNG_SECRET=ci docker compose --profile searxng config -q
+      - name: Build image
+        run: docker build -t karakutu-audit:ci .
+      - name: Container boots and answers /health
+        # Proves the image starts with zero configuration — no .env, no wallet, no LM Studio —
+        # under the same hardening docker-compose.yml applies (read-only rootfs, no
+        # capabilities, unprivileged user, /data volume), and that its own HEALTHCHECK passes.
+        run: |
+          docker volume create ci-data
+          docker run -d --name ci -p 127.0.0.1:2200:2200 \
+            --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
+            -v ci-data:/data karakutu-audit:ci
+          ok=
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:2200/health; then echo; ok=1; break; fi
+            sleep 2
+          done
+          [ -n "$ok" ] || { echo "::error::/health never came up"; docker logs ci; exit 1; }
+          test "$(docker exec ci id -u)" = 10001 || { echo "::error::container runs as root"; exit 1; }
+          docker exec ci sh -c 'touch /data/.probe && rm /data/.probe' \
+            || { echo "::error::/data is not writable by the app user"; exit 1; }
+          for i in $(seq 1 30); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' ci)
+            [ "$status" = healthy ] && { echo "HEALTHCHECK: healthy"; exit 0; }
+            sleep 2
+          done
+          echo "::error::HEALTHCHECK never reported healthy ($status)"; docker logs ci; exit 1

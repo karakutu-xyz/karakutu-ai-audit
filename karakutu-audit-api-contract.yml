@@ -1,0 +1,407 @@
+openapi: 3.0.3
+info:
+  title: Karakutu Audit API
+  description: |
+    Six-step audit of a removed news article. Raises review flags, never findings of censorship.
+
+    POST /api/v1/articles/{article_id}/audit runs the whole flow for one archive article (look up
+    its audit, audit it, write IPTC tags and one comment under the standing rules) as a job.
+    Every /api/v1 route needs the API_AUTH_TOKEN bearer token and answers 404 while it is unset.
+  version: 1.0.0
+servers:
+  - url: http://localhost:2200
+security: []
+paths:
+  /api/v1/articles/{article_id}/audit:
+    post:
+      operationId: auditArticleById
+      summary: Queue the audit of one archive article
+      description: |
+        No request body. One job per article: a queued or running job is returned (202,
+        duplicate=true); the latest succeeded job is returned (200, duplicate=true, nothing
+        re-runs); after a failed job a new one starts. While ARCHIVE_WRITES_ENABLED=false (or
+        any publish gate is closed) the job is a dry run: it renders the comment but writes nothing.
+      security: [ { BearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/ArticleId'
+        - { name: dry_run, in: query, required: false, schema: { type: boolean, default: false }, description: Run without writing to the archive. }
+      responses:
+        '202': { description: Job queued (new, or the queued/running one), content: { application/json: { schema: { $ref: '#/components/schemas/JobAccepted' } } } }
+        '200': { description: The article's latest succeeded job, content: { application/json: { schema: { $ref: '#/components/schemas/JobAccepted' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Disabled' }
+        '422': { description: invalid_article_id | invalid_dry_run, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '429': { description: Queue full (JOB_QUEUE_MAX); retry after Retry-After seconds, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+  /api/v1/jobs/{job_id}:
+    get:
+      operationId: getJob
+      summary: One job
+      security: [ { BearerAuth: [] } ]
+      parameters:
+        - { name: job_id, in: path, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/Include'
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: job_not_found, or the routes are disabled, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+  /api/v1/articles/{article_id}/jobs/latest:
+    get:
+      operationId: getLatestJobForArticle
+      summary: The article's latest job
+      security: [ { BearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/ArticleId'
+        - $ref: '#/components/parameters/Include'
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: job_not_found, or the routes are disabled, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '422': { description: invalid_article_id, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+  /api/audit:
+    post:
+      operationId: auditArticle
+      summary: Audit an article supplied in the body (nothing is written anywhere)
+      description: Bearer token required only when API_AUTH_TOKEN is set. An Article field of 2,000,000 characters or more is refused (413); content is truncated to 120,000 characters before the audit.
+      security: [ { BearerAuth: [] }, {} ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuditRequest' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AuditResponse' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413': { description: An Article field is too large, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '422': { description: Validation error (field locations only, never values), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '500': { description: Internal error (the body carries only a correlation id), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+  /health:
+    get:
+      operationId: healthCheck
+      summary: Liveness only; no dependency is checked
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/HealthResponse' } } } }
+  /ready:
+    get:
+      operationId: readinessCheck
+      summary: Readiness (store, wallet, archive, model, search, catalog, worker)
+      description: |
+        503 when a check fails, or while archive writes are enabled and a publish gate is closed.
+        Anonymous callers get `{"status"}` only; the bearer token adds `checks`,
+        `writes_enabled` and `write_blockers`. Cached for 5 s.
+      security: [ {}, { BearerAuth: [] } ]
+      responses:
+        '200': { description: Ready, content: { application/json: { schema: { $ref: '#/components/schemas/ReadinessResponse' } } } }
+        '503': { description: Not ready, content: { application/json: { schema: { $ref: '#/components/schemas/ReadinessResponse' } } } }
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: "`Authorization: Bearer <API_AUTH_TOKEN>` (at least 32 characters, compared in constant time)."
+
+  parameters:
+    ArticleId:
+      { name: article_id, in: path, required: true, schema: { type: integer, minimum: 1 }, description: The archive's article id (ASCII digits). }
+    Include:
+      { name: include, in: query, required: false, schema: { type: string, enum: [result] }, description: Add the stored run record and the rendered comment text. }
+
+  responses:
+    Unauthorized:
+      description: Missing or wrong bearer token (WWW-Authenticate Bearer)
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    Disabled:
+      description: API_AUTH_TOKEN is unset, so the article routes are off
+      content: { application/json: { schema: { $ref: '#/components/schemas/NotFound' } } }
+
+  schemas:
+    Article:
+      type: object
+      required: [url, title, content]
+      properties:
+        url: { type: string, format: uri }
+        title: { type: string }
+        content: { type: string }
+        published_at: { type: string, format: date-time, nullable: true }
+
+    AuditRequest:
+      type: object
+      required: [removed_article]
+      properties:
+        removed_article: { $ref: '#/components/schemas/Article' }
+        similar_articles:
+          type: array
+          nullable: true
+          items: { $ref: '#/components/schemas/Article' }
+          maxItems: 5
+          default: []
+
+    Verdict:
+      type: string
+      description: |
+        Audit outcome for a removed article.
+
+        NONE of these values is a finding of censorship. POSSIBLE_CENSORSHIP is a
+        TRIAGE FLAG that nominates an article for human review; the determination that
+        something was censored is made by a human auditor on independent evidence, and
+        this service has no authority to make it.
+
+          LIKELY_LOW_PUBLIC_INTEREST — step 3 (relevance) judged the article not of public
+                                      interest, and step 4 found no related removals.
+          NOT_REMOVED               — the "removed" article is currently REACHABLE at its
+                                      original URL with its text substantially intact, so
+                                      the audit premise (a removed article) does not
+                                      presently hold. It may have been restored after the
+                                      archive recorded the removal, the removal may be
+                                      intermittent or geo-dependent, or the archive's
+                                      status may be stale; a human should re-check and
+                                      close or re-queue. NOT a finding that nothing was
+                                      ever removed, and not exculpatory.
+          MOVED                     — MEASURED republication: the removed article's text is
+                                      arithmetically contained (token-shingle containment)
+                                      in a live copy at the SAME publisher under a new URL.
+                                      Says nothing about why the original URL was removed.
+          LIKELY_MOVED              — a live copy was found at the SAME publisher under a new
+                                      URL with a PARTIAL measured textual fit, or a fit that
+                                      could not be measured. A human should check whether
+                                      the differences matter.
+          FOUND_ONLINE              — a live copy of the same story was found at another outlet.
+          POSSIBLE_CENSORSHIP       — REVIEW FLAG, not a finding. Raised when:
+                                      (a) no live copy exists but a same-story copy is
+                                          demonstrably gone (HTTP 404/410) — including the
+                                          source the article itself credits (flag
+                                          SOURCE_DEAD), or
+                                      (b) the article was relocated by the same publisher but
+                                          the republished copy MATERIALLY OMITS key facts of
+                                          the original (only when the measured fit is partial
+                                          or unmeasurable — a measurably contained copy is
+                                          never treated as gutted).
+                                      Never raised merely because the story was not found:
+                                      pages that were read without a match, and a search that
+                                      returned no readable page, are both INCONCLUSIVE.
+          INCONCLUSIVE              — no same-story copy was established, alive or gone:
+                                      pages were read but none matched (the search's recall
+                                      is too low for absence to mean anything), or no
+                                      readable result came back at all (nothing, or only
+                                      non-article/blocked links). Infer nothing from this.
+          AUDIT_FAILED              — the audit did not complete (the analysis model failed
+                                      after retries). NOT a result: the article was not
+                                      audited and must be re-run. Never conflate with
+                                      INCONCLUSIVE.
+      enum: [LIKELY_LOW_PUBLIC_INTEREST, NOT_REMOVED, MOVED, LIKELY_MOVED, FOUND_ONLINE, POSSIBLE_CENSORSHIP, INCONCLUSIVE, AUDIT_FAILED]
+
+    StageName:
+      type: string
+      description: The six steps, in pipeline order.
+      enum: [classification, similarity, relevance, related_removals, source, web_search]
+
+    GeographicScope:
+      type: string
+      description: Reach of the STORY (the archive's enum minus platform_specific, which describes a censorship action, not an article).
+      enum: [local, regional, national, global_scope]
+
+    AuditFlag:
+      type: string
+      description: |
+        Machine-readable red flags for a human reviewer. Never a finding.
+          SOURCE_DEAD       — the outlet/agency the article itself credits answers 404/410.
+          RELATED_REMOVALS  — other articles on the SAME subject or event disappeared from the
+                              archive within ±14 days (≥ 3 from ≥ 2 publishers, or one already
+                              human-decided censored). Keeps an otherwise out-of-scope article
+                              in the audit; can also be a publisher pruning a section.
+      enum: [SOURCE_DEAD, RELATED_REMOVALS]
+
+    ConceptTag:
+      type: object
+      required: [notation, label]
+      properties:
+        notation: { type: string, description: "IPTC notation (medtop:… or genre:…) validated against the Karakutu /concepts vocabulary" }
+        label: { type: string }
+
+    Classification:
+      type: object
+      required: [subject_tags, gist]
+      properties:
+        subject_tags:
+          type: array
+          items: { $ref: '#/components/schemas/ConceptTag' }
+          maxItems: 5
+          description: IPTC media topics, ranked most-central-first (order is meaningful).
+        genre: { allOf: [{ $ref: '#/components/schemas/ConceptTag' }], nullable: true }
+        geographic_scope: { allOf: [{ $ref: '#/components/schemas/GeographicScope' }], nullable: true }
+        gist: { type: string, description: One-sentence English summary of the story. }
+
+    StageOutcome:
+      type: string
+      enum: [pass, fail, inconclusive]
+
+    StageResult:
+      type: object
+      required: [stage, outcome, explanation, skipped]
+      properties:
+        stage: { $ref: '#/components/schemas/StageName' }
+        outcome: { $ref: '#/components/schemas/StageOutcome' }
+        confidence:
+          type: number
+          nullable: true
+          description: Confidence reported by the stage (not clamped; pass-through).
+        explanation: { type: string }
+        skipped: { type: boolean }
+        details:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Per-stage structured facts; the keys differ per stage (see each `src/workflow/<step>.py`).
+
+    AuditResponse:
+      type: object
+      required: [verdict, stages, findings]
+      properties:
+        verdict: { $ref: '#/components/schemas/Verdict' }
+        stages:
+          type: array
+          items: { $ref: '#/components/schemas/StageResult' }
+          minItems: 6
+          maxItems: 6
+          description: Always in order classification, similarity, relevance, related_removals, source, web_search.
+        short_circuited_at:
+          type: string
+          enum: [similarity, relevance]
+          description: similarity = a measured republication was found among the archive's matches (verdict MOVED, steps 3–6 skipped); relevance = out of scope with no related-removals flag (step 4 still ran and is reported; steps 5–6 skipped). An out-of-scope article that carries RELATED_REMOVALS is NOT short-circuited.
+          nullable: true
+        findings: { type: string }
+        classification: { allOf: [{ $ref: '#/components/schemas/Classification' }], nullable: true }
+        flags:
+          type: array
+          items: { $ref: '#/components/schemas/AuditFlag' }
+          default: []
+
+    HealthResponse:
+      type: object
+      required: [status, service]
+      properties:
+        status: { type: string, enum: [ok, error] }
+        service: { type: string }
+
+    ErrorResponse:
+      type: object
+      required: [error, status_code]
+      properties:
+        error: { type: string }
+        detail: { type: string, nullable: true }
+        status_code: { type: integer }
+
+    NotFound:
+      type: object
+      properties:
+        detail: { type: string, enum: [Not Found] }
+
+    JobStatus:
+      type: string
+      enum: [queued, running, succeeded, failed]
+
+    JobPhase:
+      type: string
+      enum: [queued, precheck, fetching, auditing, applying, done]
+
+    JobOutcome:
+      type: string
+      description: |
+        Succeeded: applied, dry_run, skipped_ineligible_status, skipped_thin_body, skipped_no_url,
+        skipped_nothing_to_do. Failed (the next POST for the article starts a new job):
+        no_audit_for_article, rejected_article_mismatch, audit_failed, archive_unavailable,
+        archive_degraded (the archive was unreachable during the audit; writes withheld),
+        apply_failed, failed.
+      enum: [applied, dry_run, skipped_ineligible_status, skipped_thin_body, skipped_no_url, skipped_nothing_to_do, no_audit_for_article, rejected_article_mismatch, audit_failed, archive_unavailable, archive_degraded, apply_failed, failed]
+
+    TagsState:
+      type: string
+      enum: [set, proposed_existing, proposed]
+
+    JobAccepted:
+      type: object
+      required: [job_id, article_id, status, dry_run, duplicate, status_url]
+      properties:
+        job_id: { type: string }
+        article_id: { type: integer }
+        status: { $ref: '#/components/schemas/JobStatus' }
+        dry_run: { type: boolean }
+        duplicate: { type: boolean }
+        status_url: { type: string }
+
+    JobError:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, enum: [case_timeout, audit_unusable, model_unavailable, archive_unavailable, archive_disabled, archive_degraded, apply_failed, no_audit_for_article, article_mismatch, internal] }
+        message: { type: string, description: Fixed text per code, never exception text. }
+
+    TagsDecision:
+      type: object
+      properties:
+        requested: { type: boolean }
+        decision: { type: string, enum: [write, skip], nullable: true }
+        reason: { type: string, nullable: true }
+        payload: { type: object, nullable: true, additionalProperties: true }
+        attempted: { type: boolean }
+        written: { type: boolean }
+
+    CommentDecision:
+      type: object
+      properties:
+        requested: { type: boolean }
+        decision: { type: string, enum: [write, skip], nullable: true }
+        reason: { type: string, nullable: true }
+        tags_state: { allOf: [{ $ref: '#/components/schemas/TagsState' }], nullable: true }
+        chars: { type: integer }
+        discussions: { type: integer, nullable: true }
+        attempted: { type: boolean }
+        posted: { type: boolean }
+        discussion_id: { type: integer, nullable: true }
+        view_url: { type: string, nullable: true }
+        text: { type: string, nullable: true, description: Only with include=result. }
+
+    Job:
+      type: object
+      required: [job_id, article_id, status, phase, dry_run]
+      properties:
+        job_id: { type: string }
+        article_id: { type: integer }
+        audit_id: { type: integer, nullable: true, description: The article's audit, once the worker has looked it up. }
+        status: { $ref: '#/components/schemas/JobStatus' }
+        phase: { $ref: '#/components/schemas/JobPhase' }
+        outcome: { allOf: [{ $ref: '#/components/schemas/JobOutcome' }], nullable: true }
+        dry_run: { type: boolean, description: Effective mode (requested, or forced by a publish gate). }
+        requested_dry_run: { type: boolean }
+        write_blockers:
+          type: array
+          items: { type: string, enum: [writes_disabled, synthetic_model, stub_search, no_concept_catalog, archive_client_disabled] }
+        attempts: { type: integer }
+        apply_attempts: { type: integer }
+        correlation_id: { type: string, nullable: true }
+        created_at: { type: string, format: date-time, nullable: true }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+        verdict: { type: string, nullable: true }
+        flags: { type: array, items: { type: string } }
+        classification: { type: object, nullable: true, additionalProperties: true }
+        archive_degradation:
+          type: array
+          items: { type: string, enum: [related_removals_unreadable, similarity_unreachable] }
+        tags: { allOf: [{ $ref: '#/components/schemas/TagsDecision' }], nullable: true }
+        comment: { allOf: [{ $ref: '#/components/schemas/CommentDecision' }], nullable: true }
+        error: { allOf: [{ $ref: '#/components/schemas/JobError' }], nullable: true }
+        config: { type: object, nullable: true, additionalProperties: true }
+        result: { type: object, nullable: true, additionalProperties: true, description: The stored run record; only with include=result. }
+
+    ReadinessResponse:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ready, not_ready] }
+        checks:
+          type: object
+          description: Bearer only. Each of store, wallet, archive, model, search, catalog (and worker) is ok | fail | synthetic | missing | disabled.
+          additionalProperties: { type: string, enum: [ok, fail, synthetic, missing, disabled] }
+        writes_enabled: { type: boolean, description: Bearer only. }
+        write_blockers: { type: array, items: { type: string }, description: Bearer only. }
