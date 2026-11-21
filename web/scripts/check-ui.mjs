@@ -531,6 +531,7 @@ test("article plain text preserves text and converts archive markup for display"
   for (const plain of ["", "  Fictional text\n\n  unchanged.  ",
     "A &amp; B; 2 < 3; &#123;", "x<y and z>w",
     "The condition x<y and z>w is fictional.",
+    "The condition x<p+1 and y>0 is fictional.", "a<b.c>d", "x<br-y>z",
     "<unknown>Fiction &amp; unchanged</unknown>", '<p class="x']) {
     assert.equal(format.articlePlainText(plain), plain);
   }

@@ -91,7 +91,8 @@ const articleLineEnds = new Set([
 
 // Presentation only: saved article content and audit inputs stay unchanged.
 export function articlePlainText(value: string): string {
-  const tagStart = /<(\/?)([a-z][a-z0-9-]{0,30})(?![a-z0-9-])/iy;
+  // A tag name ends at whitespace, "/" or ">" only, so "x<p+1" stays text.
+  const tagStart = /<(\/?)([a-z][a-z0-9-]{0,30})(?=[\s/>])/iy;
   const parts: string[] = [];
   let cursor = 0;
   let textStart = 0;
