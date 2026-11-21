@@ -21,6 +21,9 @@ export function importError(error: unknown) {
   if (error.code === "archive_unavailable") {
     return "The archive could not be reached. Try again later (archive_unavailable).";
   }
+  if (error.code === "import_in_progress") {
+    return "An import is already running. Refresh in a moment to see it (import_in_progress).";
+  }
   if (error.code === "untrusted_origin") {
     return "This page's address is not an allowed origin for the API; add it to " +
       "ALLOWED_ORIGINS on the server (untrusted_origin).";

@@ -996,3 +996,33 @@ def test_removal_checked_after_a_load_with_empty_text(tmp_path, dead, database_u
             row = session.get(ArticleRow, "ka-42")
             row.snapshot = None
         assert client.get("/api/articles").json()["items"][0]["removal_checked"] is False
+
+
+def test_only_one_archive_import_runs_at_a_time(tmp_path, database_url):
+    import asyncio
+    import threading
+
+    started, release = threading.Event(), threading.Event()
+
+    class SlowArchive(FakeArchive):
+        async def audits_created_between(self, start, end):
+            started.set()
+            while not release.is_set():
+                await asyncio.sleep(0.01)
+            return await super().audits_created_between(start, end)
+
+    engine = FakeEngine()
+    engine.archive = SlowArchive()
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), engine)) as client:
+        with ThreadPoolExecutor(2) as pool:
+            try:
+                first = pool.submit(client.post, "/api/articles/import")
+                assert started.wait(5)
+                # Bounded, so a missing guard fails here instead of waiting on the stalled archive.
+                second = pool.submit(client.post, "/api/articles/import").result(5)
+                assert second.status_code == 409
+                assert second.json() == {"error": {"code": "import_in_progress"}}
+            finally:
+                release.set()
+            assert first.result(5).json() == {"imported": 1, "updated": 0, "skipped": 2}
+        assert client.post("/api/articles/import").status_code == 200

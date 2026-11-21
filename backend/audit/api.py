@@ -206,6 +206,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
             app.state.prompt_lock = asyncio.Lock()
             app.state.article_lock = asyncio.Lock()
             app.state.article_fill_lock = asyncio.Lock()
+            app.state.article_import_lock = asyncio.Lock()
             app.state.article_fill_attempts = set()
             store.interrupt_incomplete()
             if test_mode:
@@ -578,15 +579,21 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
         client = archive_client()
         if client is None or not client.enabled:
             return archive_unavailable()
-        # The archive's audit listing filters on Unix seconds, never ISO dates.
-        end = int(datetime.now(timezone.utc).timestamp())
-        try:
-            items = await client.audits_created_between(end - days * 86400, end)
-        except Exception:
-            items = None
-        if items is None:
-            return archive_unavailable()
-        return app.state.store.import_articles(items)
+        # One import at a time, whatever client starts it: a second request would only fetch
+        # the same archive listing again while the first is still writing.
+        lock = app.state.article_import_lock
+        if lock.locked():
+            return JSONResponse(status_code=409, content={"error": {"code": "import_in_progress"}})
+        async with lock:
+            # The archive's audit listing filters on Unix seconds, never ISO dates.
+            end = int(datetime.now(timezone.utc).timestamp())
+            try:
+                items = await client.audits_created_between(end - days * 86400, end)
+            except Exception:
+                items = None
+            if items is None:
+                return archive_unavailable()
+            return app.state.store.import_articles(items)
 
     @app.get("/api/articles/{ref}", response_model=ArticleDetail)
     async def article_detail(ref: str):

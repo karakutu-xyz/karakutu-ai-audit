@@ -2151,6 +2151,8 @@ test("archive import submits the day count, reports counts or the safe error cod
     "The service could not complete this request. Please try again. (live_ingestion_disabled)");
   assert.equal(module.importError(new client.ApiError(422, "validation_error")),
     "Choose between 1 and 90 days. (validation_error)");
+  assert.ok(module.importError(new client.ApiError(409, "import_in_progress"))
+    .startsWith("An import is already running."));
 });
 
 test("article rail offers Stop audit only while the latest audit is queued or running", () => {
