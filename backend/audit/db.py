@@ -154,9 +154,10 @@ def _refresh_article_search(_mapper, _connection, row):
 
 
 def without_nul(value):
-    """PostgreSQL text and JSON cannot hold NUL characters; SQLite can. Archive data is
-    unvalidated upstream input, so drop them everywhere (also nested in JSON) before a write,
-    keeping both backends' stored values identical."""
+    """PostgreSQL text and JSON cannot hold NUL characters; SQLite can. Archive data and
+    workflow evidence (model output, search snippets, archive responses) are unvalidated
+    upstream input, so drop them everywhere (also nested in JSON) before a write, keeping
+    both backends' stored values identical. Submitted input is rejected at the schema."""
     if isinstance(value, str):
         return value.replace("\x00", "")
     if isinstance(value, dict):
@@ -500,9 +501,13 @@ class Store:
         with Session(self.engine) as session, session.begin():
             row = session.get(Run, run_id)
             if row is not None and row.status in {"queued", "running"}:
-                row.steps = [*row.steps, step]
+                # Step evidence holds upstream text (model output, search snippets,
+                # archive responses); PostgreSQL JSONB cannot store NUL.
+                row.steps = [*row.steps, without_nul(step)]
 
     def complete_run(self, run_id: str, result: dict):
+        # Same rule as append_step: every stored value is NUL-free on both backends.
+        result = without_nul(result)
         response = result["response"]
         verdict = response.get("verdict")
         failed = verdict == "AUDIT_FAILED"
@@ -725,7 +730,7 @@ class Store:
             row.snapshot = without_nul({"versions": [{"title": v.title, "check_date": v.check_date,
                                          "content_hash": v.content_hash} for v in versions]})
             dead = first_dead_check_date(record.checks)
-            row.removed_at = str(dead) if dead is not None else None
+            row.removed_at = without_nul(str(dead)) if dead is not None else None
             row.updated_at = now()
             return True
 

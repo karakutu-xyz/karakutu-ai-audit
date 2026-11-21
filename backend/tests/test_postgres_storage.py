@@ -228,3 +228,48 @@ def test_long_urls_are_stored_and_unique_on_any_backend(database_url):
             session.add(ArticleRow(**duplicate))
     finally:
         store.close()
+
+
+def test_workflow_evidence_and_results_drop_nul_on_any_backend(database_url):
+    """Model output, search snippets and archive responses may carry NUL; PostgreSQL
+    rejects it, so every stored step and result is NUL-free on both backends."""
+    from audit.db import Store
+    from test_db import create, workflow
+    store = Store(database_url)
+    try:
+        workflow(store)
+        run = create(store)
+        store.start_run(run["id"])
+        step = {"name": "web_search", "evidence": [{"snippet": "fictional\x00 snippet",
+                "raw\x00key": {"nested": ["a\x00b"]}}], "model_calls": [{"reasoning": "x\x00y"}]}
+        store.append_step(run["id"], step)
+        store.complete_run(run["id"], {"response": {"verdict": "INCONCLUSIVE",
+                                                    "findings": "fictional\x00 finding"},
+                                       "steps": [step]})
+        saved = store.run(run["id"])
+        assert saved["status"] == "succeeded"
+        assert "\x00" not in repr(saved["steps"]) + repr(saved["output"])
+        assert saved["output"]["findings"] == "fictional finding"
+        assert saved["steps"][0]["evidence"][0] == {"snippet": "fictional snippet",
+                                                    "rawkey": {"nested": ["ab"]}}
+    finally:
+        store.close()
+
+
+def test_archive_removal_date_drops_nul_on_any_backend(database_url):
+    from audit.clients.models import ArticleRecord
+    from audit.db import Store
+    store = Store(database_url)
+    try:
+        store.import_articles([{"article_id": 42, "url": "https://paper.example/archived"}])
+        article = store.article("ka-42")
+        record = ArticleRecord(id=42, url="https://paper.example/archived", versions=[
+            {"title": "Fictional", "news_text": "Fictional text", "check_date": 1, "content_hash": "x"}],
+            checks={"entries": [{"status": 404, "check_date": "2026-11-01\x00"}]})
+        assert store.fill_article("ka-42", record, expected_url=article["url"],
+                                  expected_archive_id=article["archive_id"]) is True
+        filled = store.article("ka-42")
+        assert filled["content"] == "Fictional text"
+        assert filled["removed_at"] is None or "\x00" not in filled["removed_at"]
+    finally:
+        store.close()

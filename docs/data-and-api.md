@@ -372,3 +372,7 @@ UTC timestamps fit 40. Prompt texts, notes, article URLs/titles/content and sear
 are Text. Unbounded archive metadata uses Text as listed above. No allowed API input
 is truncated. Submitted text fields reject NUL characters before database access with
 the existing 422 codes-only validation envelope; submitted values are never echoed.
+Upstream text the service stores without validating it (archive article data, and step
+evidence, model output and results from the workflow) has NUL characters removed before
+the write, on both backends, because PostgreSQL text and JSONB cannot hold them. This is
+the one change made to otherwise exact saved records.
