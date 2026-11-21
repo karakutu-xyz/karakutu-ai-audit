@@ -9,6 +9,7 @@ import pytest
 
 from audit.api import create_app
 from audit.config import Settings
+from audit.db import Store
 
 
 TOKEN = "fabricated-test-token-0123456789abcdef"
@@ -67,8 +68,8 @@ def finished(client, run_id):
     pytest.fail("background run did not finish")
 
 
-def test_benchmark_workflow_reaction_export_and_restart(tmp_path):
-    config = settings(tmp_path)
+def test_benchmark_workflow_reaction_export_and_restart(tmp_path, database_url):
+    config = settings(tmp_path, database_url=database_url)
     engine = FakeEngine()
     with TestClient(create_app(config, engine)) as client:
         assert client.get("/health").json() == {"status": "ok", "mode": "live"}
@@ -109,16 +110,16 @@ def test_benchmark_workflow_reaction_export_and_restart(tmp_path):
 
 
 @pytest.mark.parametrize("route", ["/api/audit", "/api/webhooks/audit"])
-def test_live_disabled_precedes_auth_and_validation(tmp_path, route):
-    with TestClient(create_app(settings(tmp_path, api_auth_token=TOKEN), FakeEngine())) as client:
+def test_live_disabled_precedes_auth_and_validation(tmp_path, route, database_url):
+    with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN), FakeEngine())) as client:
         response = client.post(route, content="not-json", headers={"Authorization": "Bearer wrong", "Origin": "https://untrusted.invalid"})
         assert response.status_code == 404
         assert response.json() == {"error": {"code": "not_found"}}
         assert client.post(route + "/", content="not-json").status_code == 404
 
 
-def test_auth_precedes_validation_and_protects_all_api_routes(tmp_path):
-    with TestClient(create_app(settings(tmp_path, api_auth_token=TOKEN, live_ingestion_enabled=True), FakeEngine())) as client:
+def test_auth_precedes_validation_and_protects_all_api_routes(tmp_path, database_url):
+    with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, live_ingestion_enabled=True), FakeEngine())) as client:
         for path in ["/api/status", "/api/workflow", "/api/workflows/missing", "/api/runs", "/api/runs/missing", "/api/runs/missing/export"]:
             assert client.get(path).status_code == 401
             assert client.get(path, headers={"Authorization": "Bearer wrong"}).status_code == 401
@@ -135,8 +136,8 @@ def test_auth_precedes_validation_and_protects_all_api_routes(tmp_path):
         assert client.get("/api/runs", headers=[("Authorization", "Bearer " + TOKEN), ("Authorization", "Bearer " + TOKEN)]).status_code == 401
 
 
-def test_live_category_and_origin_are_server_assigned(tmp_path):
-    with TestClient(create_app(settings(tmp_path, api_auth_token=TOKEN, live_ingestion_enabled=True), FakeEngine())) as client:
+def test_live_category_and_origin_are_server_assigned(tmp_path, database_url):
+    with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, live_ingestion_enabled=True), FakeEngine())) as client:
         for route, origin in [("/api/audit", "api"), ("/api/webhooks/audit", "webhook"), ("/api/benchmarks/runs", "benchmark")]:
             response = client.post(route, json=BODY, headers=AUTH)
             assert response.status_code == 202
@@ -161,8 +162,8 @@ def test_live_category_and_origin_are_server_assigned(tmp_path):
         assert client.post("/api/benchmarks/runs", json=spoofed, headers=AUTH).status_code == 422
 
 
-def test_safe_validation_body_limits_and_origin(tmp_path):
-    with TestClient(create_app(settings(tmp_path), FakeEngine())) as client:
+def test_safe_validation_body_limits_and_origin(tmp_path, database_url):
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), FakeEngine())) as client:
         bad = deepcopy(BODY)
         bad["removed_article"]["url"] = "PRIVATE submitted sensitive value"
         response = client.post("/api/benchmarks/runs", json=bad)
@@ -184,8 +185,8 @@ def test_safe_validation_body_limits_and_origin(tmp_path):
         assert client.options("/api/benchmarks/runs", headers={"Origin": "https://untrusted.invalid", "Access-Control-Request-Method": "POST"}).headers.get("access-control-allow-origin") is None
 
 
-def test_failure_retains_completed_steps_and_safe_error(tmp_path):
-    with TestClient(create_app(settings(tmp_path), FakeEngine(fail=True))) as client:
+def test_failure_retains_completed_steps_and_safe_error(tmp_path, database_url):
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), FakeEngine(fail=True))) as client:
         run_id = client.post("/api/benchmarks/runs", json=BODY).json()["id"]
         run = finished(client, run_id)
         assert run["status"] == "failed"
@@ -196,9 +197,9 @@ def test_failure_retains_completed_steps_and_safe_error(tmp_path):
         assert "authorization" not in str(run)
 
 
-def test_cancellation_marks_interrupted_and_concurrency_is_bounded(tmp_path):
+def test_cancellation_marks_interrupted_and_concurrency_is_bounded(tmp_path, database_url):
     engine = FakeEngine(wait=True)
-    config = settings(tmp_path, max_concurrent_runs=1)
+    config = settings(tmp_path, database_url=database_url, max_concurrent_runs=1)
     with TestClient(create_app(config, engine)) as client:
         ids = [client.post("/api/benchmarks/runs", json=BODY).json()["id"] for _ in range(3)]
         assert engine.peak == 1
@@ -210,8 +211,8 @@ def test_cancellation_marks_interrupted_and_concurrency_is_bounded(tmp_path):
             assert client.get(f"/api/runs/{run_id}").json()["error"]["code"] == "interrupted"
 
 
-def test_missing_run_reaction_and_invalid_reviewer(tmp_path):
-    with TestClient(create_app(settings(tmp_path), FakeEngine())) as client:
+def test_missing_run_reaction_and_invalid_reviewer(tmp_path, database_url):
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), FakeEngine())) as client:
         assert client.get("/api/runs/missing").status_code == 404
         assert client.get("/api/runs/missing/export").status_code == 404
         assert client.get("/api/workflows/missing").status_code == 404
@@ -219,8 +220,8 @@ def test_missing_run_reaction_and_invalid_reviewer(tmp_path):
         assert client.post("/api/runs/missing/reactions", json={"reaction": "agree", "reviewer": "   "}).status_code == 422
 
 
-def test_unexpected_server_exception_has_safe_response_and_no_traceback(tmp_path, caplog):
-    app = create_app(settings(tmp_path), FakeEngine())
+def test_unexpected_server_exception_has_safe_response_and_no_traceback(tmp_path, caplog, database_url):
+    app = create_app(settings(tmp_path, database_url=database_url), FakeEngine())
 
     @app.get("/api/fabricated-error")
     async def fabricated_error():
@@ -236,8 +237,8 @@ def test_unexpected_server_exception_has_safe_response_and_no_traceback(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_streamed_body_limit_enforced_without_content_length(tmp_path):
-    app = create_app(settings(tmp_path), FakeEngine())
+async def test_streamed_body_limit_enforced_without_content_length(tmp_path, database_url):
+    app = create_app(settings(tmp_path, database_url=database_url), FakeEngine())
     sent = []
     chunks = iter([b"x" * (1024 * 1024), b"y" * (1024 * 1024), b"z"])
 
@@ -253,16 +254,16 @@ async def test_streamed_body_limit_enforced_without_content_length(tmp_path):
 
 
 @pytest.mark.parametrize("host", ["attacker.invalid", "localhost.attacker.invalid", "user@localhost:2200", "localhost:invalid", "localhost/ignored"])
-def test_local_api_rejects_untrusted_hosts(tmp_path, host):
-    with TestClient(create_app(settings(tmp_path), FakeEngine())) as client:
+def test_local_api_rejects_untrusted_hosts(tmp_path, host, database_url):
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), FakeEngine())) as client:
         response = client.get("/api/runs", headers={"Host": host})
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "untrusted_host"
         assert response.headers["cache-control"] == "no-store"
 
 
-def test_openapi_documents_typed_run_workflow_and_reaction_outputs(tmp_path):
-    app = create_app(settings(tmp_path), FakeEngine())
+def test_openapi_documents_typed_run_workflow_and_reaction_outputs(tmp_path, database_url):
+    app = create_app(settings(tmp_path, database_url=database_url), FakeEngine())
     schema = app.openapi()
     expected = [
         ("/health", "get", "200", "Health"),
@@ -292,10 +293,10 @@ def test_openapi_documents_typed_run_workflow_and_reaction_outputs(tmp_path):
     assert "Content-Disposition" in schema["paths"]["/api/runs/{run_id}/export"]["get"]["responses"]["200"]["headers"]
 
 
-def test_response_validation_failure_is_safe_and_422_contract_matches_handler(tmp_path, caplog):
+def test_response_validation_failure_is_safe_and_422_contract_matches_handler(tmp_path, caplog, database_url):
     from audit.schemas import Health
 
-    app = create_app(settings(tmp_path), FakeEngine())
+    app = create_app(settings(tmp_path, database_url=database_url), FakeEngine())
 
     @app.get("/api/fabricated-invalid-response", response_model=Health)
     async def invalid_response():
@@ -311,8 +312,8 @@ def test_response_validation_failure_is_safe_and_422_contract_matches_handler(tm
     assert documented["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/SafeErrorResponse"}
 
 
-def test_configured_host_and_origin_keep_guards_and_auth(tmp_path):
-    config = settings(tmp_path, api_auth_token=TOKEN,
+def test_configured_host_and_origin_keep_guards_and_auth(tmp_path, database_url):
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN,
                       allowed_hosts=("Audit.Example.Test",),
                       allowed_origins=("HTTPS://Audit.Example.Test:2201",))
     with TestClient(create_app(config, FakeEngine())) as client:
@@ -351,8 +352,8 @@ def test_empty_allowed_environment_preserves_local_guards(tmp_path, monkeypatch)
         }).status_code == 403
 
 
-def test_configured_origin_matches_browser_serialization_of_ports(tmp_path):
-    config = settings(tmp_path, api_auth_token=TOKEN, allowed_hosts=("audit.example.test",),
+def test_configured_origin_matches_browser_serialization_of_ports(tmp_path, database_url):
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, allowed_hosts=("audit.example.test",),
                       allowed_origins=("https://audit.example.test:443",
                                        "http://audit.example.test:80",
                                        "https://audit.example.test:08443"))
@@ -370,18 +371,18 @@ def test_configured_origin_matches_browser_serialization_of_ports(tmp_path):
 
 
 @pytest.mark.parametrize("host", ["[::1]:2200", "[0:0:0:0:0:0:0:1]:2200", "[0::1]"])
-def test_equivalent_ipv6_hosts_are_canonicalized(tmp_path, host):
-    with TestClient(create_app(settings(tmp_path, allowed_hosts=("::1",)), FakeEngine())) as client:
+def test_equivalent_ipv6_hosts_are_canonicalized(tmp_path, host, database_url):
+    with TestClient(create_app(settings(tmp_path, database_url=database_url, allowed_hosts=("::1",)), FakeEngine())) as client:
         assert client.get("/health", headers={"Host": host}).status_code == 200
-    with TestClient(create_app(settings(tmp_path), FakeEngine())) as client:
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), FakeEngine())) as client:
         response = client.get("/health", headers={"Host": host})
         assert response.status_code == 400
         assert response.json() == {"error": {"code": "untrusted_host"}}
 
 
 @pytest.mark.parametrize("configured", ["http://[::ffff:192.0.2.1]:2201", "http://[::FFFF:C000:201]:2201"])
-def test_ipv6_origins_use_browser_serialization(tmp_path, configured):
-    config = settings(tmp_path, allowed_origins=(configured, "http://[0:0:0:0:0:0:0:1]:2201",
+def test_ipv6_origins_use_browser_serialization(tmp_path, configured, database_url):
+    config = settings(tmp_path, database_url=database_url, allowed_origins=(configured, "http://[0:0:0:0:0:0:0:1]:2201",
                                                  "http://[2001:db8:0:0:1:0:0:1]"))
     assert config.allowed_origins >= {"http://[::ffff:c000:201]:2201", "http://[::1]:2201",
                                       "http://[2001:db8::1:0:0:1]"}
@@ -411,12 +412,12 @@ def test_test_mode_reports_mode_and_seeds_its_own_database(tmp_path, monkeypatch
     assert (tmp_path / "demo" / "audit-test.sqlite3").is_file()
 
 
-def test_live_mode_never_seeds(tmp_path, monkeypatch):
+def test_live_mode_never_seeds(tmp_path, monkeypatch, database_url):
     import audit.api
 
     seeded = []
     monkeypatch.setattr(audit.api, "seed_demo_data", seeded.append)
-    with TestClient(create_app(settings(tmp_path), FakeEngine())) as client:
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), FakeEngine())) as client:
         assert client.get("/health").json()["mode"] == "live"
     assert seeded == []
 
@@ -439,9 +440,9 @@ def test_seed_demo_data_is_skipped_until_the_dataset_module_exists(monkeypatch):
     assert calls == ["fabricated-database-url"]
 
 
-def test_prompt_lifecycle_workflow_history_and_restart(tmp_path):
+def test_prompt_lifecycle_workflow_history_and_restart(tmp_path, database_url):
     from audit.workflow.prompt_registry import DEFAULTS, REGISTRY
-    config = settings(tmp_path, api_auth_token=TOKEN)
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN)
     engine = FakeEngine()
     with TestClient(create_app(config, engine)) as client:
         old = client.get('/api/workflow', headers=AUTH).json()
@@ -496,10 +497,10 @@ def test_prompt_lifecycle_workflow_history_and_restart(tmp_path):
 
 
 @pytest.mark.parametrize('kind', ['activate', 'rollback'])
-def test_prompt_snapshot_failure_is_atomic_and_retry_succeeds(tmp_path, monkeypatch, kind):
+def test_prompt_snapshot_failure_is_atomic_and_retry_succeeds(tmp_path, monkeypatch, kind, database_url):
     import audit.api as api
     from audit.workflow.prompt_registry import DEFAULTS
-    app = create_app(settings(tmp_path, api_auth_token=TOKEN), FakeEngine())
+    app = create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN), FakeEngine())
     with TestClient(app) as client:
         text = DEFAULTS['relevance'] + '\nFabricated atomic revision'
         assert client.post('/api/prompts/relevance/versions', headers=AUTH,
@@ -534,9 +535,9 @@ def test_prompt_snapshot_failure_is_atomic_and_retry_succeeds(tmp_path, monkeypa
         assert app.state.store.workflow(current['id']) == current
 
 
-def test_already_active_prompt_repairs_stale_current_workflow(tmp_path):
+def test_already_active_prompt_repairs_stale_current_workflow(tmp_path, database_url):
     from audit.workflow.prompt_registry import DEFAULTS
-    app = create_app(settings(tmp_path, api_auth_token=TOKEN), FakeEngine())
+    app = create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN), FakeEngine())
     with TestClient(app) as client:
         startup = client.get('/api/workflow', headers=AUTH).json()
         client.post('/api/prompts/relevance/versions', headers=AUTH,
@@ -552,7 +553,7 @@ def test_already_active_prompt_repairs_stale_current_workflow(tmp_path):
         assert app.state.store.prompt_activations('relevance') == history
 
 
-def test_prompt_changes_reuse_startup_provenance(tmp_path, monkeypatch):
+def test_prompt_changes_reuse_startup_provenance(tmp_path, monkeypatch, database_url):
     import audit.api as api
     from audit.provenance import build_base
     from audit.workflow.prompt_registry import DEFAULTS
@@ -565,7 +566,7 @@ def test_prompt_changes_reuse_startup_provenance(tmp_path, monkeypatch):
     monkeypatch.setattr(api, 'build_base', lambda config: build_base(config, source_root=source))
     engine = FakeEngine()
     engine.public_config = dict(engine.public_config)
-    app = create_app(settings(tmp_path, api_auth_token=TOKEN), engine)
+    app = create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN), engine)
     with TestClient(app) as client:
         startup = client.get('/api/workflow', headers=AUTH).json()
         base = deepcopy(app.state.workflow_base)
@@ -592,10 +593,10 @@ def test_prompt_changes_reuse_startup_provenance(tmp_path, monkeypatch):
         assert client.get('/api/workflow', headers=AUTH).json() == startup
 
 
-def test_running_and_queued_runs_keep_captured_prompts(tmp_path):
+def test_running_and_queued_runs_keep_captured_prompts(tmp_path, database_url):
     from audit.workflow.prompt_registry import DEFAULTS
     engine = FakeEngine(wait=True)
-    app = create_app(settings(tmp_path, api_auth_token=TOKEN, max_concurrent_runs=1), engine)
+    app = create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, max_concurrent_runs=1), engine)
     with TestClient(app) as client:
         old_id = client.get('/api/workflow', headers=AUTH).json()['id']
         first = client.post('/api/benchmarks/runs', headers=AUTH, json=BODY).json()
@@ -620,9 +621,9 @@ def test_running_and_queued_runs_keep_captured_prompts(tmp_path):
         assert engine.received_prompts == [DEFAULTS, DEFAULTS, {**DEFAULTS, 'relevance': text}]
 
 
-def test_prompt_writes_guarded_before_body_and_reads_remain_open(tmp_path):
+def test_prompt_writes_guarded_before_body_and_reads_remain_open(tmp_path, database_url):
     routes = ['/api/prompts/relevance/versions', '/api/prompts/relevance/activate', '/api/prompts/relevance/rollback']
-    with TestClient(create_app(settings(tmp_path), FakeEngine())) as client:
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), FakeEngine())) as client:
         assert client.get('/api/prompts').status_code == 200
         assert client.get('/api/prompts/relevance').status_code == 200
         assert client.get('/api/status').json()['prompts_editable'] is False
@@ -630,7 +631,7 @@ def test_prompt_writes_guarded_before_body_and_reads_remain_open(tmp_path):
             response = client.post(route, content=b'{malformed')
             assert response.status_code == 403
             assert response.json() == {'error': {'code': 'prompt_writes_require_token'}}
-    with TestClient(create_app(settings(tmp_path, api_auth_token=TOKEN), FakeEngine())) as client:
+    with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN), FakeEngine())) as client:
         assert client.get('/api/prompts').status_code == 401
         assert client.get('/api/prompts', headers=AUTH).status_code == 200
         assert client.get('/api/status', headers=AUTH).json()['prompts_editable'] is True
@@ -639,9 +640,9 @@ def test_prompt_writes_guarded_before_body_and_reads_remain_open(tmp_path):
             assert client.post(route, json={}, headers={**AUTH, 'Origin': 'https://untrusted.invalid'}).status_code == 403
 
 
-def test_prompt_validation_missing_tokens_duplicates_and_not_found(tmp_path):
+def test_prompt_validation_missing_tokens_duplicates_and_not_found(tmp_path, database_url):
     from audit.workflow.prompt_registry import DEFAULTS, REGISTRY, validation_codes
-    with TestClient(create_app(settings(tmp_path, api_auth_token=TOKEN), FakeEngine())) as client:
+    with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN), FakeEngine())) as client:
         for name, text in DEFAULTS.items():
             assert validation_codes(name, text) == []
             for token in REGISTRY[name].required_tokens:
@@ -703,20 +704,20 @@ class ModelEngine(FakeEngine):
         return ([] if self.models_error else ['fabricated', 'fabricated-screen']), self.models_error
 
 
-def test_model_writes_require_auth_before_body_validation(tmp_path):
-    with TestClient(create_app(settings(tmp_path), FakeEngine())) as client:
+def test_model_writes_require_auth_before_body_validation(tmp_path, database_url):
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), FakeEngine())) as client:
         assert client.get('/api/models').status_code == 200
         response = client.post('/api/models/steps', content=b'{malformed')
         assert response.status_code == 403
         assert response.json()['error']['code'] == 'model_writes_require_token'
-    with TestClient(create_app(settings(tmp_path, api_auth_token=TOKEN), FakeEngine())) as client:
+    with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN), FakeEngine())) as client:
         for headers in [{}, {'Authorization': 'Bearer wrong'}]:
             assert client.post('/api/models/steps', headers=headers, content=b'{malformed').status_code == 401
         assert client.post('/api/models/steps', headers={**AUTH, 'Origin': 'https://untrusted.invalid'}, json={}).status_code == 403
 
 
-def test_model_catalog_assignments_validation_and_restart_precedence(tmp_path):
-    config = settings(tmp_path, api_auth_token=TOKEN, model_enabled=True, model_name_relevance='fabricated-screen')
+def test_model_catalog_assignments_validation_and_restart_precedence(tmp_path, database_url):
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, model_enabled=True, model_name_relevance='fabricated-screen')
     engine = ModelEngine()
     app = create_app(config, engine)
     with TestClient(app) as client:
@@ -748,24 +749,24 @@ def test_model_catalog_assignments_validation_and_restart_precedence(tmp_path):
         assert restore.json()['workflow_id'] == initial['id']
 
 
-def test_model_discovery_error_and_synthetic_allow_configured_names(tmp_path):
+def test_model_discovery_error_and_synthetic_allow_configured_names(tmp_path, database_url):
     engine = ModelEngine()
     engine.models_error = 'models_unavailable'
-    config = settings(tmp_path, api_auth_token=TOKEN, model_enabled=True)
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, model_enabled=True)
     with TestClient(create_app(config, engine)) as client:
         assert client.get('/api/models', headers=AUTH).json()['error'] == 'models_unavailable'
         response = client.post('/api/models/steps', headers=AUTH, json={'step': 'source', 'model': 'not-listed', 'author': 'Reviewer'})
         assert response.status_code == 200
-    with TestClient(create_app(settings(tmp_path, api_auth_token=TOKEN), FakeEngine())) as client:
+    with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN), FakeEngine())) as client:
         catalog = client.get('/api/models', headers=AUTH).json()
         assert catalog['available'] == [] and catalog['error'] is None
         assert catalog['steps']['source']['effective'] == 'not-listed'
         assert client.post('/api/models/steps', headers=AUTH, json={'step': 'source', 'model': 'another-model', 'author': 'Reviewer'}).status_code == 200
 
 
-def test_model_assignment_and_workflow_failure_roll_back_together(tmp_path, monkeypatch):
+def test_model_assignment_and_workflow_failure_roll_back_together(tmp_path, monkeypatch, database_url):
     import audit.api as api
-    app = create_app(settings(tmp_path, api_auth_token=TOKEN), FakeEngine())
+    app = create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN), FakeEngine())
     with TestClient(app) as client:
         before = client.get('/api/workflow', headers=AUTH).json()
         def fail(*args):
@@ -779,10 +780,10 @@ def test_model_assignment_and_workflow_failure_roll_back_together(tmp_path, monk
         assert client.post('/api/models/steps', headers=AUTH, json={'step': 'relevance', 'model': 'fabricated-screen', 'author': 'Reviewer'}).status_code == 200
 
 
-def test_running_and_queued_runs_keep_captured_models_and_prompt_activation_preserves_them(tmp_path):
+def test_running_and_queued_runs_keep_captured_models_and_prompt_activation_preserves_them(tmp_path, database_url):
     from audit.workflow.prompt_registry import DEFAULTS
     engine = ModelEngine(wait=True)
-    app = create_app(settings(tmp_path, api_auth_token=TOKEN, max_concurrent_runs=1), engine)
+    app = create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, max_concurrent_runs=1), engine)
     with TestClient(app) as client:
         old = client.get('/api/workflow', headers=AUTH).json()
         first = client.post('/api/benchmarks/runs', headers=AUTH, json=BODY).json()
@@ -840,9 +841,9 @@ def assert_stopped(run, step_count=0):
     assert all(step["status"] == "pending" for step in story["steps"][step_count:])
 
 
-def test_operator_stop_queued_and_running_preserves_steps(tmp_path):
+def test_operator_stop_queued_and_running_preserves_steps(tmp_path, database_url):
     engine = FakeEngine(wait=True)
-    app = create_app(settings(tmp_path, max_concurrent_runs=1), engine)
+    app = create_app(settings(tmp_path, database_url=database_url, max_concurrent_runs=1), engine)
     with TestClient(app) as client:
         first, second = [client.post("/api/benchmarks/runs", json=BODY).json()["id"]
                          for _ in range(2)]
@@ -872,8 +873,8 @@ def test_operator_stop_queued_and_running_preserves_steps(tmp_path):
             "error": {"code": "run_not_active"}}
 
 
-def test_stop_finished_and_unknown_runs(tmp_path):
-    with TestClient(create_app(settings(tmp_path), FakeEngine())) as client:
+def test_stop_finished_and_unknown_runs(tmp_path, database_url):
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), FakeEngine())) as client:
         run_id = client.post("/api/benchmarks/runs", json=BODY).json()["id"]
         before = finished(client, run_id)
         response = client.post(f"/api/runs/{run_id}/cancel")
@@ -883,8 +884,8 @@ def test_stop_finished_and_unknown_runs(tmp_path):
         assert client.post("/api/runs/missing/cancel").status_code == 404
 
 
-def test_pause_resume_and_restart_queue(tmp_path):
-    config = settings(tmp_path)
+def test_pause_resume_and_restart_queue(tmp_path, database_url):
+    config = settings(tmp_path, database_url=database_url)
     engine = FakeEngine(wait=True)
     app = create_app(config, engine)
     with TestClient(app) as client:
@@ -911,9 +912,9 @@ def test_pause_resume_and_restart_queue(tmp_path):
 
 
 @pytest.mark.parametrize("include_running", [False, True])
-def test_bulk_stop_queue(tmp_path, include_running):
+def test_bulk_stop_queue(tmp_path, include_running, database_url):
     engine = FakeEngine(wait=True)
-    app = create_app(settings(tmp_path), engine)
+    app = create_app(settings(tmp_path, database_url=database_url), engine)
     with TestClient(app) as client:
         ids = [client.post("/api/benchmarks/runs", json=BODY).json()["id"]
                for _ in range(3)]
@@ -932,8 +933,8 @@ def test_bulk_stop_queue(tmp_path, include_running):
         assert client.post("/api/queue/cancel").json() == {"cancelled": []}
 
 
-def test_stop_untracked_active_rows_and_prestart_task(tmp_path):
-    app = create_app(settings(tmp_path), FakeEngine())
+def test_stop_untracked_active_rows_and_prestart_task(tmp_path, database_url):
+    app = create_app(settings(tmp_path, database_url=database_url), FakeEngine())
     with TestClient(app) as client:
         for running in [False, True]:
             run = app.state.store.create_run(
@@ -955,7 +956,7 @@ def test_stop_untracked_active_rows_and_prestart_task(tmp_path):
         assert_stopped(client.portal.call(stop_before_task_runs))
 
 
-def test_completion_wins_operator_stop_race(tmp_path):
+def test_completion_wins_operator_stop_race(tmp_path, database_url):
     class CompletingEngine(FakeEngine):
         async def run(self, request, **kwargs):
             # Simulate completion winning just as cancellation is delivered.
@@ -964,7 +965,7 @@ def test_completion_wins_operator_stop_race(tmp_path):
             except asyncio.CancelledError:
                 return await super().run(request, **kwargs)
 
-    app = create_app(settings(tmp_path), CompletingEngine())
+    app = create_app(settings(tmp_path, database_url=database_url), CompletingEngine())
     with TestClient(app) as client:
         run_id = client.post("/api/benchmarks/runs", json=BODY).json()["id"]
         response = client.post(f"/api/runs/{run_id}/cancel")
@@ -975,15 +976,15 @@ def test_completion_wins_operator_stop_race(tmp_path):
 
 @pytest.mark.parametrize("path", ["/api/runs/missing/cancel", "/api/queue/pause",
                                   "/api/queue/resume", "/api/queue/cancel"])
-def test_run_controls_use_existing_guards(tmp_path, path):
-    app = create_app(settings(tmp_path, api_auth_token=TOKEN), FakeEngine())
+def test_run_controls_use_existing_guards(tmp_path, path, database_url):
+    app = create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN), FakeEngine())
     with TestClient(app) as client:
         assert client.get("/api/queue").status_code == 401
         assert client.post(path).status_code == 401
         assert client.post(path, headers={**AUTH, "Origin": "https://untrusted.invalid"}).status_code == 403
 
 
-def test_cancelled_story_marks_interrupted_step_stopped_without_rewriting_it(tmp_path):
+def test_cancelled_story_marks_interrupted_step_stopped_without_rewriting_it(tmp_path, database_url):
     class InterruptedEngine(FakeEngine):
         async def run(self, request, on_step=None, prompts=None, models=None):
             try:
@@ -999,7 +1000,7 @@ def test_cancelled_story_marks_interrupted_step_stopped_without_rewriting_it(tmp
                 })
                 raise
 
-    app = create_app(settings(tmp_path), InterruptedEngine(wait=True))
+    app = create_app(settings(tmp_path, database_url=database_url), InterruptedEngine(wait=True))
     with TestClient(app) as client:
         run_id = client.post("/api/benchmarks/runs", json=BODY).json()["id"]
         for _ in range(100):
@@ -1038,3 +1039,41 @@ def test_cancelled_summary_suppresses_stale_verdict_and_flags():
     assert story["human_review_note"] is None
     assert story["sentences"] == []
     assert all(step["status"] == "pending" for step in story["steps"])
+
+
+@pytest.mark.parametrize("field", ["url", "title", "content", "label", "reviewer", "note", "author", "text", "model"])
+def test_nul_inputs_are_rejected_with_codes_only(tmp_path, database_url, field):
+    private = "fictional-private-text\x00tail"
+    with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN), FakeEngine())) as client:
+        if field in {"url", "title", "content", "label"}:
+            body = deepcopy(BODY)
+            if field == "label":
+                body[field] = private
+            else:
+                body["removed_article"][field] = private
+            path = "/api/benchmarks/runs"
+        elif field in {"reviewer", "note"}:
+            body = {"reviewer": "Reviewer", "reaction": "agree", field: private}
+            path = "/api/runs/missing/reactions"
+        elif field == "model":
+            body = {"step": "relevance", "model": private, "author": "Reviewer"}
+            path = "/api/models/steps"
+        else:
+            body = {"author": "Reviewer", "text": "Invented prompt", field: private}
+            path = "/api/prompts/relevance/versions"
+        response = client.post(path, json=body, headers=AUTH)
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "validation_error"
+        assert all(set(item) == {"loc", "type", "code"} for item in response.json()["error"]["fields"])
+        assert "fictional-private-text" not in response.text
+
+
+def test_live_startup_refuses_a_database_holding_demo_data(tmp_path, database_url):
+    """Live mode never serves demo data, whether the file check or the store check sees it."""
+    store = Store(database_url)
+    store.save_workflow({"id": "wf_demo_v1", "created_at": "test",
+                         "definition": {"steps": [], "settings": {}}})
+    store.close()
+    with pytest.raises((ValueError, RuntimeError), match="demo data"):
+        with TestClient(create_app(settings(tmp_path, database_url=database_url), FakeEngine())):
+            pass

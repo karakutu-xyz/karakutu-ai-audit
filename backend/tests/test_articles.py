@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import hashlib
 import json
+import os
 import socket
 import sqlite3
 
@@ -12,6 +13,7 @@ import pytest
 from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.engine import make_url
 
 from audit.api import create_app
 from audit.clients.karakutu import KarakutuClient
@@ -33,7 +35,17 @@ def forbid_network(monkeypatch):
     def fail(*args, **kwargs):
         raise AssertionError("Article test attempted network access")
 
-    monkeypatch.setattr(socket, "getaddrinfo", fail)
+    # The opt-in database fixture may resolve only its explicitly configured server.
+    admin = os.environ.get("TEST_POSTGRES_URL")
+    target = make_url(admin) if admin else None
+    resolve = socket.getaddrinfo
+
+    def database_dns(host, port, *args, **kwargs):
+        if target and host == target.host and int(port) == (target.port or 5432):
+            return resolve(host, port, *args, **kwargs)
+        return fail()
+
+    monkeypatch.setattr(socket, "getaddrinfo", database_dns)
     monkeypatch.setattr(socket, "create_connection", fail)
     monkeypatch.setattr(socket.socket, "connect", fail)
     monkeypatch.setattr(socket.socket, "connect_ex", fail)
@@ -93,11 +105,11 @@ def test_articles_migration_failure_is_transactional(tmp_path):
     version_two(path)
 
     def fail(connection):
-        MIGRATIONS[-1][1](connection)
+        MIGRATIONS[3][1](connection)
         raise RuntimeError("fictional migration failure")
 
     with pytest.raises(RuntimeError, match="fictional migration failure"):
-        Store(f"sqlite:///{path}", migrations=[*MIGRATIONS[:-1], (4, fail)])
+        Store(f"sqlite:///{path}", migrations=[*MIGRATIONS[:3], (4, fail)])
     with sqlite3.connect(path) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
         assert "article_ref" not in {r[1] for r in connection.execute("PRAGMA table_info(runs)")}
@@ -214,8 +226,8 @@ def test_first_audit_rerun_retains_history_and_labels(tmp_path):
         assert rerun.json()["workflow_id"] == client.get("/api/workflow").json()["id"]
 
 
-def test_first_audit_uses_disabled_model_engine(tmp_path):
-    config = settings(tmp_path)
+def test_first_audit_uses_disabled_model_engine(tmp_path, database_url):
+    config = settings(tmp_path, database_url=database_url)
     with TestClient(create_app(config, AuditEngine(config.engine_config()))) as client:
         ref = add_article(client.app.state.store)
         response = client.post(f"/api/articles/{ref}/audit")
@@ -312,17 +324,17 @@ def test_live_mode_articles_never_seed_demo_data(tmp_path):
 
 
 @pytest.mark.parametrize("configured", [False, True])
-def test_live_mode_article_audit_still_requires_live_ingestion(tmp_path, configured):
-    config = settings(tmp_path, api_auth_token=TOKEN if configured else "")
+def test_live_mode_article_audit_still_requires_live_ingestion(tmp_path, configured, database_url):
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN if configured else "")
     with TestClient(create_app(config, FakeEngine())) as client:
         ref = add_article(client.app.state.store, category="live")
         assert client.post(f"/api/articles/{ref}/audit", headers=AUTH).status_code == 404
         assert client.app.state.store.article(ref)["run_count"] == 0
 
 
-def test_audit_conflict_is_atomic_and_no_content(tmp_path):
+def test_audit_conflict_is_atomic_and_no_content(tmp_path, database_url):
     engine = FakeEngine(wait=True)
-    with TestClient(create_app(settings(tmp_path), engine)) as client:
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), engine)) as client:
         ref = add_article(client.app.state.store)
         with ThreadPoolExecutor(max_workers=2) as pool:
             responses = list(pool.map(lambda _: client.post(f"/api/articles/{ref}/audit"), range(2)))
@@ -339,8 +351,8 @@ def test_audit_conflict_is_atomic_and_no_content(tmp_path):
         assert client.get("/api/articles?status=in_progress").json()["total"] == 1
 
 
-def test_store_checks_in_progress_without_api_lock(tmp_path):
-    store = Store(f"sqlite:///{tmp_path / 'atomic.sqlite3'}")
+def test_store_checks_in_progress_without_api_lock(tmp_path, database_url):
+    store = Store(database_url)
     workflow(store)
     ref = add_article(store)
     def create(_):
@@ -357,14 +369,14 @@ def test_store_checks_in_progress_without_api_lock(tmp_path):
 
 
 @pytest.mark.parametrize("path", ["/api/articles/import", "/api/articles/missing/audit"])
-def test_article_writes_auth_and_origin_guards(tmp_path, path):
-    with TestClient(create_app(settings(tmp_path, api_auth_token=TOKEN), FakeEngine())) as client:
+def test_article_writes_auth_and_origin_guards(tmp_path, path, database_url):
+    with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN), FakeEngine())) as client:
         assert client.post(path).status_code == 401
         assert client.post(path, headers={"Authorization": "Bearer wrong"}).status_code == 401
         assert client.post(path, headers={**AUTH, "Origin": "https://untrusted.invalid"}).status_code == 403
         assert client.post(path, headers=AUTH).status_code in {404, 409}
         assert client.get("/api/articles").status_code == 401
-    with TestClient(create_app(settings(tmp_path), FakeEngine())) as client:
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), FakeEngine())) as client:
         assert client.post(path).status_code in {404, 409}
 
 
@@ -414,10 +426,10 @@ def test_test_mode_disables_import_and_lazy_archive_fill(tmp_path):
 
 
 @pytest.mark.parametrize("fail", [False, True])
-def test_archive_import_and_lazy_fill_once(tmp_path, fail):
+def test_archive_import_and_lazy_fill_once(tmp_path, fail, database_url):
     engine = FakeEngine()
     engine.archive = FakeArchive(fail)
-    with TestClient(create_app(settings(tmp_path), engine)) as client:
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), engine)) as client:
         imported = client.post("/api/articles/import?days=90")
         assert imported.status_code == 200
         assert imported.json() == {"imported": 1, "updated": 0, "skipped": 2}
@@ -443,13 +455,13 @@ def test_archive_import_and_lazy_fill_once(tmp_path, fail):
         assert client.post("/api/articles/ka-42/audit").status_code == 404
 
 
-def test_archive_unavailable_and_live_article_audit(tmp_path):
+def test_archive_unavailable_and_live_article_audit(tmp_path, database_url):
     engine = FakeEngine()
-    with TestClient(create_app(settings(tmp_path), engine)) as client:
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), engine)) as client:
         assert client.post("/api/articles/import").json() == {"error": {"code": "archive_unavailable"}}
         assert client.post("/api/articles/import").status_code == 409
     engine.archive = FakeArchive()
-    with TestClient(create_app(settings(tmp_path, api_auth_token=TOKEN, live_ingestion_enabled=True), engine)) as client:
+    with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, live_ingestion_enabled=True), engine)) as client:
         assert client.post("/api/articles/import", headers=AUTH).status_code == 200
         assert client.post("/api/articles/ka-42/audit", headers=AUTH).status_code == 422
         assert client.get("/api/articles/ka-42", headers=AUTH).status_code == 200
@@ -476,16 +488,16 @@ async def test_archive_client_get_only():
         await archive.close()
 
 
-def test_all_submission_routes_link_same_article(tmp_path):
-    with TestClient(create_app(settings(tmp_path, api_auth_token=TOKEN, live_ingestion_enabled=True), FakeEngine())) as client:
+def test_all_submission_routes_link_same_article(tmp_path, database_url):
+    with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, live_ingestion_enabled=True), FakeEngine())) as client:
         runs = [client.post(path, headers=AUTH, json=BODY).json() for path in
                 ("/api/benchmarks/runs", "/api/audit", "/api/webhooks/audit")]
         assert len({r["article_ref"] for r in runs}) == 1
         assert client.get("/api/articles", headers=AUTH).json()["items"][0]["run_count"] == 3
 
 
-def test_article_and_run_insert_rollback_together(tmp_path):
-    store = Store(f"sqlite:///{tmp_path / 'rollback.sqlite3'}")
+def test_article_and_run_insert_rollback_together(tmp_path, database_url):
+    store = Store(database_url)
     with pytest.raises(Exception):
         store.create_run(workflow_id="missing", category="benchmark", origin="benchmark", input=BODY)
     with Session(store.engine) as session:
@@ -494,8 +506,8 @@ def test_article_and_run_insert_rollback_together(tmp_path):
     store.close()
 
 
-def test_latest_run_drives_status_verdict_activity_and_search(tmp_path):
-    store = Store(f"sqlite:///{tmp_path / 'listing.sqlite3'}")
+def test_latest_run_drives_status_verdict_activity_and_search(tmp_path, database_url):
+    store = Store(database_url)
     workflow(store)
     ref = add_article(store, source="Fictional Wire", created_at="2026-11-01")
     other = add_article(store, url="https://second.example/story", created_at="2026-11-03")
@@ -530,8 +542,8 @@ def test_demo_articles_idempotent_and_non_demo_unchanged(tmp_path):
     store.close()
 
 
-def test_import_updates_metadata_and_keeps_existing_run_identity(tmp_path):
-    store = Store(f"sqlite:///{tmp_path / 'import.sqlite3'}")
+def test_import_updates_metadata_and_keeps_existing_run_identity(tmp_path, database_url):
+    store = Store(database_url)
     workflow(store)
     run = store.create_run(workflow_id="wf_test", category="benchmark", origin="benchmark", input=BODY)
     original = store.article(run["article_ref"])
@@ -554,11 +566,11 @@ def test_import_updates_metadata_and_keeps_existing_run_identity(tmp_path):
     store.close()
 
 
-def test_archive_connection_credentials_never_in_article_response(tmp_path):
+def test_archive_connection_credentials_never_in_article_response(tmp_path, database_url):
     engine = FakeEngine()
     engine.archive = FakeArchive()
     engine.archive.base_url = "https://fictional-user:fictional-pass@archive.example/private-api"
-    with TestClient(create_app(settings(tmp_path), engine)) as client:
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), engine)) as client:
         assert client.post("/api/articles/import").status_code == 200
         response = client.get("/api/articles/ka-42")
         assert response.status_code == 200
@@ -591,16 +603,16 @@ def test_migration_batches_metadata_and_links_for_two_thousand_runs(tmp_path):
     def migrate(connection):
         event.listen(connection, "before_cursor_execute", capture)
         try:
-            MIGRATIONS[-1][1](connection)
+            MIGRATIONS[3][1](connection)
         finally:
             event.remove(connection, "before_cursor_execute", capture)
-    store = Store(f"sqlite:///{path}", migrations=[*MIGRATIONS[:-1], (4, migrate)])
+    store = Store(f"sqlite:///{path}", migrations=[*MIGRATIONS[:3], (4, migrate)])
     try:
         assert len(statements) < 100  # Batch statements, well below two per run.
         content_reads = [params for sql, params, _many in statements
-                         if sql.startswith("SELECT runs.id, json_extract")]
+                         if sql.startswith("SELECT runs.id, JSON_EXTRACT")]
         assert len(content_reads) == 1
-        assert len(content_reads[0]) == 5  # JSON path plus one first-run ID per URL.
+        assert len(content_reads[0]) == 6  # JSON path plus one first-run ID per URL.
         links = [(params, many) for sql, params, many in statements if sql.startswith("UPDATE runs")]
         assert len(links) == 4 and all(many and len(params) == 500 for params, many in links)
         assert store.articles()["total"] == 4
@@ -614,7 +626,7 @@ def test_migration_batches_metadata_and_links_for_two_thousand_runs(tmp_path):
             assert detail["title"] == f"Fictional École {i}"
         before = store.articles()
         with store.engine.begin() as connection:
-            MIGRATIONS[-1][1](connection)  # A repeated backfill is also a no-op.
+            MIGRATIONS[3][1](connection)  # A repeated backfill is also a no-op.
         assert store.articles() == before
     finally:
         store.close()
@@ -623,10 +635,10 @@ def test_migration_batches_metadata_and_links_for_two_thousand_runs(tmp_path):
     reopened.close()
 
 
-def test_archive_identity_merges_url_article_and_refills_after_url_change(tmp_path):
+def test_archive_identity_merges_url_article_and_refills_after_url_change(tmp_path, database_url):
     engine = FakeEngine()
     engine.archive = FakeArchive()
-    with TestClient(create_app(settings(tmp_path), engine)) as client:
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), engine)) as client:
         store = client.app.state.store
         workflow(store)
         assert client.post("/api/articles/import").json()["imported"] == 1
@@ -665,11 +677,11 @@ def test_archive_identity_merges_url_article_and_refills_after_url_change(tmp_pa
 
 
 @pytest.mark.parametrize("upgrade", [False, True])
-def test_archive_id_unique_for_fresh_and_migrated_databases(tmp_path, upgrade):
+def test_archive_id_unique_for_fresh_and_migrated_databases(tmp_path, upgrade, database_url):
     path = tmp_path / "unique.sqlite3"
     if upgrade:
         version_two(path)
-    store = Store(f"sqlite:///{path}")
+    store = Store(f"sqlite:///{path}" if upgrade else database_url)
     try:
         store.import_articles([{"article_id": 42, "url": "https://paper.example/first"}])
         with pytest.raises(IntegrityError), Session(store.engine) as session, session.begin():
@@ -735,8 +747,8 @@ def test_demo_metadata_repair_requires_literal_demo_run_ownership(tmp_path):
         store.close()
 
 
-def test_unicode_search_normalization_updates_and_literal_wildcards(tmp_path):
-    store = Store(f"sqlite:///{tmp_path / 'unicode.sqlite3'}")
+def test_unicode_search_normalization_updates_and_literal_wildcards(tmp_path, database_url):
+    store = Store(database_url)
     workflow(store)
     try:
         payload = {"removed_article": {"url": "https://unicode.example/fictional",
@@ -761,8 +773,8 @@ def test_unicode_search_normalization_updates_and_literal_wildcards(tmp_path):
         store.close()
 
 
-def test_archive_merge_rolls_back_links_and_deleted_row_on_failure(tmp_path):
-    store = Store(f"sqlite:///{tmp_path / 'merge-rollback.sqlite3'}")
+def test_archive_merge_rolls_back_links_and_deleted_row_on_failure(tmp_path, database_url):
+    store = Store(database_url)
     workflow(store)
     try:
         store.import_articles([{"article_id": 42, "url": "https://paper.example/old"}])
@@ -785,8 +797,8 @@ def test_archive_merge_rolls_back_links_and_deleted_row_on_failure(tmp_path):
         store.close()
 
 
-def test_import_preserves_run_owned_archive_identity_on_conflicts(tmp_path):
-    store = Store(f"sqlite:///{tmp_path / 'url-identity.sqlite3'}")
+def test_import_preserves_run_owned_archive_identity_on_conflicts(tmp_path, database_url):
+    store = Store(database_url)
     workflow(store)
     try:
         run = store.create_run(workflow_id="wf_test", category="benchmark", origin="benchmark", input=BODY)
@@ -802,11 +814,11 @@ def test_import_preserves_run_owned_archive_identity_on_conflicts(tmp_path):
         store.close()
 
 
-def test_stale_archive_fill_after_concurrent_url_change_is_dropped(tmp_path):
+def test_stale_archive_fill_after_concurrent_url_change_is_dropped(tmp_path, database_url):
     """A detail fetch started for one URL must not fill the article after an import moved it."""
     engine = FakeEngine()
     engine.archive = FakeArchive()
-    with TestClient(create_app(settings(tmp_path), engine)) as client:
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), engine)) as client:
         store = client.app.state.store
         assert client.post("/api/articles/import").json()["imported"] == 1
         new_url = "https://paper.example/moved-fictional-address"
@@ -830,8 +842,8 @@ def test_stale_archive_fill_after_concurrent_url_change_is_dropped(tmp_path):
         assert client.get("/api/articles/ka-42").json()["content"] == FICTION
 
 
-def test_fill_article_rejects_a_different_archive_record(tmp_path):
-    store = Store(f"sqlite:///{tmp_path / 'fill.sqlite3'}")
+def test_fill_article_rejects_a_different_archive_record(tmp_path, database_url):
+    store = Store(database_url)
     try:
         store.import_articles([{"article_id": 42, "url": "https://paper.example/archived"}])
         article = store.article("ka-42")

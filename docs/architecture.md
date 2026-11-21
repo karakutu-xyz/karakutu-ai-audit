@@ -10,7 +10,7 @@ this page links to them instead of repeating them.
 flowchart LR
     UI["Review UI<br/>React + Vite<br/>web/src"] -->|"/api (same origin)"| API["API<br/>FastAPI<br/>backend/audit/api.py"]
     API -->|"queued run"| WF["Audit workflow<br/>LangGraph, six steps<br/>backend/audit/engine.py"]
-    API <--> DB[("SQLite<br/>runs, workflows,<br/>reactions, prompts")]
+    API <--> DB[("SQLite / PostgreSQL<br/>runs, workflows,<br/>reactions, prompts")]
     WF -->|"each finished step"| DB
     WF -->|"chat completions"| M["Model endpoint<br/>OpenAI-compatible"]
     WF -->|"web search"| S["SearXNG"]
@@ -18,7 +18,7 @@ flowchart LR
     WF -->|"read-only"| AR["Archive API<br/>(optional)"]
 ```
 
-One process runs the API and the workflow. A submitted article becomes a queued run in SQLite;
+One process runs the API and the workflow. A submitted article becomes a queued run in the configured database;
 an in-process task then runs the six steps and saves each step as it finishes. The UI
 reads runs, appends reviewer reactions and controls local execution (stop audits or
 pause the queue). Nothing writes back to the archive.
@@ -122,8 +122,8 @@ person must review it.
 
 ## Data model
 
-SQLite through SQLAlchemy, one file per mode (`data/audit.sqlite3` live,
-`data/demo/audit-test.sqlite3` test). Tables are defined in [`db.py`](../backend/audit/db.py):
+SQLAlchemy supports SQLite by default (`data/audit.sqlite3` live,
+`data/demo/audit-test.sqlite3` test) and PostgreSQL/psycopg for live mode. Tables are defined in [`db.py`](../backend/audit/db.py):
 
 | Table | Holds | Changes |
 | --- | --- | --- |
@@ -135,8 +135,9 @@ SQLite through SQLAlchemy, one file per mode (`data/audit.sqlite3` live,
 | `model_assignments` | Per-step model choices made through the API | Append only |
 
 Runs and steps keep evidence as JSON, so evidence formats can grow without a migration. Schema
-changes are numbered migrations tracked with `PRAGMA user_version`; migration 4 added `articles`
-and `runs.article_ref` and linked existing runs to articles. The rules for adding one,
+changes are numbered migrations tracked with SQLite `PRAGMA user_version` or the
+PostgreSQL `schema_version` table. Migration 4 linked runs to articles; migration 5
+adds portable append-order metadata and widens unbounded archive fields. The rules for adding one,
 plus the full column list and every route, are in [the data and API guide](data-and-api.md).
 
 ## Provenance and the workflow fingerprint
@@ -164,7 +165,7 @@ is how you compare two versions of the workflow on the same benchmark cases. Mor
 | | Test | Live |
 | --- | --- | --- |
 | Engine | `DemoEngine` ([`demo_engine.py`](../backend/audit/demo_engine.py)): offline, deterministic, fabricated step records | `AuditEngine`: real model, search, page fetches and optional archive reads |
-| Database | `data/demo/audit-test.sqlite3`; only a test database is accepted (named `*-test.sqlite3` or under `data/demo/`) | `data/audit.sqlite3`; a test database, or any file holding demo data, is refused |
+| Database | `data/demo/audit-test.sqlite3`; only a test database is accepted (named `*-test.sqlite3` or under `data/demo/`) | SQLite `data/audit.sqlite3` or PostgreSQL through DATABASE_URL; SQLite test/demo files are refused |
 | Demo data | Seeded by `audit.demo.seed()` on every start | None |
 | Settings read | Access settings only (`DATA_DIR`, `API_AUTH_TOKEN`, `ALLOWED_HOSTS`, `ALLOWED_ORIGINS`, `MAX_CONCURRENT_RUNS`) | All of `.env` |
 | UI | **Test mode · demo data** pill in the top bar | **Live** pill in the top bar |

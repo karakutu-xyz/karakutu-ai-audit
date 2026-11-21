@@ -17,7 +17,7 @@ article was removed.
   agree with the result.
 - An **API and workflow** (FastAPI, LangGraph) that runs six ordered steps, uses a language
   model to find and describe evidence, and picks the verdict with deterministic rules.
-- A **local record** (SQLite) of every run: input, each step's evidence, exact model requests
+- A **durable record** (SQLite by default, optional PostgreSQL) of every run: input, each step's evidence, exact model requests
   and responses, and a fingerprint of the code, settings and prompts that produced it.
 
 ## What it is not

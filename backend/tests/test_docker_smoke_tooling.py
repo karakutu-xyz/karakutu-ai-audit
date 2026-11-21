@@ -79,3 +79,100 @@ def test_backup_never_archives_the_reserved_restore_directory():
     spec.loader.exec_module(volume_restore)
     makefile = (ROOT / "Makefile").read_text()
     assert f"--exclude=./{volume_restore.ASIDE} -C /data ." in makefile
+
+
+def test_postgres_is_optional_and_loopback_only():
+    import yaml
+
+    text = (ROOT / "compose.postgres.yaml").read_text()
+    service = yaml.safe_load(text)["services"]["db"]
+    assert service["image"] == "postgres:17-alpine"
+    assert service["ports"] == ["127.0.0.1:5432:5432"]
+    assert "POSTGRES_PASSWORD:?" in service["environment"]["POSTGRES_PASSWORD"]
+    assert "healthcheck" in service and service["volumes"]
+    makefile = (ROOT / "Makefile").read_text()
+    assert "LIVE_FILES ?= -f compose.yaml" in makefile
+    assert "$(MAKE) test-postgres" in makefile
+    assert "backup: storage-sqlite" in makefile
+    assert "restore: storage-sqlite" in makefile
+
+
+def test_postgres_runner_cleans_up_without_printing_passwords(tmp_path):
+    import os
+    import subprocess
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    events = tmp_path / "events"
+    fake = '''#!/usr/bin/env python3
+import os
+from pathlib import Path
+import re
+import sys
+name = Path(sys.argv[0]).name
+args = sys.argv[1:]
+if name == "docker":
+    with open(os.environ["POSTGRES_TEST_EVENTS"], "a") as output:
+        output.write(" ".join(args) + "\\n")
+    if args[0] == "run":
+        assert re.fullmatch("[a-f0-9]{32}", os.environ["POSTGRES_PASSWORD"])
+        if os.environ["POSTGRES_TEST_FAIL"] == "run":
+            sys.exit(1)
+        print("invented-container-id")
+else:
+    assert args[:3] == ["run", "pytest", "-q"]
+    from urllib.parse import urlsplit
+    url = urlsplit(os.environ["TEST_POSTGRES_URL"])
+    assert re.fullmatch("[a-f0-9]{32}", url.password)
+    assert url.hostname == "127.0.0.1" and url.port == 25432
+    sys.exit(1 if os.environ["POSTGRES_TEST_FAIL"] == "pytest" else 0)
+'''
+    for name in ("docker", "uv"):
+        path = bin_dir / name
+        path.write_text(fake)
+        path.chmod(0o700)
+    # Avoid even reserving a port; the fake Docker command never opens a socket.
+    python = bin_dir / "python3"
+    python.write_text("#!/bin/sh\nif [ \"$1\" = - ]; then cat >/dev/null; "
+                      "echo 25432; else exec \"$POSTGRES_TEST_PYTHON\" \"$@\"; fi\n")
+    python.chmod(0o700)
+    import sys
+    for failure in ("none", "pytest", "run"):
+        events.write_text("")
+        env = {**os.environ, "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
+               "POSTGRES_TEST_EVENTS": str(events), "POSTGRES_TEST_FAIL": failure,
+               "POSTGRES_TEST_PYTHON": sys.executable}
+        result = subprocess.run(["bash", str(ROOT / "scripts/test_postgres.sh")],
+                                env=env, capture_output=True, text=True)
+        assert result.returncode == (0 if failure == "none" else 1)
+        commands = events.read_text().splitlines()
+        assert commands[0].startswith("run --rm -d")
+        assert "-e POSTGRES_PASSWORD " in commands[0]
+        assert "127.0.0.1:25432:5432" in commands[0]
+        if failure == "run":
+            assert len(commands) == 1
+        else:
+            assert commands[-1] == "rm -f invented-container-id"
+        assert result.stdout == result.stderr == ""
+
+
+def test_volume_guard_refuses_postgres_before_any_database_access():
+    import os
+    import subprocess
+    import sys
+
+    makefile = (ROOT / "Makefile").read_text()
+    guard = re.search(r"^\t  '(import os,sys;[^\n]+)'$", makefile, re.M).group(1)
+    url = "postgresql+psycopg://audit:fictional-private-password@db.example.invalid/audit"
+    env = {**os.environ, "DATABASE_URL": url,
+           "PYTHONPATH": str(ROOT / "backend")}
+    refused = subprocess.run([sys.executable, "-c", guard], env=env,
+                             capture_output=True, text=True)
+    assert refused.returncode == 1
+    assert refused.stderr.strip() == (
+        "backup/restore supports SQLite only; use PostgreSQL provider backups")
+    assert "fictional-private-password" not in refused.stdout + refused.stderr
+    env["DATABASE_URL"] = ""
+    allowed = subprocess.run([sys.executable, "-c", guard], env=env,
+                             capture_output=True, text=True)
+    assert allowed.returncode == 0 and not allowed.stdout + allowed.stderr

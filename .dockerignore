@@ -11,6 +11,7 @@ searxng/*
 !compose.yaml
 !compose.search.yaml
 !compose.test.yaml
+!compose.postgres.yaml
 !web/
 web/*
 !web/package.json

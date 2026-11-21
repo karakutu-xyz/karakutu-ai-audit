@@ -14,7 +14,7 @@ VOLUME ?= $(PROJECT)_karakutu-audit-data
 API_IMAGE ?= $(PROJECT)-karakutu-audit-api
 STAMP := $(shell date -u +%Y%m%dT%H%M%SZ)
 
-.PHONY: env dev test live down test-reset logs smoke backup restore
+.PHONY: env dev test live down test-reset logs smoke backup restore test-postgres storage-sqlite
 
 # Mock data only: offline demo engine, fake integrations, its own database and volume.
 test:
@@ -40,9 +40,14 @@ test-reset:
 logs:
 	$(LIVE) logs -f karakutu-audit-api
 
+# Inspect the effective database setting before SQLite volume operations.
+storage-sqlite:
+	@$(LIVE) run --rm --no-deps -T --entrypoint python karakutu-audit-api -c \
+	  'import os,sys; from audit.config import database_backend; url=os.environ.get("DATABASE_URL", ""); sys.exit("backup/restore supports SQLite only; use PostgreSQL provider backups" if url and database_backend(url).get_backend_name() != "sqlite" else 0)'
+
 # Copy the live data volume into BACKUP_DIR while the API is stopped, then start it again.
 # Paths are resolved by the shell (not Make's abspath), so they may contain spaces.
-backup:
+backup: storage-sqlite
 	@test -n "$(BACKUP_DIR)" -a -d "$(BACKUP_DIR)" || { echo "set BACKUP_DIR to an existing directory"; exit 1; }
 	$(LIVE) stop karakutu-audit-api
 	dir="$$(cd "$(BACKUP_DIR)" && pwd)" \
@@ -57,7 +62,7 @@ backup:
 # so a damaged backup changes nothing (scripts/volume_restore.py). START=0 leaves the API stopped
 # afterwards (used for a rollback to an older version).
 START ?= 1
-restore:
+restore: storage-sqlite
 	@test -f "$(BACKUP_FILE)" || { echo "set BACKUP_FILE to a backup archive"; exit 1; }
 	$(LIVE) stop karakutu-audit-api
 	file="$$(cd "$$(dirname "$(BACKUP_FILE)")" && pwd)/$$(basename "$(BACKUP_FILE)")" \
@@ -74,6 +79,11 @@ restore:
 # builds, own project names, ports and volumes; cleans up after itself. See docs/deploy-docker.md.
 smoke:
 	scripts/docker_smoke.sh
+	$(MAKE) test-postgres
+
+# Starts only a throwaway local database; no application server.
+test-postgres:
+	bash scripts/test_postgres.sh
 
 # Create settings once; API_TOKEN=1 opts into generating a bearer token.
 API_TOKEN ?= 0

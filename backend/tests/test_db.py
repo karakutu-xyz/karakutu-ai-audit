@@ -25,8 +25,8 @@ def create(store, category="benchmark", workflow_id="wf_test"):
                             origin="benchmark" if category == "benchmark" else "api", input=INPUT)
 
 
-def test_persist_restart_and_immutable_workflow(tmp_path):
-    url = f"sqlite:///{tmp_path / 'audit.sqlite3'}"
+def test_persist_restart_and_immutable_workflow(tmp_path, database_url):
+    url = database_url
     store = Store(url)
     first = workflow(store)
     replacement = {**first, "created_at": "changed", "definition": {"changed": True}}
@@ -52,8 +52,8 @@ def test_persist_restart_and_immutable_workflow(tmp_path):
     reopened.close()
 
 
-def test_filter_pagination_and_reactions_keep_run_workflow(tmp_path):
-    store = Store(f"sqlite:///{tmp_path / 'test.sqlite3'}")
+def test_filter_pagination_and_reactions_keep_run_workflow(tmp_path, database_url):
+    store = Store(database_url)
     workflow(store)
     workflow(store, "wf_other")
     a = create(store)
@@ -153,7 +153,7 @@ def test_old_schema_upgrades_once_and_column_migration(tmp_path):
     calls = []
 
     def add_column(connection):
-        calls.append(5)
+        calls.append(6)
         connection.exec_driver_sql("ALTER TABLE workflows ADD COLUMN migration_marker TEXT")
         connection.exec_driver_sql("UPDATE workflows SET migration_marker='preserved'")
 
@@ -164,7 +164,7 @@ def test_old_schema_upgrades_once_and_column_migration(tmp_path):
         return wrapped
 
     migrations = [(version, counted(version, migration)) for version, migration in MIGRATIONS]
-    migrations.append((5, add_column))
+    migrations.append((6, add_column))
     for _ in range(2):
         store = Store(f"sqlite:///{path}", migrations=migrations)
         assert store.workflow("wf_old") == {"retained": True}
@@ -172,10 +172,10 @@ def test_old_schema_upgrades_once_and_column_migration(tmp_path):
         assert store.run("run_old")["reactions"][0]["id"] == "rx_old"
         assert {"prompt_versions", "prompt_activations"} <= set(inspect(store.engine).get_table_names())
         with store.engine.connect() as connection:
-            assert connection.exec_driver_sql("PRAGMA user_version").scalar_one() == 5
+            assert connection.exec_driver_sql("PRAGMA user_version").scalar_one() == 6
             assert connection.exec_driver_sql("SELECT migration_marker FROM workflows").scalar_one() == "preserved"
         store.close()
-    assert calls == [1, 2, 3, 4, 5]
+    assert calls == [1, 2, 3, 4, 5, 6]
 
 
 def test_failed_migration_rolls_back_ddl_rows_and_version(tmp_path):
@@ -189,7 +189,7 @@ def test_failed_migration_rolls_back_ddl_rows_and_version(tmp_path):
         raise RuntimeError("fabricated migration failure")
 
     with pytest.raises(RuntimeError, match="fabricated migration failure"):
-        Store(f"sqlite:///{path}", migrations=[*MIGRATIONS, (5, fail)])
+        Store(f"sqlite:///{path}", migrations=[*MIGRATIONS, (6, fail)])
     with sqlite3.connect(path) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert "abandoned" not in [row[1] for row in connection.execute("PRAGMA table_info(workflows)")]
@@ -198,11 +198,11 @@ def test_failed_migration_rolls_back_ddl_rows_and_version(tmp_path):
     store.close()
 
 
-def test_prompt_seeding_default_updates_and_api_precedence(tmp_path):
+def test_prompt_seeding_default_updates_and_api_precedence(tmp_path, database_url):
     import hashlib
     from audit.db import PromptStoreError
     from audit.workflow.prompt_registry import DEFAULTS
-    url = f"sqlite:///{tmp_path / 'prompts.sqlite3'}"
+    url = database_url
     store = Store(url)
     store.sync_prompt_defaults(DEFAULTS)
     store.sync_prompt_defaults(DEFAULTS)
@@ -255,11 +255,11 @@ def test_default_registry_matches_source_constants_exactly():
 
 
 @pytest.mark.parametrize("kind", ["activate", "rollback"])
-def test_prompt_activation_workflow_insert_failure_rolls_back(tmp_path, kind):
+def test_prompt_activation_workflow_insert_failure_rolls_back(tmp_path, kind, database_url):
     from sqlalchemy import event
     from audit.db import Workflow
     from audit.workflow.prompt_registry import DEFAULTS
-    store = Store(f"sqlite:///{tmp_path / 'atomic.sqlite3'}")
+    store = Store(database_url)
     try:
         store.sync_prompt_defaults(DEFAULTS)
         version = store.create_prompt_version("relevance", DEFAULTS["relevance"] + "\nFabricated atomic edit", "Reviewer", "")
@@ -297,11 +297,11 @@ def test_prompt_activation_workflow_insert_failure_rolls_back(tmp_path, kind):
         store.close()
 
 
-def test_activation_order_uses_append_order_when_timestamps_tie(monkeypatch):
+def test_activation_order_uses_append_order_when_timestamps_tie(monkeypatch, database_url):
     import audit.db as db
     from audit.workflow.prompt_registry import DEFAULTS
     monkeypatch.setattr(db, 'now', lambda: 'fabricated-identical-timestamp')
-    store = Store('sqlite:///:memory:')
+    store = Store(database_url)
     try:
         store.sync_prompt_defaults(DEFAULTS)
         created = store.create_prompt_version('relevance', DEFAULTS['relevance'] + '\nFabricated change', 'Reviewer', '')
@@ -335,13 +335,13 @@ def test_version_two_migrates_assignments_without_changing_existing_data(tmp_pat
         assert store.active_prompts() == prompts
         assert store.model_assignments() == {}
         with store.engine.connect() as connection:
-            assert connection.exec_driver_sql('PRAGMA user_version').scalar_one() == SCHEMA_VERSION == 4
+            assert connection.exec_driver_sql('PRAGMA user_version').scalar_one() == SCHEMA_VERSION == 5
         store.close()
 
 
 @pytest.mark.parametrize("running", [False, True])
-def test_cancel_is_terminal_and_keeps_recorded_steps(tmp_path, running):
-    store = Store(f"sqlite:///{tmp_path / 'test.sqlite3'}")
+def test_cancel_is_terminal_and_keeps_recorded_steps(tmp_path, running, database_url):
+    store = Store(database_url)
     workflow(store)
     run_id = create(store)["id"]
     if running:
@@ -366,8 +366,8 @@ def test_cancel_is_terminal_and_keeps_recorded_steps(tmp_path, running):
 
 
 @pytest.mark.parametrize("failed", [False, True])
-def test_terminal_result_cannot_be_overwritten(tmp_path, failed):
-    store = Store(f"sqlite:///{tmp_path / 'test.sqlite3'}")
+def test_terminal_result_cannot_be_overwritten(tmp_path, failed, database_url):
+    store = Store(database_url)
     workflow(store)
     run_id = create(store)["id"]
     if failed:

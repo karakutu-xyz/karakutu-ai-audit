@@ -4,13 +4,18 @@ Read README, docs/architecture.md, docs/workflow.md and docs/contributing.md bef
 
 ## Architecture
 
-- TypeScript/React/Vite in `web/`; FastAPI in `backend/audit/api.py`; SQLAlchemy/SQLite in `db.py`.
+- TypeScript/React/Vite in `web/`; FastAPI in `backend/audit/api.py`; SQLAlchemy with SQLite (default) or PostgreSQL/psycopg in `db.py`.
 - `engine.py` is the LangGraph composition root, six ordered steps; `workflow/` owns prompts/rules and the editable-prompt registry (byte-exact defaults stay in `prompts.py`); `search/` is the only caller-influenced page-fetch boundary.
 - `model.py` is a bounded OpenAI-compatible JSON adapter, not pydantic-ai. Model output never has authority to declare censorship. `workflow/pipeline.py` selects evidence verdicts; engine handles low-interest and failed execution exits.
 - `provenance.py` fingerprints backend source, prompts, locked dependencies, search configuration and behavior settings. Active DB prompt texts and effective step models join the format-3 definition; submissions capture both before queueing. Model assignments and prompt activations share one lock and atomically save snapshots; latest API model assignments override env (null selects the default). Every run/reaction links its immutable workflow snapshot. Never mutate historical run input or workflow snapshots.
 - `config.py` reads environment when constructed; tests inject Settings/engines. One process; no multiprocess workers against the in-process queue.
 - `RUN_MODE` (`config.py`) picks `live` (default) or `test`. Test mode swaps in `demo_engine.DemoEngine` (offline, synthetic), forces every integration off, uses only a `*-test.sqlite3` database and seeds it through `audit.demo.seed(database_url)` at startup; `compose.test.yaml` and the `Makefile` run it as a separate Compose project.
 - `compose.yaml` runs the non-root API/UI images plus search; `Tiltfile.stack` loads only `compose.search.yaml` and keeps local hot reload. API/UI/search ports: 2200/2201/2202, loopback by default. API/UI Docker binding and allowed hosts/origins are configurable; non-loopback allowed hosts require bearer authentication. All Compose files, including `compose.test.yaml`, are provenance dependencies.
+
+- Storage dialect differences belong in `db.py`: SQLite keeps pragmas, `user_version`
+  and rowid ordering; PostgreSQL uses JSONB, `schema_version`, identity `seq` ordering
+  and a transaction advisory writer lock. Test mode and demo seeding stay SQLite-only.
+  Keep database credentials out of errors and logs. One API process remains required.
 
 ## Invariants
 

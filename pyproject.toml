@@ -15,6 +15,7 @@ dependencies = [
   "httpx==0.28.1",
   "python-dotenv>=1,<2",
   "cryptography>=46,<47",
+  "psycopg[binary]>=3.2,<4",
 ]
 
 [dependency-groups]
@@ -39,6 +40,7 @@ asyncio_default_fixture_loop_scope = "function"
 testpaths = ["backend/tests"]
 pythonpath = ["backend"]
 addopts = "--tb=short"
+markers = ["postgres: isolated PostgreSQL storage integration"]
 
 [tool.ruff]
 line-length = 100

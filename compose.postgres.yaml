@@ -1,0 +1,23 @@
+# Optional local PostgreSQL; unused unless explicitly included with -f.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: audit
+      POSTGRES_DB: audit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD for local PostgreSQL}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - karakutu-audit-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U audit -d audit"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  karakutu-audit-postgres:

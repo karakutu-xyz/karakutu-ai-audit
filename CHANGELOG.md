@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add optional PostgreSQL storage, verified SQLite data copying and isolated database checks.
+
 - Add a Stop audit button to the article page's side rail while the latest audit is queued or running; after a stop the page shows the stopped run and reloads the article.
 - Parse local settings literally without shell evaluation, allow unauthenticated compatible model servers, and diagnose Docker model startup failures through logs.
 - Keep internal tracker ids and personal names out of public files: the data-hygiene check now fails on tracker ids (`KRK-` and four digits) in any tracked file or path, binaries included, and docs and comments describe related changes in plain words.
