@@ -70,9 +70,15 @@ children=()
 search_started=0
 cleanup() {
   trap - EXIT INT TERM
-  if (( ${#children[@]} )); then
-    kill "${children[@]}" 2>/dev/null || true
-    wait "${children[@]}" 2>/dev/null || true
+  # Every background job, not only `children`: a Ctrl-C can land after a child
+  # starts but before its PID is recorded, and that child must not outlive us.
+  local jobs_left
+  jobs_left=$(jobs -p)
+  if [[ -n "$jobs_left" ]]; then
+    # shellcheck disable=SC2086 # one PID per word
+    kill $jobs_left 2>/dev/null || true
+    # shellcheck disable=SC2086
+    wait $jobs_left 2>/dev/null || true
   fi
   if (( search_started )); then
     docker compose -p karakutu-ai-audit -f compose.search.yaml stop \
