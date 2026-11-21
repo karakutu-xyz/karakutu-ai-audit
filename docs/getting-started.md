@@ -213,6 +213,10 @@ make env
 RUN_MODE=test make dev
 ```
 
+After a pull, `make dev` first checks offline that both installs still match
+`web/package-lock.json` and `uv.lock`. If not, it starts nothing and names the command to
+run (`npm --prefix web ci` or `uv sync --frozen`).
+
 Ctrl-C stops the children. For live integrations, load a chat model in LM Studio,
 check the values setup lists, then run `RUN_MODE=live make dev`. API/UI ports use
 KARAKUTU_API_PORT/KARAKUTU_WEB_PORT (2200/2201 by default), and Vite's API proxy
@@ -325,6 +329,11 @@ model's raw response, so you can see what went wrong.
 `.env.example` to `.env`.
 
 **`make test` fails on `!reset`.** Your Docker Compose is older than 2.24. Update it.
+
+**`make dev` says "Web dependencies are missing or out of date".** The checkout was updated
+but `web/node_modules` comes from an older install; without the check, Vite would fail with
+"Failed to resolve import". Run `npm --prefix web ci`. For "Python dependencies", run
+`uv sync --frozen`.
 
 **A port is already in use.** Another mode or Tilt is still running. Run `make down` and stop
 Tilt.

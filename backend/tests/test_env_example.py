@@ -307,16 +307,70 @@ def test_gitignore_covers_runtime_settings_without_creating_them():
                           cwd=ROOT).returncode == 1
 
 
+FAKE_UV_SYNC = """#!/bin/sh
+# Stands in for `uv sync --check`; current unless the test says otherwise.
+exit "${FAKE_UV_SYNC_EXIT:-0}"
+"""
+
+
+def runner_repo(tmp_path):
+    """A copy of the runner scripts with a current fabricated install.
+
+    The dependency check must judge this fixture, not the checkout running the tests.
+    """
+    repo, bin_dir = tmp_path / "repo", tmp_path / "repo-bin"
+    if repo.exists():
+        return repo, bin_dir
+    (repo / "scripts").mkdir(parents=True)
+    for name in ("run-local.sh", "env_requirements.py", "check_local_deps.py"):
+        shutil.copy2(SCRIPTS / name, repo / "scripts" / name)
+    shutil.copy2(ROOT / ".env.example", repo / ".env.example")
+    lock = json.dumps({"lockfileVersion": 3, "packages": {
+        "": {"name": "fictional-web"},
+        "node_modules/fictional-dep": {"version": "1.0.0"},
+    }})
+    (repo / "web/node_modules").mkdir(parents=True)
+    (repo / "web/package-lock.json").write_text(lock)
+    (repo / "web/node_modules/.package-lock.json").write_text(lock)
+    bin_dir.mkdir()
+    (bin_dir / "uv").write_text(FAKE_UV_SYNC)
+    (bin_dir / "uv").chmod(0o700)
+    return repo, bin_dir
+
+
 def runner(tmp_path, text=None, *, mode=None, extra_env=None):
     path = tmp_path / ".env"
     if text is not None:
         path.write_text(text)
+    repo, bin_dir = runner_repo(tmp_path)
     env = {key: value for key, value in os.environ.items() if key not in example_blocks()}
     if mode:
         env["RUN_MODE"] = mode
     env.update(extra_env or {})
-    return subprocess.run(["bash", str(SCRIPTS / "run-local.sh"), "--check", "--env-file",
+    env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+    return subprocess.run(["bash", str(repo / "scripts/run-local.sh"), "--check", "--env-file",
                            str(path)], cwd=tmp_path, env=env, text=True, capture_output=True)
+
+
+def test_runner_stops_on_a_stale_web_install_with_the_command(tmp_path):
+    result = runner(tmp_path, "RUN_MODE=test\n")
+    assert result.returncode == 0, result.stderr
+    assert "dependencies" not in result.stdout + result.stderr  # Quiet when current.
+    installed = tmp_path / "repo/web/node_modules/.package-lock.json"
+    installed.write_text(installed.read_text().replace("1.0.0", "0.9.0"))
+    result = runner(tmp_path)
+    assert result.returncode != 0
+    assert "run: npm --prefix web ci" in result.stderr
+    assert "uv sync" not in result.stderr
+    assert "Would start" not in result.stdout
+
+
+def test_runner_stops_on_a_stale_python_install_with_the_command(tmp_path):
+    result = runner(tmp_path, "RUN_MODE=test\n", extra_env={"FAKE_UV_SYNC_EXIT": "1"})
+    assert result.returncode != 0
+    assert "run: uv sync --frozen" in result.stderr
+    assert "npm" not in result.stderr
+    assert "Would start" not in result.stdout
 
 
 def test_runner_missing_file_names_setup(tmp_path):
@@ -434,7 +488,7 @@ path = Path(os.environ["RUNNER_TEST_EVENTS"])
 def log(message):
     with path.open("a") as output:
         output.write(name + " " + message + "\\n")
-if name == "docker":
+if name == "docker" or sys.argv[1:2] == ["sync"]:
     log(" ".join(sys.argv[1:]))
     sys.exit(0)
 def stop(*_):
@@ -455,7 +509,8 @@ while True:
     env = {key: value for key, value in os.environ.items() if key not in example_blocks()}
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
     env["RUNNER_TEST_EVENTS"] = str(events)
-    process = subprocess.Popen(["bash", str(SCRIPTS / "run-local.sh"), "--env-file",
+    repo, _ = runner_repo(tmp_path)
+    process = subprocess.Popen(["bash", str(repo / "scripts/run-local.sh"), "--env-file",
                                 str(env_path)], cwd=tmp_path, env=env,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
@@ -471,6 +526,8 @@ while True:
         process.communicate(timeout=5)
         text = events.read_text()
         assert "uv stopped" in text and "node stopped" in text
+        # The offline dependency check runs before anything starts.
+        assert text.index("uv sync --frozen --check --offline") < text.index("uv started")
         assert ("docker " in text) == search
         if search:
             assert "up -d --wait" in text

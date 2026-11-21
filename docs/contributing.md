@@ -70,6 +70,7 @@ archive or real dataset.
 | `test_workflow_archive_auth.py` | Archive sign-in and the read-only client |
 | `test_model_profiles.py` | Provider profiles, response formats and step models |
 | `test_demo_seed.py`, `test_demo_engine.py` | The demo dataset and the offline test-mode engine |
+| `test_local_deps.py` | The offline install check `make dev` runs before starting |
 | `test_data_hygiene.py`, `test_docker_context.py` | The hygiene check and the Docker build context |
 | `test_docker_smoke_tooling.py`, `test_volume_restore.py` | Compose and Make settings for deployment, the smoke suite's fake model, and the validated, reversible volume restore |
 
