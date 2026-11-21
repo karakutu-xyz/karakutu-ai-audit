@@ -566,6 +566,12 @@ test("article plain text preserves text and converts archive markup for display"
     ["<p>&Ccedil;&scedil;&inodot;&gbreve;&Idot; &iexcl;&yuml; &AMP;</p>",
       "Çşığİ ¡ÿ &"],
     ["<p>&unknown; &EACUTE; &Eacute;</p>", "&unknown; &EACUTE; É"],
+    ["Fiction<!-- editorial note --> text", "Fiction text"],
+    ["<p>Before</p><svg><svg></svg><text>Hidden label</text><svg/></svg>" +
+      "<p>After</p>", "Before\nAfter"],
+    ["<p>Before</p><SVG><Svg ></svG><text>Hidden</text></SVG >After",
+      "Before\nAfter"],
+    ["<p>Kept</p><svg><svg><text>never closed</text></svg>", "Kept"],
     ["<P>UPPERCASE<BR>Text</P>", "UPPERCASE\nText"],
     ["<svg/><p>Visible</p>", "Visible"],
     ["<p>First</p><hr><p>Second</p>", "First\n\nSecond"],
@@ -596,6 +602,9 @@ test("article plain text scans malformed markup in linear time", (t) => {
     ["stray brackets", `<p>Fiction</p>${angles}`, `Fiction\n${angles}`],
     ["unterminated script", `<p>a</p><script>${"<script>".repeat(50_000)}`,
       "a"],
+    ["nested svg", `<p>a</p>${"<svg>".repeat(50_000)}${"</svg>".repeat(50_000)}b`,
+      "a\nb"],
+    ["unclosed svg", `<p>a</p>${"<svg>x".repeat(50_000)}`, "a"],
   ]) {
     const started = performance.now();
     const actual = format.articlePlainText(input);

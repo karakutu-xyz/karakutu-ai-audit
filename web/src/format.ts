@@ -130,6 +130,11 @@ export function articlePlainText(value: string): string {
   let textStart = 0;
   let foundTag = false;
   let hidden = "";
+  // SVG nests: count depth, and cache the next open/close so each region is
+  // searched once (-1: none left; any other value below the cursor: stale).
+  let depth = 0;
+  let openAt = -2;
+  let closeAt = -2;
   let lower: string | undefined;
   let atBreak = true;
   let unclosedComment = false;
@@ -144,11 +149,19 @@ export function articlePlainText(value: string): string {
   };
   while (cursor < value.length) {
     if (hidden) {
-      cursor = lower!.indexOf(`</${hidden}`, cursor);
-      if (cursor === -1) {
+      if (closeAt !== -1 && closeAt < cursor) {
+        closeAt = lower!.indexOf(`</${hidden}`, cursor);
+      }
+      if (hidden === "svg" && openAt !== -1 && openAt < cursor) {
+        openAt = lower!.indexOf("<svg", cursor);
+      }
+      const next = hidden === "svg" && openAt !== -1 &&
+        (closeAt === -1 || openAt < closeAt) ? openAt : closeAt;
+      if (next === -1) {
         textStart = value.length;
         break;
       }
+      cursor = next;
     }
     if (value[cursor] !== "<") {
       cursor++;
@@ -163,6 +176,7 @@ export function articlePlainText(value: string): string {
         continue;
       }
       text(cursor);
+      foundTag = true;
       cursor = close + 3;
       textStart = cursor;
       continue;
@@ -171,7 +185,7 @@ export function articlePlainText(value: string): string {
     const tag = tagStart.exec(value);
     const name = tag?.[2].toLowerCase() ?? "";
     if (!tag || !articleElements.has(name) ||
-        (hidden && (name !== hidden || !tag[1]))) {
+        (hidden && (name !== hidden || (!tag[1] && hidden !== "svg")))) {
       cursor++;
       continue;
     }
@@ -202,10 +216,16 @@ export function articlePlainText(value: string): string {
     cursor = end + 1;
     textStart = cursor;
     if (hidden) {
-      hidden = "";
+      if (!tag[1]) {
+        if (value[end - 1] !== "/") depth++;
+      } else if (--depth === 0) {
+        hidden = "";
+      }
     } else if (!tag[1] && hiddenArticleElements.has(name) &&
                value[end - 1] !== "/") {
       hidden = name;
+      depth = 1;
+      openAt = closeAt = -2;
       // ASCII folding preserves offsets even when text contains e.g. U+0130.
       lower ??= value.replace(/[A-Z]/g, (char) => char.toLowerCase());
     } else if (name === "hr") {
