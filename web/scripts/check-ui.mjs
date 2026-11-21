@@ -2051,6 +2051,110 @@ test("article view shows first audit, re-run, running progress and one review no
   harness.unmount();
 });
 
+test("Articles offers archive import only in live mode with archive reads, and guides the empty page", () => {
+  const { ArticlesPage } = load(path.join(root, "pages/ArticlesPage.tsx"));
+  const originalApi = hooks.useApi;
+  const originalInventory = hooks.useArticleInventory;
+  const withStatus = (status) => () => ({ ...originalApi(), status, articlesCache: new Map() });
+  const live = { mode: "live", archive_reads_enabled: true };
+  try {
+    hooks.useArticleInventory = () => ({ data: { total: 0 }, loading: false });
+    articlesState = { data: { items: [], total: 0 }, loading: false, error: "", refresh() {} };
+    visit("https://workbench.invalid/articles");
+    hooks.useApi = withStatus(live);
+    let html = render(ArticlesPage);
+    assert.ok(html.includes("Import from archive"));
+    assert.ok(html.includes("Use Import from archive above"));
+    hooks.useApi = withStatus({ mode: "live", archive_reads_enabled: false });
+    html = render(ArticlesPage);
+    assert.ok(!html.includes(">Import from archive<"));
+    assert.ok(html.includes("Archive reads are off on this server"));
+    hooks.useApi = withStatus({ mode: "test", archive_reads_enabled: false });
+    html = render(ArticlesPage);
+    assert.ok(!html.includes(">Import from archive<"));
+    assert.ok(html.includes("Articles appear here when imported or submitted for audit."));
+    hooks.useApi = withStatus(live);
+    hooks.useArticleInventory = originalInventory;
+    articlesState.data = { items: [
+      fictionalArticle({ ref: "ka-1", removed_at: null, removal_checked: false }),
+      fictionalArticle({ ref: "ka-2", removed_at: null, removal_checked: true }),
+    ], total: 2 };
+    html = render(ArticlesPage);
+    assert.equal(html.split("Not checked yet").length - 1, 1);
+  } finally {
+    hooks.useApi = originalApi;
+    hooks.useArticleInventory = originalInventory;
+  }
+});
+
+test("archive import submits the day count, reports counts or the safe error code", async () => {
+  const runtime = hookRuntime();
+  const client = load(path.join(root, "api/client.ts"));
+  const api = { token: "fictional-token", epoch: 0, articlesCache: new Map([["q", {}]]),
+    status: { mode: "live", archive_reads_enabled: true } };
+  const calls = [];
+  let refreshed = 0;
+  const module = evaluateModule(path.join(root, "components/ArchiveImport.tsx"), (name) => {
+    if (name === "react") return runtime.reactHooks;
+    if (name === "../api/hooks") return { useApi: () => api };
+    if (name === "../api/client") return { ...client, importArticles: (days, token) =>
+      new Promise((resolve, reject) => { calls.push({ days, token, resolve, reject }); }) };
+    if (name.startsWith(".")) return load(path.join(root, "components", name.slice(2)) + ".tsx");
+    return require(name);
+  });
+  const view = () => runtime.render(() => module.ArchiveImport({ onImported: () => { refreshed++; } }));
+  try {
+    let tree = view();
+    const form = () => findNode(tree, (node) => node.type === "form");
+    findNode(tree, (node) => node.type === "input").props.onChange({ target: { value: "7" } });
+    tree = view();
+    // Two submits before the next render: only one import may start.
+    const handler = form().props.onSubmit;
+    const submitted = handler({ preventDefault() {} });
+    const doubled = handler({ preventDefault() {} });
+    assert.equal(calls.length, 1);
+    await doubled;
+    tree = view();
+    assert.ok(renderToStaticMarkup(tree).includes("Importing…"));
+    assert.equal(calls[0].days, 7);
+    assert.equal(calls[0].token, "fictional-token");
+    calls[0].resolve({ imported: 3, updated: 1, skipped: 2 });
+    await submitted;
+    tree = view();
+    assert.ok(renderToStaticMarkup(tree).includes("Imported 3 · updated 1 · skipped 2"));
+    assert.equal(api.articlesCache.size, 0);
+    assert.equal(refreshed, 1);
+    const failed = form().props.onSubmit({ preventDefault() {} });
+    calls[1].reject(new client.ApiError(409, "archive_unavailable"));
+    await failed;
+    tree = view();
+    const html = renderToStaticMarkup(tree);
+    assert.ok(html.includes("(archive_unavailable)"));
+    assert.ok(!html.includes("Imported 3"));
+    assert.equal(refreshed, 1);
+    findNode(tree, (node) => node.type === "input").props.onChange({ target: { value: "91" } });
+    tree = view();
+    assert.equal(findNode(tree, (node) => node.type === "button").props.disabled, true);
+    await form().props.onSubmit({ preventDefault() {} });
+    assert.equal(calls.length, 2);
+  } finally {
+    runtime.unmount();
+  }
+  assert.equal(module.importError(new client.ApiError(401)),
+    "Check the API token in Settings before importing.");
+  assert.equal(module.importError(new client.ApiError(401, "unauthorized")),
+    "Check the API token in Settings before importing. (unauthorized)");
+  assert.ok(module.importError(new client.ApiError(403, "untrusted_origin"))
+    .includes("ALLOWED_ORIGINS"));
+  assert.ok(!module.importError(new client.ApiError(403, "untrusted_origin")).includes("token"));
+  assert.equal(module.importError(new client.ApiError(403, "live_ingestion_disabled")),
+    "The service could not complete this request. Please try again. (live_ingestion_disabled)");
+  assert.equal(module.importError(new client.ApiError(422, "validation_error")),
+    "Choose between 1 and 90 days. (validation_error)");
+  assert.ok(module.importError(new client.ApiError(409, "import_in_progress"))
+    .startsWith("An import is already running."));
+});
+
 test("article rail offers Stop audit only while the latest audit is queued or running", () => {
   for (const status of ["queued", "running"]) {
     const latest = { ...baseRun, id: `run_${status}`, status, verdict: null,

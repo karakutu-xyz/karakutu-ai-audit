@@ -195,6 +195,25 @@ tbody tr:last-child > * {
   grid-row: 2;
 }
 
+.archive-import {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: var(--space-1) var(--space-2);
+}
+
+.archive-import input {
+  width: 5.5rem;
+}
+
+.archive-import > .help,
+.archive-import > .error-box {
+  flex-basis: 100%;
+  margin: 0;
+  text-align: right;
+}
+
 @media (max-width: 620px) {
   .filters {
     display: grid;
@@ -220,6 +239,15 @@ tbody tr:last-child > * {
   .ledger-create {
     grid-column: 1 / -1;
     grid-row: auto;
+  }
+
+  .archive-import {
+    justify-content: flex-start;
+  }
+
+  .archive-import > .help,
+  .archive-import > .error-box {
+    text-align: left;
   }
 
   .ledger-create {
