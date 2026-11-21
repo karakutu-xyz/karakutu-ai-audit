@@ -2122,6 +2122,10 @@ test("archive import submits the day count, reports counts or the safe error cod
     await submitted;
     tree = view();
     assert.ok(renderToStaticMarkup(tree).includes("Imported 3 · updated 1 · skipped 2"));
+    // The result sits with the help text in the width-neutral notes row (see the layout check).
+    const notes = findNode(tree, (node) => node.props?.className === "archive-import-notes");
+    assert.ok(renderToStaticMarkup(notes).includes("Imported 3 · updated 1 · skipped 2"));
+    assert.ok(renderToStaticMarkup(notes).includes('id="archive-import-help"'));
     assert.equal(api.articlesCache.size, 0);
     assert.equal(refreshed, 1);
     const failed = form().props.onSubmit({ preventDefault() {} });
@@ -2153,6 +2157,28 @@ test("archive import submits the day count, reports counts or the safe error cod
     "Choose between 1 and 90 days. (validation_error)");
   assert.ok(module.importError(new client.ApiError(409, "import_in_progress"))
     .startsWith("An import is already running."));
+});
+
+test("ledger heading keeps its title column when the import shows a result or an error", () => {
+  // There is no layout engine here, so check the two rules that prevent the collapse: at
+  // max-content the import form is one long line (about 1240 px) and its auto column took the
+  // whole row, leaving the title column 0 px wide.
+  const css = readFileSync(path.join(root, "styles/ledger.css"), "utf8");
+  const rule = (selector) => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`).exec(css);
+    assert.ok(match, `${selector} rule exists`);
+    return match[1];
+  };
+  const columns = /grid-template-columns:\s*([^;]+);/.exec(rule(".ledger-heading"))[1];
+  const titleMin = /^minmax\(\s*(.+?)\s*,\s*1fr\s*\)/.exec(columns.trim());
+  assert.ok(titleMin, `title column is a minmax track: ${columns}`);
+  assert.notEqual(titleMin[1], "0", "title column needs a non-zero minimum");
+  const notes = rule(".archive-import-notes");
+  assert.match(notes, /contain:\s*inline-size/);
+  assert.match(notes, /flex-basis:\s*100%/);
+  assert.ok(!/\.archive-import\s*>\s*\.(help|error-box)/.test(css),
+    "import text lives only in the notes row, never as a direct flex item");
 });
 
 test("article rail offers Stop audit only while the latest audit is queued or running", () => {
