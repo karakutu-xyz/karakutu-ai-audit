@@ -54,6 +54,7 @@ class KarakutuClient:
             event['error_type'] = 'AuthenticationUnavailable'
             self._record_state(event)
             return None
+        completed = True
         try:
             headers = {'Authorization': f'Bearer {token}'} if token else {}
             result = await self.http.get(self.base_url + path, params=params, headers=headers)
@@ -74,8 +75,13 @@ class KarakutuClient:
         except (httpx.HTTPError, ValueError) as exc:
             event['error_type'] = type(exc).__name__
             return None
+        except BaseException:
+            # A cancelled or interrupted read has no outcome: keep the previous state.
+            completed = False
+            raise
         finally:
-            self._record_state(event)
+            if completed:
+                self._record_state(event)
 
     async def get_article_by_url(self, url):
         body = await self._get('/articles', {'url': url})

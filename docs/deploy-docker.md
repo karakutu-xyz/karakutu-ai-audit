@@ -43,8 +43,8 @@ is undecided. Set the host `ARCHIVE_WALLET_PATH` for `make live`; its optional
 `compose.wallet.yaml` mounts the file at `/run/secrets/archive_wallet`, which is
 always the API's container path. A production orchestrator should supply the
 same read-only container path. Never place wallet content in an image or an env
-file in the repository. On Linux, grant read access to UID 10001 while retaining
-restricted permissions; see [Docker archive reads](getting-started.md#docker-live-with-archive-reads).
+file in the repository. On Linux, keep the operator as owner and grant read access
+to the container's group 10001 (`chgrp 10001`, mode 640); see [Docker archive reads](getting-started.md#docker-live-with-archive-reads).
 Check `/api/status`'s `archive` field and Settings after recreation. The compatible
 `archive_reads_enabled` boolean only says reads are configured.
 
@@ -71,8 +71,11 @@ MODEL_RESPONSE_FORMAT=auto
 
 A non-loopback `ALLOWED_HOSTS` entry or `KARAKUTU_BIND_ADDRESS` without a token stops the API
 at startup. A configured token shorter than 32 characters also stops startup. After changing
-`.env`, recreate containers with `make live` or `docker compose -p karakutu-ai-audit up -d`;
-`docker compose restart` does not apply changed environment values.
+`.env`, recreate containers with `make live`. Do not use a plain `docker compose … up -d`:
+it omits `compose.wallet.yaml`, so a configured archive wallet would no longer be mounted
+and archive reads would lose authentication. To call Compose directly, go through the same
+wrapper, for example `python3 scripts/compose_live.py -p karakutu-ai-audit -f compose.yaml --
+up -d`. `docker compose restart` does not apply changed environment values.
 
 ## TLS reverse proxy
 

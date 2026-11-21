@@ -238,3 +238,25 @@ async def test_refused_request_then_failed_refresh_or_retry(monkeypatch, wallet_
         assert archive.state == 'unreachable'
     finally:
         await archive.close()
+
+
+async def test_cancelled_read_keeps_the_previous_state(monkeypatch, wallet_jwk):
+    import asyncio
+    started = asyncio.Event()
+
+    async def hang(*_args, **_kwargs):
+        started.set()
+        await asyncio.sleep(60)
+
+    archive = KarakutuClient('https://archive.example')
+    try:
+        archive.state = 'unreachable'
+        monkeypatch.setattr(archive.http, 'get', hang)
+        task = asyncio.create_task(archive._get('/audits'))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert archive.state == 'unreachable'
+    finally:
+        await archive.close()

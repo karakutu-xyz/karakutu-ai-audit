@@ -241,7 +241,8 @@ one database per test. The default pytest run uses temporary SQLite files offlin
 mounts it read-only through `compose.wallet.yaml`; the API environment contains
 only `/run/secrets/archive_wallet`. Production can supply the same container path
 from the host secret store. Inline `ARCHIVE_WALLET_JSON` retains precedence.
-On Linux the file must be readable by container UID 10001; see
+On Linux the file must be readable by both the operator and the container (owner
+plus group 10001, mode 640); see
 [the ownership note](getting-started.md#docker-live-with-archive-reads).
 
 `GET /api/status` returns `archive`, a fixed enum containing no paths, wallet

@@ -138,11 +138,12 @@ Local `make dev` uses the same setting as a host path. Inline `ARCHIVE_WALLET_JS
 continues to work and takes precedence over file content.
 
 On Linux, Compose secrets preserve host ownership and permissions. The API runs
-as UID 10001, so a mode-600 file owned by another UID cannot be read. For a
-wallet dedicated to this service, an operator can use `sudo chown 10001 <keyfile>`
-and `chmod 600 <keyfile>`, or arrange group read access for a dedicated group
-available to the container. Do not make the wallet world-readable. Docker Desktop
-on macOS shares files readably.
+as UID 10001 in group 10001, so a mode-600 file owned by another UID cannot be
+read inside the container. Both the operator running `make` (checked before
+start) and the container must be able to read it: keep yourself as the owner and
+give the container's group read access, then nobody else:
+`sudo chgrp 10001 <keyfile>` and `chmod 640 <keyfile>`. Do not make the wallet
+world-readable. Docker Desktop on macOS shares files readably.
 
 Check `GET /api/status` (with your API token when configured) and **Settings**.
 The `archive` field reports `ok`, or a fixed state such as `wallet_missing`,
