@@ -1641,6 +1641,13 @@ test("archive display skips hidden subtrees and preserves textarea text", () => 
     [...prose("a"), { text: "  x\n y", pre: true }, ...prose("b")]);
 });
 
+test("archive formatting stops at the tag limit", () => {
+  const limit = articleHtml.MAX_TAG_OPENINGS;
+  const within = "<p>a</p>" + "<b>x</b>".repeat(limit - 1);
+  assert.notEqual(articleHtml.articleBlocks(within, true, articleParse), null);
+  assert.equal(articleHtml.articleBlocks(within + "<b>y</b>", true, articleParse), null);
+});
+
 test("archive parser handles quoted attributes, comments and entities once", () => {
   assert.deepEqual(textBlocks('<p title="a>b<c">text</p>'), prose("text"));
   assert.deepEqual(textBlocks("<p>a</p><![CDATA[x]]><p>b</p>"), prose("a", "b"));
@@ -1649,6 +1656,14 @@ test("archive parser handles quoted attributes, comments and entities once", () 
     prose("“Q” é ş ş &lt;"));
 });
 
+function deepDivs(depth, text) {
+  let node = { nodeType: 3, nodeName: "#text", nodeValue: text, childNodes: [] };
+  for (let level = 0; level < depth; level++) {
+    node = { nodeType: 1, nodeName: "DIV", nodeValue: null, childNodes: [node] };
+  }
+  return { nodeType: 9, nodeName: "#document", nodeValue: null, childNodes: [node] };
+}
+
 for (const [label, content, expected] of [
   ["64k stray angle brackets", "<".repeat(64_000), prose("<".repeat(64_000))],
   ["50k script openers", "<script>".repeat(50_000), []],
@@ -1656,13 +1671,19 @@ for (const [label, content, expected] of [
   ["50k div levels", "<div>".repeat(50_000) + "text", prose("text")],
 ]) {
   test(`archive HTML traversal handles ${label} within 1 second`, () => {
-    // parse5's div scope checks are quadratic at this depth. Browser parsing is
-    // a separate dependency: prepare only this expensive tree outside timing.
-    const document = label === "50k div levels" ? articleParse(content) : null;
+    // A 50k-deep tree checks the walker never recurses. It is built directly:
+    // parse5 needs ~25 s for this depth, and the page never parses it (tag limit).
+    const document = label === "50k div levels" ? deepDivs(50_000, "text") : null;
     const start = performance.now();
     assert.equal(articleHtml.looksLikeHtml(content), label === "50k div levels");
     if (label === "64k stray angle brackets") {
       assert.equal(articleHtml.articleBlocks(content, true, articleParse), null);
+    }
+    if (label === "50k div levels") {
+      // Past the tag limit the page shows raw text without asking the parser at all.
+      assert.equal(articleHtml.articleBlocks(content, true, () => {
+        throw new Error("parsed despite the tag limit");
+      }), null);
     }
     const blocks = articleHtml.htmlToBlocks(content,
       document ? () => document : articleParse);

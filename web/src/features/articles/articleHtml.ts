@@ -83,10 +83,25 @@ export function htmlToBlocks(
   return blocks;
 }
 
+// Browser parsers slow down sharply on tens of thousands of nested tags (Chromium needs
+// seconds for 50k unclosed <div>s), and this runs during render. Real articles hold a few
+// hundred tags; past this limit the page shows the stored text unformatted.
+export const MAX_TAG_OPENINGS = 20_000;
+
+function tooManyTags(content: string): boolean {
+  const opening = /<[a-z]/gi;
+  let count = 0;
+  while (opening.exec(content)) {
+    if (++count > MAX_TAG_OPENINGS) return true;
+  }
+  return false;
+}
+
 export function articleBlocks(
   content: string,
   isArchive: boolean,
   parse: (html: string) => ParsedNode = browserParse,
 ): TextBlock[] | null {
-  return isArchive && looksLikeHtml(content) ? htmlToBlocks(content, parse) : null;
+  if (!isArchive || !looksLikeHtml(content) || tooManyTags(content)) return null;
+  return htmlToBlocks(content, parse);
 }
