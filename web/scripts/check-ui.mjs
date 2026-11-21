@@ -13,6 +13,7 @@ const require = createRequire(new URL("../package.json", import.meta.url));
 const ts = require("typescript");
 const React = require("react");
 const { renderToStaticMarkup } = require("react-dom/server");
+const { parse: parseHtml } = require("parse5");
 const events = new EventTarget();
 let href = "https://workbench.invalid/runs";
 let historyState = null;
@@ -1558,6 +1559,188 @@ function fictionalArticle(overrides = {}) {
     runs: [], ...overrides,
   };
 }
+
+// Match DOMParser's scripting-disabled document and structural node interface.
+// Template content deliberately stays outside childNodes, as in the browser.
+function articleParse(html) {
+  const adapt = (node) => ({
+    nodeType: ({ "#text": 3, "#comment": 8, "#document": 9,
+      "#document-fragment": 11 })[node.nodeName] ?? 1,
+    nodeName: node.nodeName.toLowerCase(),
+    nodeValue: node.nodeName === "#text" ? node.value : null,
+    childNodes: [],
+  });
+  const source = parseHtml(html, { scriptingEnabled: false });
+  const document = adapt(source);
+  const stack = [{ source, target: document }];
+  while (stack.length) {
+    const { source, target } = stack.pop();
+    for (const child of source.childNodes ?? []) {
+      const adapted = adapt(child);
+      target.childNodes.push(adapted);
+      stack.push({ source: child, target: adapted });
+    }
+  }
+  return document;
+}
+
+const articleHtml = load(path.join(root, "features/articles/articleHtml.ts"));
+// VM-created arrays have another realm's prototype; compare plain local values.
+const textBlocks = (html) => Array.from(
+  articleHtml.htmlToBlocks(html, articleParse),
+  (block) => ({ ...block }),
+);
+const prose = (...texts) => texts.map((text) => ({ text, pre: false }));
+
+test("only archive text with markup is parsed; other text never changes", () => {
+  const parseNever = () => { throw new Error("parsed non-archive or markup-free text"); };
+  for (const text of ["x<y and z>w", "x<p+1 and y>0", "x<b and y>0", "<p>a</p>", "&amp;"]) {
+    assert.equal(articleHtml.articleBlocks(text, false, parseNever), null, text);
+  }
+  assert.equal(articleHtml.articleBlocks("Plain archive text, no markup.", true, parseNever),
+    null);
+});
+
+test("archive paragraphs follow HTML parsing, block boundaries and whitespace", () => {
+  assert.deepEqual(textBlocks("<p>a<p>b"), prose("a", "b"));
+  assert.deepEqual(textBlocks("<table><tr><td>a<td>b</table>"), prose("a · b"));
+  assert.deepEqual(textBlocks("<dl><dt>t<dd>d</dl>"), prose("t", "d"));
+  assert.deepEqual(textBlocks("<pre>  x\n  y</pre>"),
+    [{ text: "  x\n  y", pre: true }]);
+  assert.deepEqual(textBlocks("<p>a <code>b</code> c</p>"), prose("a b c"));
+  assert.deepEqual(textBlocks("<p> a\t\n b&nbsp; c<br> d<br/>e </p>"),
+    prose("a b c\nd\ne"));
+  assert.deepEqual(textBlocks("<p> \t </p><pre></pre>"), []);
+  assert.deepEqual(textBlocks("<table><tr><th>a<th>b<tr><td>c<td>d</table>"),
+    prose("a · b", "c · d"));
+  assert.deepEqual(textBlocks("<pre>x&nbsp;\t<code> y</code></pre>"),
+    [{ text: "x\u00a0\t y", pre: true }]);
+});
+
+test("archive display skips hidden subtrees and preserves textarea text", () => {
+  for (const hidden of [
+    "<script>hidden</script>", "<style>hidden</style>",
+    "<svg><svg>hidden<!-- hidden --></svg>hidden</svg>",
+    "<math><mi>hidden</mi></math>",
+    "<noscript><p>hidden</p></noscript>",
+    "<template><p>hidden</p></template>",
+    "<iframe>hidden</iframe>", "<object>hidden</object>", "<embed>",
+    "<canvas>hidden</canvas>", "<select><option>hidden</option></select>",
+    "<button>hidden</button>",
+  ]) {
+    assert.deepEqual(textBlocks(`<p>a</p>${hidden}<p>b</p>`), prose("a", "b"));
+  }
+  assert.deepEqual(textBlocks("<head><title>hidden</title></head><body>shown"),
+    prose("shown"));
+  assert.deepEqual(textBlocks("<textarea>a<b>c</textarea>"),
+    [{ text: "a<b>c", pre: true }]);
+  assert.deepEqual(textBlocks("<p>a</p><textarea>  x\n y</textarea><p>b</p>"),
+    [...prose("a"), { text: "  x\n y", pre: true }, ...prose("b")]);
+});
+
+test("archive detection, leading noscript and block cells follow the review cases", () => {
+  const blocks = (content) => Array.from(
+    articleHtml.articleBlocks(content, true, articleParse) ?? [], (block) => ({ ...block }));
+  assert.deepEqual(blocks('<p title="a<b">visible'), prose("visible"));
+  assert.notEqual(articleHtml.articleBlocks('<img src="fictional.png">', true, articleParse), null);
+  assert.deepEqual(blocks('<img src="fictional.png">'), []);
+  assert.deepEqual(blocks("<noscript>hidden</noscript><p>shown</p>"), prose("shown"));
+  assert.deepEqual(blocks("<table><tr><td><p>a</p></td><td><p>b</p></td></tr></table>"),
+    prose("a", "b"));
+  assert.deepEqual(blocks("<table><tr><td>a</td><td><b>b</b></td></tr></table>"), prose("a · b"));
+  assert.deepEqual(blocks("<dl><dt>t<dd>d"), prose("t", "d"));
+  assert.deepEqual(blocks("<noscript>hidden"), []);
+  assert.deepEqual(blocks("<img src=fictional.png>"), []);
+  assert.deepEqual(blocks("<table><tr><td>a</td><td><p>b</p></td></tr></table>"),
+    prose("a", "b"));
+  assert.deepEqual(blocks("<table><tr><td><p>a</p></td><td>b</td></tr></table>"),
+    prose("a", "b"));
+});
+
+test("cell separators stay linear with many whitespace-only parts", () => {
+  const n = 8_000;
+  const row = "<table><tr><td>" + "<span> </span>".repeat(n) + "a</td>" +
+    "<td>b</td>".repeat(n) + "</tr></table>";
+  const document = articleParse(row);
+  const start = performance.now();
+  const [block] = articleHtml.htmlToBlocks(row, () => document);
+  assert.equal(block.text, "a" + " · b".repeat(n));
+  assert.ok(performance.now() - start < 200, "separator handling is not linear");
+});
+
+test("archive formatting stops at the tag limit", () => {
+  const limit = articleHtml.MAX_TAG_OPENINGS;
+  const within = "<p>a</p>" + "<b>x</b>".repeat(limit - 1);
+  assert.notEqual(articleHtml.articleBlocks(within, true, articleParse), null);
+  assert.equal(articleHtml.articleBlocks(within + "<b>y</b>", true, articleParse), null);
+});
+
+test("archive parser handles quoted attributes, comments and entities once", () => {
+  assert.deepEqual(textBlocks('<p title="a>b<c">text</p>'), prose("text"));
+  assert.deepEqual(textBlocks("<p>a</p><![CDATA[x]]><p>b</p>"), prose("a", "b"));
+  assert.deepEqual(textBlocks("a<!-- x -->b"), prose("ab"));
+  assert.deepEqual(textBlocks("&ldquo;Q&rdquo; &eacute; &scedil; &#351; &amp;lt;"),
+    prose("“Q” é ş ş &lt;"));
+});
+
+function deepDivs(depth, text) {
+  let node = { nodeType: 3, nodeName: "#text", nodeValue: text, childNodes: [] };
+  for (let level = 0; level < depth; level++) {
+    node = { nodeType: 1, nodeName: "DIV", nodeValue: null, childNodes: [node] };
+  }
+  return { nodeType: 9, nodeName: "#document", nodeValue: null, childNodes: [node] };
+}
+
+for (const [label, content, expected] of [
+  ["64k stray angle brackets", "<".repeat(64_000), prose("<".repeat(64_000))],
+  ["50k script openers", "<script>".repeat(50_000), []],
+  ["50k SVG levels", "<svg>".repeat(50_000), []],
+  ["50k div levels", "<div>".repeat(50_000) + "text", prose("text")],
+]) {
+  test(`archive HTML traversal handles ${label} within 1 second`, () => {
+    // A 50k-deep tree checks the walker never recurses. It is built directly:
+    // parse5 needs ~25 s for this depth, and the page never parses it (tag limit).
+    const document = label === "50k div levels" ? deepDivs(50_000, "text") : null;
+    const start = performance.now();
+    if (label === "64k stray angle brackets") {
+      const shown = articleHtml.articleBlocks(content, true, articleParse);
+      assert.deepEqual(Array.from(shown, (block) => ({ ...block })), expected);
+    } else {
+      // Past the tag limit the page shows raw text without asking the parser at all.
+      assert.equal(articleHtml.articleBlocks(content, true, () => {
+        throw new Error("parsed despite the tag limit");
+      }), null);
+    }
+    const blocks = articleHtml.htmlToBlocks(content,
+      document ? () => document : articleParse);
+    assert.deepEqual(Array.from(blocks, (block) => ({ ...block })), expected);
+    assert.ok(performance.now() - start < 1_000, `${label} exceeded 1 second`);
+  });
+}
+
+test("article markup formats archives only and falls back to exact raw text", () => {
+  const { ArticleText } = load(path.join(root, "features/articles/ArticleText.tsx"));
+  const content = "<p>First &amp; fictional.</p><p>Second.</p>";
+  const render = (overrides) => renderToStaticMarkup(React.createElement(
+    ArticleText, { article: fictionalArticle(overrides), parse: articleParse },
+  ));
+  for (const identity of [{ archive_id: "fictional" }, { ref: "ka-fictional" }]) {
+    const html = render({ content, ...identity });
+    assert.ok(html.includes("<p>First &amp; fictional.</p><p>Second.</p>"));
+    assert.ok(!html.includes("&lt;p&gt;"));
+  }
+  const raw = render({ content });
+  assert.ok(raw.includes('<div class="removed-text-body">' +
+    "&lt;p&gt;First &amp;amp; fictional.&lt;/p&gt;&lt;p&gt;Second.&lt;/p&gt;</div>"));
+  const fallback = render({
+    content: "<script>hidden</script>", archive_id: "fictional",
+  });
+  assert.ok(!fallback.includes("hidden"));
+  assert.ok(fallback.includes("The stored article has no readable text."));
+  const pre = render({ content: "<pre>  x\n y</pre>", archive_id: "fictional" });
+  assert.ok(pre.includes("<pre>  x\n y</pre>"));
+  assert.ok(render({ content: "" }).includes("No article text is stored yet."));
+});
 
 function fictionalStory(overrides = {}) {
   return {
