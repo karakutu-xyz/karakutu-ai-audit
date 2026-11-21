@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -528,7 +529,9 @@ const format = load(path.join(root, "format.ts"));
 
 test("article plain text preserves text and converts archive markup for display", () => {
   for (const plain of ["", "  Fictional text\n\n  unchanged.  ",
-    "A &amp; B; 2 < 3; &#123;"]) {
+    "A &amp; B; 2 < 3; &#123;", "x<y and z>w",
+    "The condition x<y and z>w is fictional.",
+    "<unknown>Fiction &amp; unchanged</unknown>", '<p class="x']) {
     assert.equal(format.articlePlainText(plain), plain);
   }
   assert.equal(format.articlePlainText(
@@ -547,12 +550,49 @@ test("article plain text preserves text and converts archive markup for display"
   assert.equal(format.articlePlainText(
     "<p>&#1114112; &#xD800; &amp;lt;</p>",
   ), "&#1114112; &#xD800; &lt;");
+  for (const [markup, expected] of [
+    ['<p title="a > b">Visible</p>', "Visible"],
+    ["<p title='a > b < c'>Visible</p>", "Visible"],
+    ['<p>Earlier text</p><p class="x', 'Earlier text\n<p class="x'],
+    ["<p broken <p>Visible</p>", "<p broken Visible"],
+    ["<P>UPPERCASE<BR>Text</P>", "UPPERCASE\nText"],
+    ["<svg/><p>Visible</p>", "Visible"],
+    ["<p>First</p><hr><p>Second</p>", "First\n\nSecond"],
+    ["<blockquote>Quote</blockquote><table><tr><td>Cell</td></tr></table>" +
+      "End", "Quote\nCell\nEnd"],
+    ["<p>&apos; &#1; &#x10FFFF; &#9999999; &#0; &#x0;</p>",
+      "' \u0001 \u{10ffff} &#9999999; &#0; &#x0;"],
+    ["<p>&#12345678; &#x0000041; &#xDFFF; &#x110000;</p>",
+      "&#12345678; &#x0000041; &#xDFFF; &#x110000;"],
+    ["<p>Before</p><script>İhidden</SCRIPT data-end='>'><p>After</p>",
+      "Before\nAfter"],
+    ["<p>Before</p><script>hidden</scripture>still hidden</script >After",
+      "Before\nAfter"],
+  ]) {
+    assert.equal(format.articlePlainText(markup), expected);
+  }
   const { ArticleText } = load(path.join(root, "features/articles/ArticleText.tsx"));
   const article = fictionalArticle({ content: "<p>First &amp; safe</p><p>Second</p>" });
   const html = render(ArticleText, { article });
   assert.ok(html.includes("First &amp; safe\nSecond"));
   assert.ok(!html.includes("&lt;p&gt;"));
   assert.equal(article.content, "<p>First &amp; safe</p><p>Second</p>");
+});
+
+test("article plain text scans malformed markup in linear time", (t) => {
+  const angles = "<".repeat(64_000);
+  for (const [label, input, expected] of [
+    ["stray brackets", `<p>Fiction</p>${angles}`, `Fiction\n${angles}`],
+    ["unterminated script", `<p>a</p><script>${"<script>".repeat(50_000)}`,
+      "a"],
+  ]) {
+    const started = performance.now();
+    const actual = format.articlePlainText(input);
+    const elapsed = performance.now() - started;
+    assert.equal(actual, expected);
+    assert.ok(elapsed < 100, `${label} took ${elapsed.toFixed(1)} ms`);
+    t.diagnostic(`${label}: ${elapsed.toFixed(1)} ms (limit 100 ms)`);
+  }
 });
 
 test("shared duration formatting covers seconds, minutes and pending runs", () => {

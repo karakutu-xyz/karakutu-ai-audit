@@ -77,28 +77,100 @@ export function articleDate(value: string | number | null) {
   );
 }
 
+const articleElements = new Set((
+  "p br div span a b i u em strong small sub sup li ul ol " +
+  "h1 h2 h3 h4 h5 h6 blockquote figure figcaption img picture source " +
+  "section article header footer aside main nav table thead tbody tr td th " +
+  "hr iframe video audio time mark cite q abbr font center script style svg " +
+  "noscript button form input label select option textarea"
+).split(" "));
+const hiddenArticleElements = new Set(["script", "style", "svg", "noscript"]);
+const articleLineEnds = new Set([
+  "p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "blockquote",
+]);
+
 // Presentation only: saved article content and audit inputs stay unchanged.
 export function articlePlainText(value: string): string {
-  if (!/<[a-z][\w:-]*\b/i.test(value)) return value;
+  const tagStart = /<(\/?)([a-z][a-z0-9-]{0,30})(?![a-z0-9-])/iy;
+  const parts: string[] = [];
+  let cursor = 0;
+  let textStart = 0;
+  let foundTag = false;
+  let hidden = "";
+  let lower: string | undefined;
+  while (cursor < value.length) {
+    if (hidden) {
+      cursor = lower!.indexOf(`</${hidden}`, cursor);
+      if (cursor === -1) {
+        textStart = value.length;
+        break;
+      }
+    }
+    if (value[cursor] !== "<") {
+      cursor++;
+      continue;
+    }
+    tagStart.lastIndex = cursor;
+    const tag = tagStart.exec(value);
+    const name = tag?.[2].toLowerCase() ?? "";
+    if (!tag || !articleElements.has(name) ||
+        (hidden && (name !== hidden || !tag[1]))) {
+      cursor++;
+      continue;
+    }
+    let end = cursor + tag[0].length;
+    let quote = "";
+    for (; end < value.length; end++) {
+      const char = value[end];
+      if (quote) {
+        if (char === quote) quote = "";
+      } else if (char === '"' || char === "'") {
+        quote = char;
+      } else if (char === "<" || char === ">") {
+        break;
+      }
+    }
+    if (end === value.length) {
+      if (!hidden) parts.push(value.slice(textStart));
+      textStart = value.length;
+      break;
+    }
+    if (value[end] === "<") {
+      // Resume here without rescanning the malformed prefix.
+      cursor = end;
+      continue;
+    }
+    foundTag = true;
+    if (!hidden) parts.push(value.slice(textStart, cursor));
+    cursor = end + 1;
+    textStart = cursor;
+    if (hidden) {
+      hidden = "";
+    } else if (!tag[1] && hiddenArticleElements.has(name) &&
+               value[end - 1] !== "/") {
+      hidden = name;
+      // ASCII folding preserves offsets even when text contains e.g. U+0130.
+      lower ??= value.replace(/[A-Z]/g, (char) => char.toLowerCase());
+    } else if (name === "hr") {
+      parts.push("\n\n");
+    } else if (name === "br" || (tag[1] && articleLineEnds.has(name))) {
+      parts.push("\n");
+    }
+  }
+  if (!foundTag) return value;
+  parts.push(value.slice(textStart));
   const entities: Record<string, string> = {
-    amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", nbsp: " ",
+    amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ",
   };
-  return value
-    .replace(/<(script|style|svg|noscript)\b[^>]*\/>/gi, "")
+  return parts.join("")
     .replace(
-      /<(script|style|svg|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi,
-      "",
-    )
-    .replace(/<\/\s*(p|div|li|h[1-6])\s*>|<br\b[^>]*>/gi, "\n")
-    .replace(/<[^>]*>/g, "")
-    .replace(
-      /&(amp|lt|gt|quot|#39|nbsp|#\d+|#x[\da-f]+);/gi,
+      /&(amp|lt|gt|quot|apos|nbsp|#\d{1,7}|#x[\da-f]{1,6});/gi,
       (entity, name: string) => {
         const key = name.toLowerCase();
         if (entities[key] !== undefined) return entities[key];
         const hex = key.startsWith("#x");
         const code = Number.parseInt(key.slice(hex ? 2 : 1), hex ? 16 : 10);
-        return code >= 0 && code <= 0x10ffff &&
+        return code > 0 && code <= 0x10ffff &&
           !(code >= 0xd800 && code <= 0xdfff)
           ? String.fromCodePoint(code) : entity;
       },
