@@ -2135,6 +2135,9 @@ test("archive import submits the day count, reports counts or the safe error cod
     const html = renderToStaticMarkup(tree);
     assert.ok(html.includes("(archive_unavailable)"));
     assert.ok(!html.includes("Imported 3"));
+    const errorNotes = findNode(tree, (node) => node.props?.className === "archive-import-notes");
+    assert.ok(renderToStaticMarkup(errorNotes).includes("(archive_unavailable)"),
+      "the error sits in the notes row, never as a direct flex item of the form");
     assert.equal(refreshed, 1);
     findNode(tree, (node) => node.type === "input").props.onChange({ target: { value: "91" } });
     tree = view();
