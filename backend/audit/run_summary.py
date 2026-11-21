@@ -57,4 +57,4 @@ def summarize_run(run: dict) -> dict:
             "steps": steps, "failed_steps": [s["title"] for s in steps if s["status"] == "failed"],
             "skipped_steps": [s["title"] for s in steps if s["status"] == "skipped"],
             "human_review_note": None if active or cancelled or verdict == "AUDIT_FAILED" else
-            "A person decides; this is not a finding of censorship."}
+            "This is not a finding of censorship; a person decides."}

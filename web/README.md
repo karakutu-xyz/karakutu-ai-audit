@@ -45,7 +45,7 @@ the previous ledger address in history state so its Back link restores filters.
 A directly opened run defaults to a Back to Runs link.
 
 The origin filter maps Benchmark/Live (all) to API `category` and API/Webhook/
-Article re-run to API `origin`; All omits both. The Benchmarks page always forces
+Article audit to API `origin`; All omits both. The Benchmarks page always forces
 `category=benchmark` and hides the origin filter. The API also handles status,
 verdict, workflow version, a 50-run limit and offset, so totals and navigation
 match every filter. Changing a filter resets the offset.
