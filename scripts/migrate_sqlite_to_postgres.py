@@ -50,8 +50,17 @@ def _number(value) -> str:
     return ("-" if sign else "") + "".join(map(str, digits)) + "e" + str(exponent)
 
 
+class _SqlNull:
+    """SQL NULL in a JSON column: a different value from the JSON literal `null`."""
+
+
+SQL_NULL = _SqlNull()
+
+
 def _encode(value) -> str:
     """Type-tagged canonical text: no value of one type can encode like another."""
+    if value is SQL_NULL:
+        return "N"
     if value is None:
         return "n"
     if isinstance(value, bool):
@@ -88,7 +97,11 @@ def _exact(row: dict, columns) -> dict:
     values = dict(row)
     for column in columns:
         text = values[column.name]
-        if _is_json(column) and text is not None:
+        if not _is_json(column):
+            continue
+        if text is None:
+            values[column.name] = SQL_NULL
+        else:
             values[column.name] = json.loads(text, parse_float=Decimal,
                                              parse_constant=_reject_constant)
     return values

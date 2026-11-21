@@ -197,3 +197,24 @@ def test_copy_keeps_json_numbers_exact(tmp_path, database_url):
     assert exact["a"] == Decimal("0.10000000000000001")
     assert exact["b"] == Decimal("1e-400")
     assert exact["c"] == 9007199254740993
+
+
+def test_hash_distinguishes_sql_null_from_json_null(tmp_path):
+    from sqlalchemy import create_engine, text
+    url = f"sqlite:///{tmp_path / 'nulls.sqlite3'}"
+    store = Store(url)
+    workflow(store)
+    run = create(store)
+    store.close()
+    engine = create_engine(url)
+    from audit.db import Run
+    columns = [column for column in Run.__table__.columns if column.name != "seq"]
+    digests = []
+    for raw in ("null", None):
+        with engine.begin() as connection:
+            connection.execute(text("UPDATE runs SET output = :raw WHERE id = :id"),
+                               {"raw": raw, "id": run["id"]})
+        with engine.connect() as connection:
+            digests.append(copy._digest(connection, Run.__table__, columns))
+    engine.dispose()
+    assert digests[0] != digests[1]
