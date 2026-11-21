@@ -326,10 +326,11 @@ def runner_repo(tmp_path):
         shutil.copy2(SCRIPTS / name, repo / "scripts" / name)
     shutil.copy2(ROOT / ".env.example", repo / ".env.example")
     (repo / "web/node_modules/fictional-dep").mkdir(parents=True)
+    dep = {"node_modules/fictional-dep": {"version": "1.0.0"}}
     (repo / "web/package-lock.json").write_text(json.dumps({"lockfileVersion": 3, "packages": {
-        "": {"name": "fictional-web"},
-        "node_modules/fictional-dep": {"version": "1.0.0"},
-    }}))
+        "": {"name": "fictional-web"}, **dep}}))
+    (repo / "web/node_modules/.package-lock.json").write_text(
+        json.dumps({"lockfileVersion": 3, "packages": dep}))
     (repo / "web/node_modules/fictional-dep/package.json").write_text('{"version": "1.0.0"}')
     bin_dir.mkdir()
     (bin_dir / "uv").write_text(FAKE_UV_SYNC)

@@ -13,6 +13,8 @@ import sys
 WEB_HINT = "Web dependencies are missing or out of date; run: npm --prefix web ci"
 PYTHON_HINT = "Python dependencies are missing or out of date; run: uv sync --frozen"
 NO_UV_HINT = "uv is not installed; see docs/getting-started.md"
+# Lockfile fields that identify an install; any difference means other package contents.
+IDENTITY = ("version", "resolved", "integrity")
 UV_TIMEOUT_SECONDS = 60
 UV_TIMEOUT_HINT = (f"uv did not answer within {UV_TIMEOUT_SECONDS} s (another uv command may "
                    "hold the environment); finish it, or run: uv sync --frozen")
@@ -26,30 +28,42 @@ def _json(path: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def web_current(web: Path) -> bool:
-    """Compare the committed lockfile with the packages actually on disk.
+def _packages(path: Path) -> dict | None:
+    data = _json(path)
+    packages = data.get("packages") if data else None
+    return packages if isinstance(packages, dict) else None
 
-    Every package the lockfile places under `node_modules/` must be there with the locked
-    version. Optional packages may be absent (built for other platforms), but one that is
-    present must match too. Reading each package folder, not npm's own install record,
-    also catches an interrupted install or a deleted folder.
+
+def web_current(web: Path) -> bool:
+    """Compare the committed lockfile with the install, both npm's record and the disk.
+
+    npm writes `node_modules/.package-lock.json` when an install completes; every locked
+    package must appear there with the same version, source and integrity. Its folder must
+    also be on disk with that version, which catches a folder deleted after the install.
+    Optional packages may be absent (built for other platforms); one whose folder exists
+    must match like any other.
     """
-    lock = _json(web / "package-lock.json")
-    packages = lock.get("packages") if lock else None
-    if not isinstance(packages, dict):
+    wanted = _packages(web / "package-lock.json")
+    recorded = _packages(web / "node_modules" / ".package-lock.json")
+    if wanted is None or recorded is None:
         return False
-    for path, entry in packages.items():
+    for path, entry in wanted.items():
         # The root ("") and workspace sources are not installed copies; links point elsewhere.
         if not path.startswith("node_modules/") and "/node_modules/" not in path:
             continue
         if not isinstance(entry, dict) or entry.get("link"):
             continue
-        installed = _json(web / path / "package.json")
-        if installed is None:
+        folder = web / path
+        if not folder.exists():
             if entry.get("optional") or entry.get("devOptional"):
                 continue
             return False
-        if "version" in entry and installed.get("version") != entry["version"]:
+        manifest, record = _json(folder / "package.json"), recorded.get(path)
+        if manifest is None or not isinstance(record, dict):
+            return False
+        if "version" in entry and manifest.get("version") != entry["version"]:
+            return False
+        if any(key in entry and record.get(key) != entry[key] for key in IDENTITY):
             return False
     return True
 
