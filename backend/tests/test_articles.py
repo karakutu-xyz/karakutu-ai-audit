@@ -421,7 +421,11 @@ def test_archive_import_and_lazy_fill_once(tmp_path, fail):
         imported = client.post("/api/articles/import?days=90")
         assert imported.status_code == 200
         assert imported.json() == {"imported": 1, "updated": 0, "skipped": 2}
-        assert engine.archive.calls[0][0] == "list"
+        kind, start, end = engine.archive.calls[0]
+        assert kind == "list"
+        # The archive's audit listing takes Unix seconds, as related removals sends them.
+        assert type(start) is int and type(end) is int
+        assert end - start == 90 * 86400
         assert client.post("/api/articles/import").json() == {"imported": 0, "updated": 0, "skipped": 3}
         assert client.post("/api/articles/import?days=91").status_code == 422
         stored = client.app.state.store.article("ka-42")
@@ -435,12 +439,34 @@ def test_archive_import_and_lazy_fill_once(tmp_path, fail):
         assert [c[0] for c in engine.archive.calls].count("detail") == 1
         assert detail["content"] == ("" if fail else FICTION)
         if not fail:
-            assert detail["language"] == "en" and detail["removed_at"] == "3"
+            # Archive check dates are Unix seconds; stored dates are ISO like published_at.
+            assert detail["language"] == "en"
+            assert detail["removed_at"] == "1970-01-01T00:00:03+00:00"
             assert len(detail["snapshot"]["versions"]) == 2
             assert "news_text" not in str(detail["snapshot"])
             assert detail["links"]["archive_url"] is None
         # Importing local metadata must not enable live execution.
         assert client.post("/api/articles/ka-42/audit").status_code == 404
+
+
+@pytest.mark.parametrize("entries", [
+    [{"status": 404, "check_date": "unknown"}],
+    [{"status": 404, "check_date": 10 ** 30}],
+    [{"status": 410, "check_date": "later"}, {"status": 200, "check_date": 2}],
+])
+def test_lazy_fill_keeps_text_when_removal_date_is_unusable(tmp_path, entries):
+    class OddDates(FakeArchive):
+        async def get_article(self, article_id):
+            record = await super().get_article(article_id)
+            return record.model_copy(update={"checks": {"entries": entries}})
+
+    engine = FakeEngine()
+    engine.archive = OddDates()
+    with TestClient(create_app(settings(tmp_path), engine)) as client:
+        assert client.post("/api/articles/import").status_code == 200
+        detail = client.get("/api/articles/ka-42").json()
+        assert detail["content"] == FICTION and detail["language"] == "en"
+        assert detail["removed_at"] is None
 
 
 def test_archive_unavailable_and_live_article_audit(tmp_path):
@@ -842,3 +868,24 @@ def test_fill_article_rejects_a_different_archive_record(tmp_path):
         assert store.article("ka-42")["content"] == ""
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("stored, shown", [
+    ("1700000000", "2023-11-14T22:13:20+00:00"),
+    ("1700000000.0", "2023-11-14T22:13:20+00:00"),
+    (" 1700000000 ", "2023-11-14T22:13:20+00:00"),
+    ("9" * 40, None),
+    ("1e+30", None),
+    ("nan", "nan"),
+    ("2026-11-02T11:00:00+00:00", "2026-11-02T11:00:00+00:00"),
+    (None, None),
+])
+def test_removal_dates_stored_by_older_versions_read_as_iso(tmp_path, stored, shown):
+    # Rows filled before ISO storage hold Unix seconds; upgrading must not show raw numbers.
+    store = Store(f"sqlite:///{tmp_path / 'audit.sqlite3'}")
+    values = article_values({"url": "https://older.example/report", "title": "Older fictional row",
+                             "content": FICTION}, "live", "archive")
+    with Session(store.engine) as session, session.begin():
+        session.add(ArticleRow(**values, removed_at=stored))
+    assert store.article(values["ref"])["removed_at"] == shown
+    assert store.articles()["items"][0]["removed_at"] == shown
