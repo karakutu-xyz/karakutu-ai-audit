@@ -413,7 +413,7 @@ def test_test_mode_disables_import_and_lazy_archive_fill(tmp_path):
         # An injected archive client must not bypass the run-mode boundary.
         response = client.post("/api/articles/import")
         assert response.status_code == 409
-        assert response.json() == {"error": {"code": "archive_unavailable"}}
+        assert response.json() == {"error": {"code": "archive_unavailable", "reason": "not_configured"}}
         client.app.state.store.import_articles([
             {"article_id": 42, "url": "https://paper.example/archived", "title": "Fictional archive story"},
         ])
@@ -484,7 +484,7 @@ def test_lazy_fill_keeps_text_when_removal_date_is_unusable(tmp_path, entries, d
 def test_archive_unavailable_and_live_article_audit(tmp_path, database_url):
     engine = FakeEngine()
     with TestClient(create_app(settings(tmp_path, database_url=database_url), engine)) as client:
-        assert client.post("/api/articles/import").json() == {"error": {"code": "archive_unavailable"}}
+        assert client.post("/api/articles/import").json() == {"error": {"code": "archive_unavailable", "reason": "not_configured"}}
         assert client.post("/api/articles/import").status_code == 409
     engine.archive = FakeArchive()
     with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, live_ingestion_enabled=True), engine)) as client:
@@ -932,3 +932,97 @@ def test_removal_dates_stored_by_older_versions_read_as_iso(tmp_path, stored, sh
         assert store.articles()["items"][0]["removed_at"] == shown
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_removal_checked_tells_not_loaded_from_no_removal_found(tmp_path, fail, database_url):
+    engine = FakeEngine()
+    engine.archive = FakeArchive(fail)
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), engine)) as client:
+        assert client.post("/api/articles/import").status_code == 200
+        listed = client.get("/api/articles").json()["items"]
+        assert [(item["ref"], item["removal_checked"]) for item in listed] == [("ka-42", False)]
+        detail = client.get("/api/articles/ka-42").json()
+        # Opening loads the archive details; a failed load stays unchecked so it can retry.
+        assert detail["removal_checked"] is (not fail)
+        assert client.get("/api/articles").json()["items"][0]["removal_checked"] is (not fail)
+        store = client.app.state.store
+        values = article_values({"url": "https://run.example/case", "title": "Fictional run case",
+                                 "content": FICTION}, "benchmark")
+        with Session(store.engine) as session, session.begin():
+            session.add(ArticleRow(**values))
+        flags = {item["ref"]: item["removal_checked"] for item in client.get("/api/articles").json()["items"]}
+        assert flags[values["ref"]] is True
+
+
+def test_run_owned_article_matched_by_import_is_not_left_unchecked(tmp_path, database_url):
+    # An import attaches an archive id to an existing run-owned article with the same URL but
+    # keeps its u- reference; opening it never loads archive details, so it must not wait.
+    engine = FakeEngine()
+    engine.archive = FakeArchive()
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), engine)) as client:
+        store = client.app.state.store
+        values = article_values({"url": "https://paper.example/archived", "title": "Fictional run case",
+                                 "content": FICTION}, "live")
+        with Session(store.engine) as session, session.begin():
+            session.add(ArticleRow(**values))
+        assert client.post("/api/articles/import").status_code == 200
+        item = next(i for i in client.get("/api/articles").json()["items"] if i["ref"] == values["ref"])
+        assert client.app.state.store.article(values["ref"])["archive_id"] == "42"
+        assert item["removal_checked"] is True
+
+
+@pytest.mark.parametrize("dead", [False, True])
+def test_removal_checked_after_a_load_with_empty_text(tmp_path, dead, database_url):
+    # An archive response may carry no text; the check still happened.
+    class EmptyText(FakeArchive):
+        async def get_article(self, article_id):
+            record = await super().get_article(article_id)
+            versions = [version.model_copy(update={"news_text": ""}) for version in record.versions]
+            checks = record.checks if dead else {"entries": [{"status": 200, "check_date": 2}]}
+            return record.model_copy(update={"versions": versions, "news_text": "", "checks": checks})
+
+    engine = FakeEngine()
+    engine.archive = EmptyText()
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), engine)) as client:
+        assert client.post("/api/articles/import").status_code == 200
+        detail = client.get("/api/articles/ka-42").json()
+        assert detail["content"] == "" and detail["removal_checked"] is True
+        assert (detail["removed_at"] is not None) is dead
+        assert client.get("/api/articles").json()["items"][0]["removal_checked"] is True
+        # Moving the article to another URL clears its details (JSON null): unchecked again.
+        store = client.app.state.store
+        with Session(store.engine) as session, session.begin():
+            row = session.get(ArticleRow, "ka-42")
+            row.snapshot = None
+        assert client.get("/api/articles").json()["items"][0]["removal_checked"] is False
+
+
+def test_only_one_archive_import_runs_at_a_time(tmp_path, database_url):
+    import asyncio
+    import threading
+
+    started, release = threading.Event(), threading.Event()
+
+    class SlowArchive(FakeArchive):
+        async def audits_created_between(self, start, end):
+            started.set()
+            while not release.is_set():
+                await asyncio.sleep(0.01)
+            return await super().audits_created_between(start, end)
+
+    engine = FakeEngine()
+    engine.archive = SlowArchive()
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), engine)) as client:
+        with ThreadPoolExecutor(2) as pool:
+            try:
+                first = pool.submit(client.post, "/api/articles/import")
+                assert started.wait(5)
+                # Bounded, so a missing guard fails here instead of waiting on the stalled archive.
+                second = pool.submit(client.post, "/api/articles/import").result(5)
+                assert second.status_code == 409
+                assert second.json() == {"error": {"code": "import_in_progress"}}
+            finally:
+                release.set()
+            assert first.result(5).json() == {"imported": 1, "updated": 0, "skipped": 2}
+        assert client.post("/api/articles/import").status_code == 200

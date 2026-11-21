@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
 # These are process/Make internals, not application settings.
 INTERNAL = {
-    "CURDIR", "MAKE", "COMPOSE", "WEB_PORT", "LIVE", "TEST", "STAMP",
+    "CURDIR", "MAKE", "COMPOSE", "WEB_PORT", "LIVE", "LIVE_START", "TEST", "STAMP",
     "TMPDIR",  # standard OS temporary directory, not a project setting
 }
 # Substrings alone would mistake a numeric budget and a CLI boolean for credentials.

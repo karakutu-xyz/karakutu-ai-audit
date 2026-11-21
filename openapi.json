@@ -145,6 +145,10 @@
             "title": "Ref",
             "type": "string"
           },
+          "removal_checked": {
+            "title": "Removal Checked",
+            "type": "boolean"
+          },
           "removed_at": {
             "anyOf": [
               {
@@ -220,6 +224,7 @@
           "url",
           "published_at",
           "removed_at",
+          "removal_checked",
           "category",
           "status",
           "latest_run_id",
@@ -538,6 +543,10 @@
             "title": "Ref",
             "type": "string"
           },
+          "removal_checked": {
+            "title": "Removal Checked",
+            "type": "boolean"
+          },
           "removed_at": {
             "anyOf": [
               {
@@ -592,6 +601,7 @@
           "url",
           "published_at",
           "removed_at",
+          "removal_checked",
           "category",
           "status",
           "latest_run_id",
@@ -2054,6 +2064,31 @@
             ],
             "title": "Fields"
           },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "disabled",
+                  "unchecked",
+                  "ok",
+                  "wallet_missing",
+                  "wallet_unreadable",
+                  "auth_unavailable",
+                  "unreachable",
+                  "rejected"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "not_configured",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
           "run_id": {
             "anyOf": [
               {
@@ -2086,6 +2121,20 @@
       },
       "ServiceStatus": {
         "properties": {
+          "archive": {
+            "enum": [
+              "disabled",
+              "unchecked",
+              "ok",
+              "wallet_missing",
+              "wallet_unreadable",
+              "auth_unavailable",
+              "unreachable",
+              "rejected"
+            ],
+            "title": "Archive",
+            "type": "string"
+          },
           "archive_reads_enabled": {
             "title": "Archive Reads Enabled",
             "type": "boolean"
@@ -2157,6 +2206,7 @@
           "model_provider",
           "response_format",
           "search_provider",
+          "archive",
           "archive_reads_enabled",
           "live_ingestion_enabled",
           "writes_enabled",

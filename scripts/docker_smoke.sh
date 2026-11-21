@@ -229,11 +229,16 @@ for image in "$SMOKE_API_IMAGE" "$SMOKE_WEB_IMAGE"; do
 done
 
 stage "compose files"
+# Fabricated secret source for static config only; never used for authentication.
+printf '{}\n' > "$WORK/fabricated-wallet.json"
+export ARCHIVE_WALLET_PATH="$WORK/fabricated-wallet.json"
 for files in "compose.yaml" "compose.yaml compose.test.yaml" "compose.search.yaml" \
-             "compose.yaml $SMOKE_OVERRIDE"; do
+             "compose.yaml $SMOKE_OVERRIDE" "compose.yaml compose.wallet.yaml"; do
   args=(); for f in $files; do args+=(-f "$f"); done
   SMOKE_API_TOKEN=x check "docker compose config: $files" docker compose -p "$P" "${args[@]}" config --quiet
 done
+
+unset ARCHIVE_WALLET_PATH
 
 # --- test mode -----------------------------------------------------------------------------
 stage "test mode (make test)"

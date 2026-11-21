@@ -13,6 +13,7 @@ const require = createRequire(new URL("../package.json", import.meta.url));
 const ts = require("typescript");
 const React = require("react");
 const { renderToStaticMarkup } = require("react-dom/server");
+const { parse: parseHtml } = require("parse5");
 const events = new EventTarget();
 let href = "https://workbench.invalid/runs";
 let historyState = null;
@@ -1523,6 +1524,25 @@ test("Settings waits for service and workflow content, or ends on either error",
   error = "";
   workflow.error = "Fictional workflow error";
   check(true);
+  // Settings renders the safe state labels rather than configuration alone.
+  error = "";
+  workflow = { data: null, error: "" };
+  for (const [archive, label] of Object.entries({
+    disabled: "Disabled · classification catalog and related-removal evidence unavailable",
+    unchecked: "Not checked yet",
+    ok: "OK",
+    wallet_missing: "Archive wallet not found",
+    wallet_unreadable: "Archive wallet cannot be read",
+    auth_unavailable: "Archive sign-in failed",
+    unreachable: "Archive unreachable",
+    rejected: "Archive refused the request",
+  })) {
+    status = { mode: "live", archive_reads_enabled: true, archive };
+    const tree = runtime.render(() => page.SettingsPage());
+    const html = renderToStaticMarkup(tree);
+    assert.ok(html.includes(label), archive);
+    assert.ok(!html.includes(">Enabled</"), archive);
+  }
   runtime.unmount();
 });
 
@@ -1540,12 +1560,194 @@ function fictionalArticle(overrides = {}) {
   };
 }
 
+// Match DOMParser's scripting-disabled document and structural node interface.
+// Template content deliberately stays outside childNodes, as in the browser.
+function articleParse(html) {
+  const adapt = (node) => ({
+    nodeType: ({ "#text": 3, "#comment": 8, "#document": 9,
+      "#document-fragment": 11 })[node.nodeName] ?? 1,
+    nodeName: node.nodeName.toLowerCase(),
+    nodeValue: node.nodeName === "#text" ? node.value : null,
+    childNodes: [],
+  });
+  const source = parseHtml(html, { scriptingEnabled: false });
+  const document = adapt(source);
+  const stack = [{ source, target: document }];
+  while (stack.length) {
+    const { source, target } = stack.pop();
+    for (const child of source.childNodes ?? []) {
+      const adapted = adapt(child);
+      target.childNodes.push(adapted);
+      stack.push({ source: child, target: adapted });
+    }
+  }
+  return document;
+}
+
+const articleHtml = load(path.join(root, "features/articles/articleHtml.ts"));
+// VM-created arrays have another realm's prototype; compare plain local values.
+const textBlocks = (html) => Array.from(
+  articleHtml.htmlToBlocks(html, articleParse),
+  (block) => ({ ...block }),
+);
+const prose = (...texts) => texts.map((text) => ({ text, pre: false }));
+
+test("only archive text with markup is parsed; other text never changes", () => {
+  const parseNever = () => { throw new Error("parsed non-archive or markup-free text"); };
+  for (const text of ["x<y and z>w", "x<p+1 and y>0", "x<b and y>0", "<p>a</p>", "&amp;"]) {
+    assert.equal(articleHtml.articleBlocks(text, false, parseNever), null, text);
+  }
+  assert.equal(articleHtml.articleBlocks("Plain archive text, no markup.", true, parseNever),
+    null);
+});
+
+test("archive paragraphs follow HTML parsing, block boundaries and whitespace", () => {
+  assert.deepEqual(textBlocks("<p>a<p>b"), prose("a", "b"));
+  assert.deepEqual(textBlocks("<table><tr><td>a<td>b</table>"), prose("a · b"));
+  assert.deepEqual(textBlocks("<dl><dt>t<dd>d</dl>"), prose("t", "d"));
+  assert.deepEqual(textBlocks("<pre>  x\n  y</pre>"),
+    [{ text: "  x\n  y", pre: true }]);
+  assert.deepEqual(textBlocks("<p>a <code>b</code> c</p>"), prose("a b c"));
+  assert.deepEqual(textBlocks("<p> a\t\n b&nbsp; c<br> d<br/>e </p>"),
+    prose("a b c\nd\ne"));
+  assert.deepEqual(textBlocks("<p> \t </p><pre></pre>"), []);
+  assert.deepEqual(textBlocks("<table><tr><th>a<th>b<tr><td>c<td>d</table>"),
+    prose("a · b", "c · d"));
+  assert.deepEqual(textBlocks("<pre>x&nbsp;\t<code> y</code></pre>"),
+    [{ text: "x\u00a0\t y", pre: true }]);
+});
+
+test("archive display skips hidden subtrees and preserves textarea text", () => {
+  for (const hidden of [
+    "<script>hidden</script>", "<style>hidden</style>",
+    "<svg><svg>hidden<!-- hidden --></svg>hidden</svg>",
+    "<math><mi>hidden</mi></math>",
+    "<noscript><p>hidden</p></noscript>",
+    "<template><p>hidden</p></template>",
+    "<iframe>hidden</iframe>", "<object>hidden</object>", "<embed>",
+    "<canvas>hidden</canvas>", "<select><option>hidden</option></select>",
+    "<button>hidden</button>",
+  ]) {
+    assert.deepEqual(textBlocks(`<p>a</p>${hidden}<p>b</p>`), prose("a", "b"));
+  }
+  assert.deepEqual(textBlocks("<head><title>hidden</title></head><body>shown"),
+    prose("shown"));
+  assert.deepEqual(textBlocks("<textarea>a<b>c</textarea>"),
+    [{ text: "a<b>c", pre: true }]);
+  assert.deepEqual(textBlocks("<p>a</p><textarea>  x\n y</textarea><p>b</p>"),
+    [...prose("a"), { text: "  x\n y", pre: true }, ...prose("b")]);
+});
+
+test("archive detection, leading noscript and block cells follow the review cases", () => {
+  const blocks = (content) => Array.from(
+    articleHtml.articleBlocks(content, true, articleParse) ?? [], (block) => ({ ...block }));
+  assert.deepEqual(blocks('<p title="a<b">visible'), prose("visible"));
+  assert.notEqual(articleHtml.articleBlocks('<img src="fictional.png">', true, articleParse), null);
+  assert.deepEqual(blocks('<img src="fictional.png">'), []);
+  assert.deepEqual(blocks("<noscript>hidden</noscript><p>shown</p>"), prose("shown"));
+  assert.deepEqual(blocks("<table><tr><td><p>a</p></td><td><p>b</p></td></tr></table>"),
+    prose("a", "b"));
+  assert.deepEqual(blocks("<table><tr><td>a</td><td><b>b</b></td></tr></table>"), prose("a · b"));
+  assert.deepEqual(blocks("<dl><dt>t<dd>d"), prose("t", "d"));
+  assert.deepEqual(blocks("<noscript>hidden"), []);
+  assert.deepEqual(blocks("<img src=fictional.png>"), []);
+  assert.deepEqual(blocks("<table><tr><td>a</td><td><p>b</p></td></tr></table>"),
+    prose("a", "b"));
+  assert.deepEqual(blocks("<table><tr><td><p>a</p></td><td>b</td></tr></table>"),
+    prose("a", "b"));
+});
+
+test("cell separators stay linear with many whitespace-only parts", () => {
+  const n = 8_000;
+  const row = "<table><tr><td>" + "<span> </span>".repeat(n) + "a</td>" +
+    "<td>b</td>".repeat(n) + "</tr></table>";
+  const document = articleParse(row);
+  const start = performance.now();
+  const [block] = articleHtml.htmlToBlocks(row, () => document);
+  assert.equal(block.text, "a" + " · b".repeat(n));
+  assert.ok(performance.now() - start < 200, "separator handling is not linear");
+});
+
+test("archive formatting stops at the tag limit", () => {
+  const limit = articleHtml.MAX_TAG_OPENINGS;
+  const within = "<p>a</p>" + "<b>x</b>".repeat(limit - 1);
+  assert.notEqual(articleHtml.articleBlocks(within, true, articleParse), null);
+  assert.equal(articleHtml.articleBlocks(within + "<b>y</b>", true, articleParse), null);
+});
+
+test("archive parser handles quoted attributes, comments and entities once", () => {
+  assert.deepEqual(textBlocks('<p title="a>b<c">text</p>'), prose("text"));
+  assert.deepEqual(textBlocks("<p>a</p><![CDATA[x]]><p>b</p>"), prose("a", "b"));
+  assert.deepEqual(textBlocks("a<!-- x -->b"), prose("ab"));
+  assert.deepEqual(textBlocks("&ldquo;Q&rdquo; &eacute; &scedil; &#351; &amp;lt;"),
+    prose("“Q” é ş ş &lt;"));
+});
+
+function deepDivs(depth, text) {
+  let node = { nodeType: 3, nodeName: "#text", nodeValue: text, childNodes: [] };
+  for (let level = 0; level < depth; level++) {
+    node = { nodeType: 1, nodeName: "DIV", nodeValue: null, childNodes: [node] };
+  }
+  return { nodeType: 9, nodeName: "#document", nodeValue: null, childNodes: [node] };
+}
+
+for (const [label, content, expected] of [
+  ["64k stray angle brackets", "<".repeat(64_000), prose("<".repeat(64_000))],
+  ["50k script openers", "<script>".repeat(50_000), []],
+  ["50k SVG levels", "<svg>".repeat(50_000), []],
+  ["50k div levels", "<div>".repeat(50_000) + "text", prose("text")],
+]) {
+  test(`archive HTML traversal handles ${label} within 1 second`, () => {
+    // A 50k-deep tree checks the walker never recurses. It is built directly:
+    // parse5 needs ~25 s for this depth, and the page never parses it (tag limit).
+    const document = label === "50k div levels" ? deepDivs(50_000, "text") : null;
+    const start = performance.now();
+    if (label === "64k stray angle brackets") {
+      const shown = articleHtml.articleBlocks(content, true, articleParse);
+      assert.deepEqual(Array.from(shown, (block) => ({ ...block })), expected);
+    } else {
+      // Past the tag limit the page shows raw text without asking the parser at all.
+      assert.equal(articleHtml.articleBlocks(content, true, () => {
+        throw new Error("parsed despite the tag limit");
+      }), null);
+    }
+    const blocks = articleHtml.htmlToBlocks(content,
+      document ? () => document : articleParse);
+    assert.deepEqual(Array.from(blocks, (block) => ({ ...block })), expected);
+    assert.ok(performance.now() - start < 1_000, `${label} exceeded 1 second`);
+  });
+}
+
+test("article markup formats archives only and falls back to exact raw text", () => {
+  const { ArticleText } = load(path.join(root, "features/articles/ArticleText.tsx"));
+  const content = "<p>First &amp; fictional.</p><p>Second.</p>";
+  const render = (overrides) => renderToStaticMarkup(React.createElement(
+    ArticleText, { article: fictionalArticle(overrides), parse: articleParse },
+  ));
+  for (const identity of [{ archive_id: "fictional" }, { ref: "ka-fictional" }]) {
+    const html = render({ content, ...identity });
+    assert.ok(html.includes("<p>First &amp; fictional.</p><p>Second.</p>"));
+    assert.ok(!html.includes("&lt;p&gt;"));
+  }
+  const raw = render({ content });
+  assert.ok(raw.includes('<div class="removed-text-body">' +
+    "&lt;p&gt;First &amp;amp; fictional.&lt;/p&gt;&lt;p&gt;Second.&lt;/p&gt;</div>"));
+  const fallback = render({
+    content: "<script>hidden</script>", archive_id: "fictional",
+  });
+  assert.ok(!fallback.includes("hidden"));
+  assert.ok(fallback.includes("The stored article has no readable text."));
+  const pre = render({ content: "<pre>  x\n y</pre>", archive_id: "fictional" });
+  assert.ok(pre.includes("<pre>  x\n y</pre>"));
+  assert.ok(render({ content: "" }).includes("No article text is stored yet."));
+});
+
 function fictionalStory(overrides = {}) {
   return {
     verdict: "INCONCLUSIVE", verdict_label: "Inconclusive",
     headline: "The audit could not establish what happened.",
     sentences: ["Fictional summary sentence."], failed_steps: [], skipped_steps: [],
-    human_review_note: "A person decides; this is not a finding of censorship.",
+    human_review_note: "This is not a finding of censorship; a person decides.",
     steps: [
       { name: "classification", title: "Classify", status: "completed",
         outcome: "pass", line: "Fictional stored explanation." },
@@ -1825,8 +2027,18 @@ test("article view shows first audit, re-run, running progress and one review no
   assert.ok(html.includes("Starts a new run; earlier runs stay in history."));
   assert.ok(html.includes("Skipped: fictional early stop."));
   assert.ok(html.includes("Fictional stored explanation."));
+  // The stored note is the one disclaimer: it appears once, never next to a second copy.
   assert.equal(html.split(summary.human_review_note).length - 1, 1);
-  assert.ok(!html.includes("This is not a finding of censorship; a person decides."));
+  const otherNote = "Fictional stored review note.";
+  for (const [note, shown] of [[otherNote, otherNote], [null, "This is not a finding of censorship; a person decides."]]) {
+    const noted = { ...latest, summary: { ...summary, human_review_note: note } };
+    harness.setArticle(fictionalArticle({ runs: [noted], run_count: 1 }));
+    const notedHtml = harness.render();
+    assert.equal(notedHtml.split(shown).length - 1, 1);
+    if (note) assert.ok(!notedHtml.includes("This is not a finding of censorship; a person decides."));
+  }
+  harness.setArticle(fictionalArticle({ runs: [latest], run_count: 1 }));
+  html = harness.render();
   assert.ok(html.includes(`/runs/${latest.id}`));
   harness.setArticle(fictionalArticle({ runs: [{ ...latest,
     status: "running", summary: fictionalStory({ steps: [
@@ -1837,6 +2049,110 @@ test("article view shows first audit, re-run, running progress and one review no
   assert.ok(html.includes("Audit running · step 2 of 6"));
   assert.ok(html.includes('disabled=""'));
   harness.unmount();
+});
+
+test("Articles offers archive import only in live mode with archive reads, and guides the empty page", () => {
+  const { ArticlesPage } = load(path.join(root, "pages/ArticlesPage.tsx"));
+  const originalApi = hooks.useApi;
+  const originalInventory = hooks.useArticleInventory;
+  const withStatus = (status) => () => ({ ...originalApi(), status, articlesCache: new Map() });
+  const live = { mode: "live", archive_reads_enabled: true };
+  try {
+    hooks.useArticleInventory = () => ({ data: { total: 0 }, loading: false });
+    articlesState = { data: { items: [], total: 0 }, loading: false, error: "", refresh() {} };
+    visit("https://workbench.invalid/articles");
+    hooks.useApi = withStatus(live);
+    let html = render(ArticlesPage);
+    assert.ok(html.includes("Import from archive"));
+    assert.ok(html.includes("Use Import from archive above"));
+    hooks.useApi = withStatus({ mode: "live", archive_reads_enabled: false });
+    html = render(ArticlesPage);
+    assert.ok(!html.includes(">Import from archive<"));
+    assert.ok(html.includes("Archive reads are off on this server"));
+    hooks.useApi = withStatus({ mode: "test", archive_reads_enabled: false });
+    html = render(ArticlesPage);
+    assert.ok(!html.includes(">Import from archive<"));
+    assert.ok(html.includes("Articles appear here when imported or submitted for audit."));
+    hooks.useApi = withStatus(live);
+    hooks.useArticleInventory = originalInventory;
+    articlesState.data = { items: [
+      fictionalArticle({ ref: "ka-1", removed_at: null, removal_checked: false }),
+      fictionalArticle({ ref: "ka-2", removed_at: null, removal_checked: true }),
+    ], total: 2 };
+    html = render(ArticlesPage);
+    assert.equal(html.split("Not checked yet").length - 1, 1);
+  } finally {
+    hooks.useApi = originalApi;
+    hooks.useArticleInventory = originalInventory;
+  }
+});
+
+test("archive import submits the day count, reports counts or the safe error code", async () => {
+  const runtime = hookRuntime();
+  const client = load(path.join(root, "api/client.ts"));
+  const api = { token: "fictional-token", epoch: 0, articlesCache: new Map([["q", {}]]),
+    status: { mode: "live", archive_reads_enabled: true } };
+  const calls = [];
+  let refreshed = 0;
+  const module = evaluateModule(path.join(root, "components/ArchiveImport.tsx"), (name) => {
+    if (name === "react") return runtime.reactHooks;
+    if (name === "../api/hooks") return { useApi: () => api };
+    if (name === "../api/client") return { ...client, importArticles: (days, token) =>
+      new Promise((resolve, reject) => { calls.push({ days, token, resolve, reject }); }) };
+    if (name.startsWith(".")) return load(path.join(root, "components", name.slice(2)) + ".tsx");
+    return require(name);
+  });
+  const view = () => runtime.render(() => module.ArchiveImport({ onImported: () => { refreshed++; } }));
+  try {
+    let tree = view();
+    const form = () => findNode(tree, (node) => node.type === "form");
+    findNode(tree, (node) => node.type === "input").props.onChange({ target: { value: "7" } });
+    tree = view();
+    // Two submits before the next render: only one import may start.
+    const handler = form().props.onSubmit;
+    const submitted = handler({ preventDefault() {} });
+    const doubled = handler({ preventDefault() {} });
+    assert.equal(calls.length, 1);
+    await doubled;
+    tree = view();
+    assert.ok(renderToStaticMarkup(tree).includes("Importing…"));
+    assert.equal(calls[0].days, 7);
+    assert.equal(calls[0].token, "fictional-token");
+    calls[0].resolve({ imported: 3, updated: 1, skipped: 2 });
+    await submitted;
+    tree = view();
+    assert.ok(renderToStaticMarkup(tree).includes("Imported 3 · updated 1 · skipped 2"));
+    assert.equal(api.articlesCache.size, 0);
+    assert.equal(refreshed, 1);
+    const failed = form().props.onSubmit({ preventDefault() {} });
+    calls[1].reject(new client.ApiError(409, "archive_unavailable"));
+    await failed;
+    tree = view();
+    const html = renderToStaticMarkup(tree);
+    assert.ok(html.includes("(archive_unavailable)"));
+    assert.ok(!html.includes("Imported 3"));
+    assert.equal(refreshed, 1);
+    findNode(tree, (node) => node.type === "input").props.onChange({ target: { value: "91" } });
+    tree = view();
+    assert.equal(findNode(tree, (node) => node.type === "button").props.disabled, true);
+    await form().props.onSubmit({ preventDefault() {} });
+    assert.equal(calls.length, 2);
+  } finally {
+    runtime.unmount();
+  }
+  assert.equal(module.importError(new client.ApiError(401)),
+    "Check the API token in Settings before importing.");
+  assert.equal(module.importError(new client.ApiError(401, "unauthorized")),
+    "Check the API token in Settings before importing. (unauthorized)");
+  assert.ok(module.importError(new client.ApiError(403, "untrusted_origin"))
+    .includes("ALLOWED_ORIGINS"));
+  assert.ok(!module.importError(new client.ApiError(403, "untrusted_origin")).includes("token"));
+  assert.equal(module.importError(new client.ApiError(403, "live_ingestion_disabled")),
+    "The service could not complete this request. Please try again. (live_ingestion_disabled)");
+  assert.equal(module.importError(new client.ApiError(422, "validation_error")),
+    "Choose between 1 and 90 days. (validation_error)");
+  assert.ok(module.importError(new client.ApiError(409, "import_in_progress"))
+    .startsWith("An import is already running."));
 });
 
 test("article rail offers Stop audit only while the latest audit is queued or running", () => {

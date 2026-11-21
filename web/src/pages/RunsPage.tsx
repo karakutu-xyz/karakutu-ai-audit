@@ -2,7 +2,14 @@ import { useLayoutEffect, type MouseEvent } from "react";
 import { useApi, useQueue, useRuns } from "../api/hooks";
 import { Link, navigate, useRoute, useScrollRestoration } from "../router";
 import { VERDICTS, type RunSummary } from "../types";
-import { date, ledgerLabel, originLabel, pending, runDuration } from "../format";
+import {
+  ARTICLE_ORIGIN_LABEL,
+  date,
+  ledgerLabel,
+  originLabel,
+  pending,
+  runDuration,
+} from "../format";
 import { VerdictChip, verdictLabel } from "../components/VerdictChip";
 import { StatusChip } from "../components/StatusChip";
 import { EmptyState } from "../components/EmptyState";
@@ -210,7 +217,7 @@ export function RunsPage({
               <option value="live">Live (all)</option>
               <option value="api">Live · API</option>
               <option value="webhook">Live · Webhook</option>
-              <option value="article">Article re-run</option>
+              <option value="article">{ARTICLE_ORIGIN_LABEL}</option>
             </select>
           </label>
         )}

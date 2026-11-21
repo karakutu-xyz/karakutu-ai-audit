@@ -126,6 +126,10 @@ export interface Workflow {
 
 export type RunMode = "test" | "live";
 
+export type ArchiveState =
+  | "disabled" | "unchecked" | "ok" | "wallet_missing" | "wallet_unreadable"
+  | "auth_unavailable" | "unreachable" | "rejected";
+
 export interface ServiceStatus {
   service: string;
   mode: RunMode;
@@ -135,6 +139,7 @@ export interface ServiceStatus {
   response_format: "json_schema" | "json_object" | "auto";
   search_provider: string;
   archive_reads_enabled: boolean;
+  archive: ArchiveState;
   live_ingestion_enabled: boolean;
   writes_enabled: false;
   prompts_editable: boolean;
@@ -259,6 +264,8 @@ export interface ArticleSummary {
   url: string;
   published_at: string | null;
   removed_at: string | null;
+  /** False only for an archive article whose details are not loaded yet. */
+  removal_checked: boolean;
   category: Category;
   status: ArticleStatus;
   latest_run_id: string | null;
@@ -266,6 +273,12 @@ export interface ArticleSummary {
   latest_verdict: Verdict | null;
   latest_run_at: string | null;
   run_count: number;
+}
+
+export interface ArticleImported {
+  imported: number;
+  updated: number;
+  skipped: number;
 }
 
 export interface ArticleList {

@@ -162,7 +162,7 @@ The generated [OpenAPI contract](../openapi.json) documents validation schemas a
 | Method / path | Purpose |
 | --- | --- |
 | `GET /health` | Minimal local liveness and the run `mode` (`test` or `live`). |
-| `GET /api/status` | Run `mode` and model/search/read/live posture; `writes_enabled` is always false for archive writes; `prompts_editable` reports whether a token is configured; `model_provider` and `response_format` identify the inference profile. |
+| `GET /api/status` | Run `mode` and model/search/read/live posture; `archive` is the safe current archive state and `archive_reads_enabled` remains the configuration boolean; `writes_enabled` is always false for archive writes; `prompts_editable` reports whether a token is configured; `model_provider` and `response_format` identify the inference profile. |
 | `GET /api/models` | Provider chat-model names (`available`), safe `error` code or null, resolved `default`, and per-step `override` (nullable), `effective` name and `source` (`config` or `api`). |
 | `POST /api/models/steps` | Assign `{step, model: <name or null>, author, note?}` for new runs; return step/override/effective/source and `workflow_id`. |
 | `GET /api/prompts` | List the six prompt names, stages, active summaries and version counts. |
@@ -273,8 +273,8 @@ into the summary. Step lines retain stored explanations (at most 500 characters,
 including an ellipsis when truncated), stored skip reasons, outcomes and execution
 status; a running audit marks the next unrecorded step running and subsequent steps
 pending. Queued runs have pending steps. Failed executions without a verdict receive
-the audit-failed story. Every substantive verdict says: "A person decides; this is
-not a finding of censorship." Failed/in-progress stories have no review note.
+the audit-failed story. Every substantive verdict says: "This is not a finding of
+censorship; a person decides." Failed/in-progress stories have no review note.
 Cancelled runs have verdict label "Stopped by a person" and headline "A person
 stopped this audit before it finished. This is not a result." Their verdict and
 human-review note are null, with no flag sentences. Reached steps retain their
@@ -302,7 +302,14 @@ archive ID was first attached to a run/demo URL-derived row, importing that ID a
 different URL is skipped to preserve the run-owned article fields.
 Duplicate, invalid or unchanged items count as skipped; changed metadata counts as
 updated. Archive disabled/unavailable returns 409
-`{"error":{"code":"archive_unavailable"}}`. When no archive identity exists yet,
+`{"error":{"code":"archive_unavailable","reason":"not_configured"}}` when disabled.
+Otherwise `reason` is the latest `archive` state from `/api/status`:
+`wallet_missing`, `wallet_unreadable`, `auth_unavailable`, `unreachable` or `rejected`.
+The success and error code contracts are unchanged. Status also permits `unchecked`
+before a call and `ok` after successful JSON. These fixed labels contain no source
+metadata or upstream text; see [state semantics](configuration.md#archive-read-state).
+Startup catalog reads and silent lazy fill update the same state without blocking
+startup or showing enrichment errors to readers. When no archive identity exists yet,
 import retains an existing normalized URL's ref, category, title and content when
 that article originated from a run/demo, adding archive/source metadata without
 breaking run links.

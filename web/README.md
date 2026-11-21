@@ -45,7 +45,7 @@ the previous ledger address in history state so its Back link restores filters.
 A directly opened run defaults to a Back to Runs link.
 
 The origin filter maps Benchmark/Live (all) to API `category` and API/Webhook/
-Article re-run to API `origin`; All omits both. The Benchmarks page always forces
+Article audit to API `origin`; All omits both. The Benchmarks page always forces
 `category=benchmark` and hides the origin filter. The API also handles status,
 verdict, workflow version, a 50-run limit and offset, so totals and navigation
 match every filter. Changing a filter resets the offset.
@@ -165,6 +165,7 @@ run detail links its title back when `article_ref` is present. Removed text is
 clamped to twelve rendered lines, with a toggle only when it overflows; snapshot
 versions show their saved titles and check dates. The rail follows the story
 below 1000px and sits beside it on wider screens.
+Archive HTML displays as readable text paragraphs; stored content, API responses and model inputs remain unchanged.
 
 Benchmark creation always posts to `/api/benchmarks/runs` and opens the new run.
 The synthetic-example button generates fictional content only when clicked.

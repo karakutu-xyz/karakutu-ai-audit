@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Import archive articles from the Articles page in live mode with archive reads (1 to 90 days), showing imported, updated and skipped counts or the safe error code; the empty page says how to get articles, and an archive article whose details are not loaded yet shows "Not checked yet" instead of an empty removal date (new `removal_checked` field in article summaries).
+- Display archive HTML as readable paragraphs without changing stored content, API responses or model inputs.
+
+- Polish the review UI: origin `article` reads "Article audit" in the Runs ledger, run detail, article history and the Origin filter alike; article stories and run detail share one disclaimer, "This is not a finding of censorship; a person decides." (the API's `human_review_note` now uses that wording, so the workflow version changes; verdicts, prompts and thresholds do not); the Runs and Benchmarks tables fit a 1024px window without scrolling.
+- When an article is judged of low public interest and no related-removal pattern keeps it in scope, the skipped source and web search steps now read "Skipped: the article was judged of low public interest" instead of "Skipped: relevance failed", which read like a model failure next to a successful relevance call. Same in the test-mode demo data (re-seeded on start). Verdict rules are unchanged; saved runs keep their text. Backend source is part of the workflow fingerprint, so new runs get a new workflow ID.
+- Mount Docker archive read wallets through an optional Compose secret and expose safe archive state in status, import errors and Settings.
+
 - Add optional PostgreSQL storage, verified SQLite data copying and isolated database checks.
 
 - Add a Stop audit button to the article page's side rail while the latest audit is queued or running; after a stop the page shows the stopped run and reloads the article.

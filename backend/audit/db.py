@@ -14,7 +14,7 @@ from unicodedata import normalize
 from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import (
-    JSON, Identity, Integer, Index, ForeignKey, bindparam, case, or_, String, Text,
+    JSON, Identity, Integer, Index, ForeignKey, and_, bindparam, case, cast, or_, String, Text,
     UniqueConstraint, create_engine, event, func, inspect, literal_column, select, update,
 )
 from sqlalchemy.engine import Connection
@@ -605,7 +605,16 @@ class Store:
                       (latest.c.latest_run_status == "cancelled", "cancelled"), else_="failed").label("status")
         fields = [getattr(ArticleRow, key) for key in ("ref", "title", "source", "host", "url",
                   "published_at", "removed_at", "category")]
-        return select(*fields, status, latest.c.latest_run_id, latest.c.latest_run_status,
+        # The archive's removal date arrives with the article's details, loaded when it is first
+        # opened. Until then an empty removed_at means "not checked yet", not "no removal found".
+        # A completed load always stores a snapshot (even for empty text); a failed or cleared
+        # one leaves SQL NULL or JSON null, which both backends render as text 'null'.
+        # Only archive-owned ("ka-") articles ever load archive details on open (the detail
+        # endpoint fills nothing else), so any other article counts as checked.
+        checked = case((ArticleRow.ref.not_like("ka-%"), True),
+                       else_=and_(ArticleRow.snapshot.is_not(None),
+                                  cast(ArticleRow.snapshot, Text) != "null")).label("removal_checked")
+        return select(*fields, checked, status, latest.c.latest_run_id, latest.c.latest_run_status,
                       latest.c.latest_verdict, latest.c.latest_run_at,
                       func.coalesce(latest.c.run_count, 0).label("run_count"),
                       func.coalesce(latest.c.latest_run_at, ArticleRow.created_at).label("activity")

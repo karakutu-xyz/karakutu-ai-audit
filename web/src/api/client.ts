@@ -1,7 +1,8 @@
-import type { Run } from "../types";
+import type { ArticleImported, Run } from "../types";
 
 export class ApiError extends Error {
-  constructor(public status: number) {
+  /** The server's safe error code (`{"error": {"code": ...}}`), when it sent one. */
+  constructor(public status: number, public code: string | null = null) {
     super(
       status === 401
         ? "Access requires an API token. Add it in Settings."
@@ -36,8 +37,24 @@ export async function request<T>(
       "Cannot reach the audit service. Check that the local API is running.",
     );
   }
-  if (!response.ok) throw new ApiError(response.status);
+  if (!response.ok) throw new ApiError(response.status, await errorCode(response));
   return response.json() as Promise<T>;
+}
+
+// Only a short lowercase identifier is kept; anything else in an error body is ignored.
+async function errorCode(response: Response): Promise<string | null> {
+  try {
+    const code = (await response.json())?.error?.code;
+    return typeof code === "string" && /^[a-z0-9_]{1,64}$/.test(code) ? code : null;
+  } catch {
+    return null;
+  }
+}
+
+export function importArticles(days: number, token: string, signal: AbortSignal) {
+  return request<ArticleImported>(`/api/articles/import?days=${days}`, token, {
+    method: "POST", signal,
+  });
 }
 
 export function errorMessage(error: unknown): string {

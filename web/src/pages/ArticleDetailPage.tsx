@@ -2,7 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { useApi, useArticle, useRun } from "../api/hooks";
 import { ApiError, auditArticle, articleAuditError } from "../api/client";
 import { Link, useScrollRestoration } from "../router";
-import { articleDate, humanize, originLabel, pending, shortWorkflow } from "../format";
+import {
+  articleDate,
+  DISCLAIMER,
+  humanize,
+  originLabel,
+  pending,
+  shortWorkflow,
+} from "../format";
 import { VerdictChip } from "../components/VerdictChip";
 import { StatusChip } from "../components/StatusChip";
 import { StopRunButton } from "../components/StopRunButton";
@@ -145,8 +152,7 @@ export function ArticleDetailPage({ articleRef }: { articleRef: string }) {
                       <p className="findings" key={index}>{sentence}</p>
                     ))}
                     <p className="verdict-note">
-                      {summary.human_review_note ||
-                        "This is not a finding of censorship; a person decides."}
+                      {summary.human_review_note || DISCLAIMER}
                     </p>
                   </>
                 ) : <p>No summary was recorded for this run.</p>}

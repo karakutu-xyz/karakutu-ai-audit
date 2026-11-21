@@ -4,6 +4,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
+from audit.clients.karakutu import ArchiveState
 from audit.domain import Article, AuditRequest, AuditResponse, StageName, Verdict
 
 
@@ -77,6 +78,7 @@ class ValidationField(BaseModel):
 
 class SafeError(BaseModel):
     code: str
+    reason: ArchiveState | Literal["not_configured"] | None = None
     fields: list[ValidationField] | None = None
     correlation_id: str | None = None
     codes: list[str] | None = None
@@ -95,6 +97,7 @@ class ServiceStatus(BaseModel):
     model_provider: Literal["lmstudio", "openai_compatible"]
     response_format: Literal["json_schema", "json_object", "auto"]
     search_provider: Literal["disabled", "searxng"]
+    archive: ArchiveState
     archive_reads_enabled: bool
     live_ingestion_enabled: bool
     writes_enabled: Literal[False]
@@ -205,6 +208,8 @@ class ArticleSummary(BaseModel):
     url: str
     published_at: str | None
     removed_at: str | None
+    # False only for an archive article whose details (text, removal date) are not loaded yet.
+    removal_checked: bool
     category: Literal["live", "benchmark"]
     status: ArticleStatus
     latest_run_id: str | None

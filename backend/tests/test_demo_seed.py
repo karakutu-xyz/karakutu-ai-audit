@@ -97,6 +97,10 @@ def test_scenario_evidence_and_failure_shapes(seeded):
     assert moved["steps"][1]["output"]["details"]["old_in_new"] == 1.0
     assert moved["output"]["short_circuited_at"] == "similarity"
     assert [s["status"] for s in moved["steps"]][2:] == ["skipped"] * 4
+    low = store.run("run_demo_ribbons_v2")
+    assert low["verdict"] == "LIKELY_LOW_PUBLIC_INTEREST"
+    assert [s["output"]["explanation"] for s in low["steps"][4:]] == [
+        "Skipped: the article was judged of low public interest"] * 2
     kept = store.run("run_demo_kept")
     assert kept["verdict"] == "INCONCLUSIVE"
     assert kept["steps"][3]["output"]["details"]["kept_in_scope"] is True

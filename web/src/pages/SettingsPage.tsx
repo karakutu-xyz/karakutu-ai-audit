@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { ArchiveState } from "../types";
 import { useApi, useServiceStatus, useWorkflow } from "../api/hooks";
 import { useRoute, Link, useScrollRestoration } from "../router";
 import { ConnectionDialog } from "../dialogs/ConnectionDialog";
@@ -6,6 +7,17 @@ import { FactsGrid } from "../components/FactsGrid";
 import { ErrorState } from "../components/ErrorState";
 import { Loading } from "../components/Loading";
 import { WorkflowView } from "../features/workflow/WorkflowView";
+
+const archiveLabels: Record<ArchiveState, string> = {
+  disabled: "Disabled · classification catalog and related-removal evidence unavailable",
+  unchecked: "Not checked yet",
+  ok: "OK",
+  wallet_missing: "Archive wallet not found",
+  wallet_unreadable: "Archive wallet cannot be read",
+  auth_unavailable: "Archive sign-in failed",
+  unreachable: "Archive unreachable",
+  rejected: "Archive refused the request",
+};
 
 export function SettingsPage() {
   const { token, setToken } = useApi();
@@ -53,9 +65,7 @@ export function SettingsPage() {
             { label: "Search", value: status.search_provider },
             {
               label: "Archive reads",
-              value: status.archive_reads_enabled
-                ? "Enabled"
-                : "Disabled · classification catalog and related-removal evidence unavailable",
+              value: archiveLabels[status.archive],
             },
             {
               label: "Live ingestion",

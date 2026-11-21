@@ -1,0 +1,10 @@
+# Opt-in read authentication; the host path is only a Compose secret source.
+secrets:
+  archive_wallet:
+    file: ${ARCHIVE_WALLET_PATH}
+
+services:
+  karakutu-audit-api:
+    secrets: [archive_wallet]
+    environment:
+      ARCHIVE_WALLET_PATH: /run/secrets/archive_wallet
