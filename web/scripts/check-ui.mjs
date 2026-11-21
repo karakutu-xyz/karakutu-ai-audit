@@ -2108,7 +2108,12 @@ test("archive import submits the day count, reports counts or the safe error cod
     const form = () => findNode(tree, (node) => node.type === "form");
     findNode(tree, (node) => node.type === "input").props.onChange({ target: { value: "7" } });
     tree = view();
-    const submitted = form().props.onSubmit({ preventDefault() {} });
+    // Two submits before the next render: only one import may start.
+    const handler = form().props.onSubmit;
+    const submitted = handler({ preventDefault() {} });
+    const doubled = handler({ preventDefault() {} });
+    assert.equal(calls.length, 1);
+    await doubled;
     tree = view();
     assert.ok(renderToStaticMarkup(tree).includes("Importing…"));
     assert.equal(calls[0].days, 7);

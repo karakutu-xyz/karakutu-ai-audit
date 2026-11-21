@@ -39,7 +39,10 @@ export function ArchiveImport({ onImported }: { onImported: () => void }) {
   const [result, setResult] = useState("");
   const [error, setError] = useState("");
   const controller = useRef<AbortController | null>(null);
+  // Set synchronously, so a second submit before the next render cannot start another import.
+  const inFlight = useRef(false);
   useEffect(() => {
+    inFlight.current = false;
     setBusy(false);
     setResult("");
     setError("");
@@ -51,8 +54,8 @@ export function ArchiveImport({ onImported }: { onImported: () => void }) {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (busy || !valid) return;
-    controller.current?.abort();
+    if (inFlight.current || !valid) return;
+    inFlight.current = true;
     const current = new AbortController();
     controller.current = current;
     setBusy(true);
@@ -67,6 +70,7 @@ export function ArchiveImport({ onImported }: { onImported: () => void }) {
     } catch (failure) {
       if (!current.signal.aborted) setError(importError(failure));
     } finally {
+      if (controller.current === current) inFlight.current = false;
       if (!current.signal.aborted) setBusy(false);
     }
   }

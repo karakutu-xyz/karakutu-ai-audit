@@ -955,6 +955,23 @@ def test_removal_checked_tells_not_loaded_from_no_removal_found(tmp_path, fail, 
         assert flags[values["ref"]] is True
 
 
+def test_run_owned_article_matched_by_import_is_not_left_unchecked(tmp_path, database_url):
+    # An import attaches an archive id to an existing run-owned article with the same URL but
+    # keeps its u- reference; opening it never loads archive details, so it must not wait.
+    engine = FakeEngine()
+    engine.archive = FakeArchive()
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), engine)) as client:
+        store = client.app.state.store
+        values = article_values({"url": "https://paper.example/archived", "title": "Fictional run case",
+                                 "content": FICTION}, "live")
+        with Session(store.engine) as session, session.begin():
+            session.add(ArticleRow(**values))
+        assert client.post("/api/articles/import").status_code == 200
+        item = next(i for i in client.get("/api/articles").json()["items"] if i["ref"] == values["ref"])
+        assert client.app.state.store.article(values["ref"])["archive_id"] == "42"
+        assert item["removal_checked"] is True
+
+
 @pytest.mark.parametrize("dead", [False, True])
 def test_removal_checked_after_a_load_with_empty_text(tmp_path, dead, database_url):
     # An archive response may carry no text; the check still happened.

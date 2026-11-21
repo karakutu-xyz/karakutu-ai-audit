@@ -609,7 +609,9 @@ class Store:
         # opened. Until then an empty removed_at means "not checked yet", not "no removal found".
         # A completed load always stores a snapshot (even for empty text); a failed or cleared
         # one leaves SQL NULL or JSON null, which both backends render as text 'null'.
-        checked = case((ArticleRow.archive_id.is_(None), True),
+        # Only archive-owned ("ka-") articles ever load archive details on open (the detail
+        # endpoint fills nothing else), so any other article counts as checked.
+        checked = case((ArticleRow.ref.not_like("ka-%"), True),
                        else_=and_(ArticleRow.snapshot.is_not(None),
                                   cast(ArticleRow.snapshot, Text) != "null")).label("removal_checked")
         return select(*fields, checked, status, latest.c.latest_run_id, latest.c.latest_run_status,
