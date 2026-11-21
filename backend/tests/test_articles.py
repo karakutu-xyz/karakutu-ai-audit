@@ -854,3 +854,31 @@ def test_fill_article_rejects_a_different_archive_record(tmp_path, database_url)
         assert store.article("ka-42")["content"] == ""
     finally:
         store.close()
+
+
+def test_archive_nul_characters_are_dropped_before_any_write(tmp_path, database_url):
+    # PostgreSQL rejects NUL in text and JSON; one bad archive item must not roll back the
+    # whole import or leave an article without text. Both backends store the same values.
+    class NulArchive(FakeArchive):
+        async def audits_created_between(self, start, end):
+            item = {"article_id": 42, "url": "https://paper.example/archived",
+                    "title": "Fictional\x00 archive story", "newspaper": {"display_name": "Fictional\x00 Wire"},
+                    "publish_date": "2026-11-03T00:00:00Z"}
+            return [item, {"article_id": 43, "url": "https://paper.example/second", "title": "Second fiction"}]
+
+        async def get_article(self, article_id):
+            record = await super().get_article(article_id)
+            versions = [version.model_copy(update={"title": version.title + "\x00",
+                                                   "news_text": version.news_text + "\x00"})
+                        for version in record.versions]
+            return record.model_copy(update={"versions": versions, "language_code": "e\x00n"})
+
+    engine = FakeEngine()
+    engine.archive = NulArchive()
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), engine)) as client:
+        assert client.post("/api/articles/import").json() == {"imported": 2, "updated": 0, "skipped": 0}
+        detail = client.get("/api/articles/ka-42").json()
+        assert detail["title"] == "Fictional archive story" and detail["source"] == "Fictional Wire"
+        assert detail["content"] == FICTION and detail["language"] == "en"
+        assert all("\x00" not in version["title"] for version in detail["snapshot"]["versions"])
+        assert client.get("/api/articles/ka-43").json()["title"] == "Second fiction"

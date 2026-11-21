@@ -153,6 +153,19 @@ def _refresh_article_search(_mapper, _connection, row):
     row.search_text = article_search_text(row.title, row.source, row.host, row.url)
 
 
+def without_nul(value):
+    """PostgreSQL text and JSON cannot hold NUL characters; SQLite can. Archive data is
+    unvalidated upstream input, so drop them everywhere (also nested in JSON) before a write,
+    keeping both backends' stored values identical."""
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, dict):
+        return {without_nul(key): without_nul(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [without_nul(item) for item in value]
+    return value
+
+
 def normalized_url(url: str) -> str:
     parts = urlsplit(url.strip())
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, ""))
@@ -621,6 +634,7 @@ class Store:
             begin_write(session.connection())
             seen = set()
             for item in items:
+                item = without_nul(item) if isinstance(item, dict) else item
                 archive_id = item.get("article_id")
                 url = item.get("url") or ""
                 try:
@@ -706,10 +720,10 @@ class Store:
             if str(record.id) != (expected_archive_id or ref[3:]):
                 return False
             versions = sorted(record.versions, key=lambda v: v.check_date or 0)
-            row.content = versions[-1].news_text if versions else record.news_text
-            row.language = record.language_code
-            row.snapshot = {"versions": [{"title": v.title, "check_date": v.check_date,
-                                         "content_hash": v.content_hash} for v in versions]}
+            row.content = without_nul(versions[-1].news_text if versions else record.news_text)
+            row.language = without_nul(record.language_code)
+            row.snapshot = without_nul({"versions": [{"title": v.title, "check_date": v.check_date,
+                                         "content_hash": v.content_hash} for v in versions]})
             dead = first_dead_check_date(record.checks)
             row.removed_at = str(dead) if dead is not None else None
             row.updated_at = now()
