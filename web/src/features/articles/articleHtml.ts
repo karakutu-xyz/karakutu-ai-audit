@@ -32,6 +32,8 @@ export function htmlToBlocks(
   // A cell separator waits for the next cell's inline text, so a block boundary in between
   // (e.g. <td><p>…) drops it instead of leaving a stray "·".
   let separatorPending = false;
+  // Whether the current block already holds visible text (kept as a flag, not rescanned).
+  let hasText = false;
   const flush = () => {
     const joined = parts.join("");
     const text = preDepth ? joined : joined.split("\n")
@@ -39,6 +41,7 @@ export function htmlToBlocks(
     if (text.trim()) blocks.push({ text, pre: preDepth > 0 });
     parts = [];
     separatorPending = false;
+    hasText = false;
   };
 
   // Entry/exit frames avoid recursion even for deeply nested parsed documents.
@@ -49,11 +52,13 @@ export function htmlToBlocks(
     const { node, exit } = stack.pop()!;
     if (node.nodeType === 3) {
       const value = node.nodeValue ?? "";
-      if (separatorPending && value.trim()) {
-        if (parts.some((part) => part.trim())) parts.push(" · ");
+      const visible = value.trim() !== "";
+      if (separatorPending && visible) {
+        if (hasText) parts.push(" · ");
         separatorPending = false;
       }
       parts.push(preDepth ? value : value.replace(/\s+/g, " "));
+      if (visible) hasText = true;
       continue;
     }
     if (![1, 9, 11].includes(node.nodeType)) continue;

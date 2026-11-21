@@ -1657,6 +1657,17 @@ test("archive detection, leading noscript and block cells follow the review case
     prose("a", "b"));
 });
 
+test("cell separators stay linear with many whitespace-only parts", () => {
+  const n = 8_000;
+  const row = "<table><tr><td>" + "<span> </span>".repeat(n) + "a</td>" +
+    "<td>b</td>".repeat(n) + "</tr></table>";
+  const document = articleParse(row);
+  const start = performance.now();
+  const [block] = articleHtml.htmlToBlocks(row, () => document);
+  assert.equal(block.text, "a" + " · b".repeat(n));
+  assert.ok(performance.now() - start < 200, "separator handling is not linear");
+});
+
 test("archive formatting stops at the tag limit", () => {
   const limit = articleHtml.MAX_TAG_OPENINGS;
   const within = "<p>a</p>" + "<b>x</b>".repeat(limit - 1);

@@ -17,15 +17,18 @@ export function ArticleText({ article, parse = browserParse }: {
   useEffect(() => {
     const element = text.current;
     if (!element) return;
+    // Measure real overflow of the clamped box (paragraph margins and <pre> line heights
+    // differ from the body line height). While expanded nothing is clipped, so keep the
+    // toggle and measure again once the box is collapsed.
     const measure = () => {
-      const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight);
-      setLong(element.scrollHeight > lineHeight * 12 + 1);
+      if (expanded) return;
+      setLong(element.scrollHeight > element.clientHeight + 1);
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [article.content, blocks]);
+  }, [article.content, blocks, expanded]);
   const versions = Array.isArray(article.snapshot?.versions)
     ? article.snapshot.versions.map(record) : [];
   return (
