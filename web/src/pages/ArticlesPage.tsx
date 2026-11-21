@@ -176,7 +176,7 @@ export function ArticlesPage() {
             <p>{inventory.data?.total !== 0
               ? "Try another search, status, verdict or category."
               : canImport
-                ? "Use Import from archive above to load recently removed articles, " +
+                ? "Use Import from archive above to add articles from recent archive audits, " +
                   "or submit one for audit."
                 : service?.mode === "live"
                   ? "Archive reads are off on this server, so articles appear only " +

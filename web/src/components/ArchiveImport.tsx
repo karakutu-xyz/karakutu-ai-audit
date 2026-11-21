@@ -91,7 +91,7 @@ export function ArchiveImport({ onImported }: { onImported: () => void }) {
         {busy ? "Importing…" : "Import from archive"}
       </button>
       <p className="help" id="archive-import-help">
-        Reads removed articles from the archive for the last 1 to 90 days.
+        Adds the articles of archive audits created in the last 1 to 90 days.
       </p>
       {result && <p className="help" role="status">{result}</p>}
       {error && <ErrorState message={error} />}
