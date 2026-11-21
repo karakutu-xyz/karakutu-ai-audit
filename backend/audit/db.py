@@ -574,10 +574,15 @@ class Store:
             row.language = record.language_code
             row.snapshot = {"versions": [{"title": v.title, "check_date": v.check_date,
                                          "content_hash": v.content_hash} for v in versions]}
-            dead = first_dead_check_date(record.checks)
-            # Archive check dates are Unix seconds; store ISO, like published_at.
-            row.removed_at = (datetime.fromtimestamp(int(dead), timezone.utc).isoformat()
-                              if dead is not None else None)
+            # Archive check dates are Unix seconds; store ISO, like published_at. Checks are
+            # unvalidated upstream data: an unusable date leaves the removal date unknown
+            # instead of discarding the article text.
+            try:
+                dead = first_dead_check_date(record.checks)
+                row.removed_at = (datetime.fromtimestamp(int(dead), timezone.utc).isoformat()
+                                  if dead is not None else None)
+            except (TypeError, ValueError, OverflowError, OSError):
+                row.removed_at = None
             row.updated_at = now()
             return True
 

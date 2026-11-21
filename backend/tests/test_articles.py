@@ -449,6 +449,26 @@ def test_archive_import_and_lazy_fill_once(tmp_path, fail):
         assert client.post("/api/articles/ka-42/audit").status_code == 404
 
 
+@pytest.mark.parametrize("entries", [
+    [{"status": 404, "check_date": "unknown"}],
+    [{"status": 404, "check_date": 10 ** 30}],
+    [{"status": 410, "check_date": "later"}, {"status": 200, "check_date": 2}],
+])
+def test_lazy_fill_keeps_text_when_removal_date_is_unusable(tmp_path, entries):
+    class OddDates(FakeArchive):
+        async def get_article(self, article_id):
+            record = await super().get_article(article_id)
+            return record.model_copy(update={"checks": {"entries": entries}})
+
+    engine = FakeEngine()
+    engine.archive = OddDates()
+    with TestClient(create_app(settings(tmp_path), engine)) as client:
+        assert client.post("/api/articles/import").status_code == 200
+        detail = client.get("/api/articles/ka-42").json()
+        assert detail["content"] == FICTION and detail["language"] == "en"
+        assert detail["removed_at"] is None
+
+
 def test_archive_unavailable_and_live_article_audit(tmp_path):
     engine = FakeEngine()
     with TestClient(create_app(settings(tmp_path), engine)) as client:
