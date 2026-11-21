@@ -1,4 +1,5 @@
 """Data-copy verification uses invented rows and local databases only by default."""
+from decimal import Decimal
 import importlib.util
 from pathlib import Path
 
@@ -136,11 +137,22 @@ def test_refuses_demo_or_test_source(tmp_path, database_url, capsys, name, demo)
 
 
 def test_hash_treats_equal_json_numbers_alike():
-    """PostgreSQL JSONB rewrites 1e20 as 100000000000000000000; both must hash equally."""
-    assert copy._canonical({"n": 1e20}) == copy._canonical({"n": 100000000000000000000})
-    assert copy._canonical([1.5, 2.0, True, None]) == copy._canonical([1.50, 2, True, None])
-    assert copy._canonical(0.1) != copy._canonical(0.2)
-    assert copy._canonical(True) is True
+    """PostgreSQL JSONB rewrites 1e20 as 100000000000000000000 and -0.0 as 0."""
+    enc = copy._encode
+    assert enc({"n": 1e20}) == enc({"n": 100000000000000000000})
+    assert enc([1.5, 2.0, -0.0, 0]) == enc([1.50, 2, 0, 0])
+    assert enc(2.5e-7) == enc(Decimal("0.00000025"))
+
+
+def test_hash_never_confuses_unequal_values():
+    enc = copy._encode
+    assert enc(10**29) != enc(10**29 + 1)
+    assert enc(1) != enc({"$number": "1"}) != enc("1")
+    assert enc(True) != enc(1) and enc(None) != enc("n")
+    assert enc(0.1) != enc(0.2)
+    assert enc({"a": 1, "b": 2}) == enc({"b": 2, "a": 1})
+    with pytest.raises(copy.CopyRefused):
+        enc(float("nan"))
 
 
 def test_copy_verifies_rows_with_exponent_numbers(tmp_path, database_url):
@@ -148,7 +160,8 @@ def test_copy_verifies_rows_with_exponent_numbers(tmp_path, database_url):
     store = Store(url)
     workflow(store)
     run = create(store)
-    store.complete_run(run["id"], {"response": {"verdict": "INCONCLUSIVE", "score": 1e20},
+    store.complete_run(run["id"], {"response": {"verdict": "INCONCLUSIVE", "score": 1e20,
+                                                "zero": -0.0, "big": 10**29 + 1},
                                    "steps": [{"name": "fictional", "value": 2.5e-7}]})
     store.close()
     counts = copy.copy_database(url, database_url, _target_backend=backend(database_url))

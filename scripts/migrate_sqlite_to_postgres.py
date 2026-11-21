@@ -31,24 +31,41 @@ def _empty(connection):
             raise CopyRefused("Target database is not empty")
 
 
-def _canonical(value):
-    """Backend-neutral value for hashing: equal JSON numbers hash equally.
+def _number(value) -> str:
+    """Exact canonical text for a JSON number: digits and exponent, no rounding.
 
-    PostgreSQL JSONB rewrites numbers (`1e20` comes back as `100000000000000000000`),
-    so every number becomes its normalized decimal text before hashing."""
-    if isinstance(value, bool) or value is None or isinstance(value, str):
-        return value
+    PostgreSQL JSONB rewrites numbers (`1e20` comes back as `100000000000000000000`,
+    `-0.0` as `0`), so equal numbers must encode equally and unequal ones never."""
+    if isinstance(value, float) and not math.isfinite(value):
+        raise CopyRefused("Non-finite number in stored data")
+    number = Decimal(repr(value)) if isinstance(value, float) else Decimal(value)
+    sign, digits, exponent = number.as_tuple()
+    digits = list(digits)
+    while len(digits) > 1 and digits[-1] == 0:
+        digits.pop()
+        exponent += 1
+    if digits == [0]:
+        return "0"
+    return ("-" if sign else "") + "".join(map(str, digits)) + "e" + str(exponent)
+
+
+def _encode(value) -> str:
+    """Type-tagged canonical text: no value of one type can encode like another."""
+    if value is None:
+        return "n"
+    if isinstance(value, bool):
+        return "t" if value else "f"
+    if isinstance(value, str):
+        return "s" + json.dumps(value, ensure_ascii=True)
     if isinstance(value, (int, float, Decimal)):
-        if isinstance(value, float) and not math.isfinite(value):
-            raise CopyRefused("Non-finite number in stored data")
-        number = Decimal(repr(value)) if isinstance(value, float) else Decimal(value)
-        return {"$number": format(number.normalize(), "f") if number == number.to_integral()
-                else str(number.normalize())}
+        return "d" + _number(value)
     if isinstance(value, dict):
-        return {key: _canonical(item) for key, item in value.items()}
+        items = sorted((json.dumps(str(key), ensure_ascii=True), _encode(item))
+                       for key, item in value.items())
+        return "{" + ",".join(f"{key}:{item}" for key, item in items) + "}"
     if isinstance(value, (list, tuple)):
-        return [_canonical(item) for item in value]
-    return value
+        return "[" + ",".join(_encode(item) for item in value) + "]"
+    raise CopyRefused("Unsupported stored value type")
 
 
 def _digest(connection, table, columns):
@@ -59,8 +76,7 @@ def _digest(connection, table, columns):
     query = select(*columns).order_by(
         *(column.collate(collation) for column in table.primary_key))
     for row in connection.execute(query).mappings():
-        encoded = json.dumps(_canonical(dict(row)), sort_keys=True, ensure_ascii=True,
-                             separators=(",", ":"), allow_nan=False).encode()
+        encoded = _encode(dict(row)).encode()
         digest.update(len(encoded).to_bytes(8, "big"))
         digest.update(encoded)
         count += 1
