@@ -140,7 +140,12 @@ class Search(BaseSearchProvider):
             async with httpx.AsyncClient(timeout=15, transport=self._transport) as client:
                 response = await client.get(self.base + '/search', params={'q':query,'format':'json','categories':'general','language':language or 'auto'})
                 response.raise_for_status()
-                hits = response.json().get('results') or []
+                payload = response.json()
+                hits = payload.get('results') if isinstance(payload, dict) else None
+                if not isinstance(hits, list):
+                    # A 200 without a results list (an error object, a proxy page) is a failed
+                    # query, not an empty search: it must not clear a rejection or hide an outage.
+                    raise ValueError('search response has no results list')
             results = results_from_hits(hits, lambda h:(h.get('url'), h.get('title') or '', h.get('content') or ''), query=query, provider='SearXNG', max_results=max_results)
             event['results'] = dump(results)
             self.state = self._search_state = 'ok'
@@ -380,8 +385,14 @@ class AuditEngine:
         leads.extend(src.extra_hits)
         try:
             out = await web_search.run(article, self.search, s['agents'].web_search, prefetched=prefetched, extra_hits=leads)
-        except web_search.WebSearchModelFailure:
-            return pipeline._stage_failed(stage), {'failure':'The web-search model failed on every attempt.'}
+        except web_search.WebSearchModelFailure as exc:
+            failed = pipeline._stage_failed(stage)
+            note = web_search.search_failure_note(exc.evidence) if exc.evidence else ''
+            if exc.evidence is not None:
+                # The note follows: a failed step is recognised by its leading sentence.
+                failed = failed.model_copy(update={'explanation': (failed.explanation + ' ' + note).strip(),
+                                                   'details': pipeline._web_details(exc.evidence)})
+            return failed, {'failure': note + 'The web-search model failed on every attempt.'}
         if src.dead_source and not any(normalize_url(d.url) == normalize_url(src.dead_source.url) for d in out.dead_same_story):
             out.dead_same_story.insert(0, src.dead_source)
         return StageResult(stage=stage, outcome=StageOutcome.PASS if out.matches else StageOutcome.FAIL, explanation=out.reasoning, details=pipeline._web_details(out)), {'web':out}

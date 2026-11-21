@@ -15,7 +15,7 @@ from test_api import FakeEngine, settings
 @pytest.mark.parametrize('outcome, expected', [
     ('ok', 'ok'), ('connect', 'unreachable'), ('timeout', 'unreachable'),
     ('transport', 'unreachable'), ('forbidden', 'rejected'), ('server', 'rejected'),
-    ('invalid_json', 'rejected'),
+    ('invalid_json', 'rejected'), ('error_object', 'rejected'), ('results_not_list', 'rejected'),
 ])
 async def test_search_checked_outcomes_and_recovery(outcome, expected):
     current = outcome
@@ -27,6 +27,10 @@ async def test_search_checked_outcomes_and_recovery(outcome, expected):
             raise errors[current]('fabricated private upstream text', request=request)
         if current == 'invalid_json':
             return httpx.Response(200, text='fabricated private upstream text')
+        if current == 'error_object':  # a 200 without a results list is a failed query
+            return httpx.Response(200, json={'error': 'fabricated private upstream text'})
+        if current == 'results_not_list':
+            return httpx.Response(200, json={'results': 'fabricated private upstream text'})
         return httpx.Response({'forbidden': 403, 'server': 503}.get(current, 200),
                              json={'results': []})
 

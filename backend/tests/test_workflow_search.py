@@ -119,3 +119,27 @@ def test_failure_prefix_also_precedes_positive_verdicts(evidence, verdict):
     actual, findings = pipeline._decide(web)
     assert actual == verdict
     assert findings.startswith(web_search.search_failure_note(web))
+
+
+async def test_model_failure_keeps_search_diagnostics(monkeypatch):
+    def route(request):
+        raise httpx.ConnectError('fabricated upstream text', request=request)
+
+    async def fetch(hits, **_kwargs):
+        return FetchOutcome(live=[LivePage(url=h.url, final_url=h.url, status=200,
+                                          title=h.title, text='Invented unrelated page')
+                                  for h in hits])
+
+    async def broken(*_args, **_kwargs):
+        raise RuntimeError('fabricated model reply')
+
+    monkeypatch.setattr(web_search, 'fetch_candidates', fetch)
+    search = Search('https://search.example', transport=httpx.MockTransport(route))
+    with pytest.raises(web_search.WebSearchModelFailure) as caught:
+        await web_search.run(article(), search, SimpleNamespace(run=broken),
+                             extra_hits=[hit('archive', 'archive')])
+    evidence = caught.value.evidence
+    assert evidence.search_queries == evidence.search_queries_failed == 3
+    assert evidence.archive_candidates == 1 and evidence.web_hits == 0
+    assert web_search.search_failure_note(evidence).startswith('Web search failed: all 3')
+    assert 'fabricated' not in str(caught.value) + evidence.reasoning

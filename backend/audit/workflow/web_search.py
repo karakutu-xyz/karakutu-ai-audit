@@ -67,7 +67,13 @@ class WebSearchModelFailure(RuntimeError):
 
     Distinct from "found nothing": the pipeline turns this into AUDIT_FAILED, never into
     INCONCLUSIVE. A crashed audit must be re-run, not filed as a clean result.
+    `evidence` keeps the search diagnostics (query counts, candidate sources) so a failed
+    step still says whether web search ran.
     """
+
+    def __init__(self, message: str, evidence=None):
+        super().__init__(message)
+        self.evidence = evidence
 
 
 # --- models ------------------------------------------------------------------
@@ -247,7 +253,10 @@ async def run(removed: Article, search_provider: BaseSearchProvider,
     # the pipeline can mark it AUDIT_FAILED rather than file a crash as a clean verdict.
     raise WebSearchModelFailure(
         f"the analysis model failed on all {len(_PROMPT_BUDGETS)} attempts "
-        f"(last: {type(last_exc).__name__})"   # type only: the message can quote the raw model reply
+        f"(last: {type(last_exc).__name__})",   # type only: the message can quote the raw model reply
+        evidence=explain(WebSearchEvidence(hits_searched=len(hits),
+                                           live_pages_read=len(fetched.live),
+                                           unreadable_count=len(fetched.unreadable))),
     ) from last_exc
 
 

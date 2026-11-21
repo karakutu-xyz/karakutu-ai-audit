@@ -307,7 +307,10 @@ Step and verdict explanations prefix total failure with "Web search failed: all
 3 search queries failed, so the web was not searched. Only archive candidates (2)
 and cited-source leads (0) were available." Partial failure says "1 of 3 search
 queries failed." Page counts distinguish archive candidates, cited-source leads
-and search hits. These descriptions do not change verdicts, thresholds or prompts.
+and search hits. When the web-search model then fails as well, the step stays failed
+and the audit `AUDIT_FAILED`, but the step keeps these counts and both explanations
+still carry the search note. A search answer without a `results` list counts as a
+failed query. These descriptions do not change verdicts, thresholds or prompts.
 
 ### Read-only archive import and detail enrichment
 

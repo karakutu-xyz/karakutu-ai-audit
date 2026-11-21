@@ -50,6 +50,16 @@ def missing(value: str) -> bool:
     return not value.strip() or "<" in value or ">" in value
 
 
+def is_loopback(host: str) -> bool:
+    """localhost names and every loopback address literal (127.0.0.0/8, ::1 in any form)."""
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def local_search_url(values: Mapping[str, str]) -> str:
     """Resolve the local runner's search endpoint before starting any process."""
     url = values.get("SEARXNG_URL", "")
@@ -65,10 +75,10 @@ def local_search_url(values: Mapping[str, str]) -> str:
         url_port = parsed.port
         if url_port is None:
             url_port = 443 if parsed.scheme == "https" else 80
-        host = (parsed.hostname or "").lower()
+        host = (parsed.hostname or "").lower().rstrip(".")
     except ValueError:
         raise ValueError("SEARXNG_URL: use a valid search URL") from None
-    if host in {"127.0.0.1", "localhost", "::1"} and url_port != int(port):
+    if is_loopback(host) and url_port != int(port):
         raise ValueError(
             f"SEARXNG_URL loopback port {url_port} differs from "
             f"KARAKUTU_SEARCH_PORT={port}. Set SEARXNG_URL to "

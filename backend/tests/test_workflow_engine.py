@@ -129,6 +129,7 @@ async def test_invalid_model_output_keeps_raw_completion():
     ('relevance_failure','AUDIT_FAILED',['skipped','completed','failed','skipped','skipped','skipped']),
     ('live_original','NOT_REMOVED',['skipped','completed','completed','completed','completed','skipped']),
     ('web_failure','AUDIT_FAILED',['skipped','completed','completed','completed','completed','failed']),
+    ('web_failure_search_down','AUDIT_FAILED',['skipped','completed','completed','completed','completed','failed']),
 ])
 async def test_remaining_graph_paths(monkeypatch, mode, verdict, statuses):
     from audit.workflow import source, web_search
@@ -147,7 +148,9 @@ async def test_remaining_graph_paths(monkeypatch, mode, verdict, statuses):
             return source.SourceEvidence(live_at_original_url=True, self_containment=.8, reasoning='live')
         return source.SourceEvidence(reasoning='unavailable')
     async def web(*a, **kw):
-        raise web_search.WebSearchModelFailure('sensitive payload must not appear')
+        evidence = (web_search.WebSearchEvidence(search_queries=3, search_queries_failed=3)
+                    if mode == 'web_failure_search_down' else None)
+        raise web_search.WebSearchModelFailure('sensitive payload must not appear', evidence=evidence)
     for module, function in ((classification,cls),(similarity,sim),(relevance,rel),(related_removals,related),(source,src),(web_search,web)):
         monkeypatch.setattr(module, 'run', function)
     engine = AuditEngine({'model_enabled':True})
@@ -159,6 +162,10 @@ async def test_remaining_graph_paths(monkeypatch, mode, verdict, statuses):
     assert result['response']['verdict'] == verdict
     assert [s['status'] for s in result['steps']] == statuses
     assert 'sensitive payload' not in str(result)
+    # A failed model step still says whether web search ran, in the step and the verdict.
+    down = 'Web search failed: all 3 search queries failed'
+    assert (down in str(result['steps'][-1])) == (mode == 'web_failure_search_down')
+    assert (down in str(result['response'])) == (mode == 'web_failure_search_down')
 
 @pytest.mark.asyncio
 async def test_graph_disables_ambient_tracing(monkeypatch):
