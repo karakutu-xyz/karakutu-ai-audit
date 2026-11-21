@@ -162,9 +162,10 @@ tbody tr:last-child > * {
   color: var(--secondary);
 }
 
+/* The title column keeps a minimum, so a wide action column can never squeeze it to zero. */
 .ledger-heading {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(min(12rem, 100%), 1fr) auto;
   align-items: end;
   gap: var(--space-1) var(--space-2);
 }
@@ -207,11 +208,19 @@ tbody tr:last-child > * {
   width: 5.5rem;
 }
 
-.archive-import > .help,
-.archive-import > .error-box {
+/* The notes take a full row but add no width of their own (contain), so the import column
+   stays as wide as its controls and the text wraps inside it, with or without a result. */
+.archive-import-notes {
+  display: grid;
+  gap: var(--space-half);
   flex-basis: 100%;
-  margin: 0;
+  contain: inline-size;
   text-align: right;
+}
+
+.archive-import-notes > .help,
+.archive-import-notes > .error-box {
+  margin: 0;
 }
 
 @media (max-width: 620px) {
@@ -245,8 +254,7 @@ tbody tr:last-child > * {
     justify-content: flex-start;
   }
 
-  .archive-import > .help,
-  .archive-import > .error-box {
+  .archive-import-notes {
     text-align: left;
   }
 
