@@ -468,6 +468,28 @@ def test_invalid_mode_value_is_not_printed(tmp_path):
     assert private_value not in result.stdout + result.stderr
 
 
+# A cap for a hung run, never a pace: every wait below returns as soon as its event happens,
+# so a slow machine only makes the test slower, not red.
+RUNNER_HANG_SECONDS = 120
+# Shell, not Python: a fake must start in milliseconds even when the machine is busy.
+FAKE_CHILD = """#!/bin/sh
+name=${0##*/}
+log() { printf '%s %s\\n' "$name" "$*" >> "$RUNNER_TEST_EVENTS"; }
+if [ "$name" = docker ] || [ "$1" = sync ]; then
+  log "$*"
+  exit 0
+fi
+# The handler is set before "started" is logged, so a stop is never missed.
+trap '${nap:+kill "$nap"} 2>/dev/null; log stopped; exit 0' TERM
+log started
+[ "$name" = uv ] && log "search_url ${SEARXNG_URL-}"
+while :; do
+  sleep 1 & nap=$!
+  wait "$nap"
+done
+"""
+
+
 @pytest.mark.parametrize("search", [False, True])
 def test_runner_terminates_children_using_only_fake_commands(tmp_path, search):
     # Never start servers or Docker. PATH substitutes tiny processes that only wait.
@@ -477,33 +499,9 @@ def test_runner_terminates_children_using_only_fake_commands(tmp_path, search):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     events = tmp_path / "events"
-    program = '''#!/usr/bin/env python3
-import os
-from pathlib import Path
-import signal
-import sys
-import time
-name = Path(sys.argv[0]).name
-path = Path(os.environ["RUNNER_TEST_EVENTS"])
-def log(message):
-    with path.open("a") as output:
-        output.write(name + " " + message + "\\n")
-if name == "docker" or sys.argv[1:2] == ["sync"]:
-    log(" ".join(sys.argv[1:]))
-    sys.exit(0)
-def stop(*_):
-    log("stopped")
-    sys.exit(0)
-signal.signal(signal.SIGTERM, stop)
-log("started")
-if name == "uv":
-    log("search_url " + os.environ.get("SEARXNG_URL", ""))
-while True:
-    time.sleep(0.02)
-'''
     for name in ("uv", "node", "docker"):
         executable = bin_dir / name
-        executable.write_text(program)
+        executable.write_text(FAKE_CHILD)
         executable.chmod(0o700)
     env_path = tmp_path / ".env"
     env_path.write_text("RUN_MODE=live\nMODEL_ENABLED=true\nSEARXNG_SECRET=fictional\n"
@@ -516,19 +514,24 @@ while True:
     process = subprocess.Popen(["bash", str(repo / "scripts/run-local.sh"), "--env-file",
                                 str(env_path)], cwd=tmp_path, env=env,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    def seen():
+        return events.read_text() if events.exists() else ""
+
     try:
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            text = events.read_text() if events.exists() else ""
-            if "uv started" in text and "node started" in text:
-                break
+        deadline = time.monotonic() + RUNNER_HANG_SECONDS
+        while not ("uv started" in seen() and "node started" in seen()):
+            if process.poll() is not None:
+                out, err = process.communicate()
+                pytest.fail(f"Runner exited {process.returncode} before both children "
+                            f"started.\nevents:\n{seen()}\nstdout:\n{out}\nstderr:\n{err}")
+            if time.monotonic() > deadline:
+                pytest.fail(f"Fake API/UI did not start.\nevents:\n{seen()}")
             time.sleep(0.02)
-        else:
-            pytest.fail("Fake API/UI did not start")
         process.send_signal(signal.SIGINT)
-        process.communicate(timeout=5)
-        text = events.read_text()
-        assert "uv stopped" in text and "node stopped" in text
+        _, err = process.communicate(timeout=RUNNER_HANG_SECONDS)
+        text = seen()
+        assert "uv stopped" in text and "node stopped" in text, (text, err)
         # The offline dependency check runs before anything starts.
         assert text.index("uv sync --frozen --check --offline") < text.index("uv started")
         assert ("docker " in text) == search
@@ -539,7 +542,7 @@ while True:
     finally:
         if process.poll() is None:
             process.terminate()
-            process.communicate(timeout=5)
+            process.communicate(timeout=RUNNER_HANG_SECONDS)
 
 
 @pytest.mark.parametrize('assignment', ['', 'SEARXNG_URL=\n'])

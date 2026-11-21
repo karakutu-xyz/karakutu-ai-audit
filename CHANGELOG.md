@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Make the local-runner stop test stable on a busy machine: its fake API, UI and Docker are now shell scripts instead of Python, and it waits for each event with a hang cap instead of a 5-second budget, failing with the runner's output if the runner exits early. Test-only.
 - A step cut off by a stop now reads "Stage did not complete: the audit was stopped." (no outcome) instead of blaming the model, in new step records and in the audit story, including runs saved earlier; an unexpected error says so too. Real model failures keep their wording.
 - `make dev` and `scripts/run-local.sh --check` now check offline that `web/node_modules` and the Python environment match `web/package-lock.json` and `uv.lock` before starting anything. A checkout pulled without reinstalling used to start Vite and fail in the browser on a missing import; now it stops with the command to run (`npm --prefix web ci` or `uv sync --frozen`). Nothing is printed when both are current, and nothing is installed or downloaded.
 - Show search reachability in status and Settings with a bounded cached probe,
