@@ -243,8 +243,11 @@ configure TLS; the remote SSL requirement still applies to managed servers.
    ```
 
    The script opens the source read-only, creates target schema through `Store`, copies in
-   foreign-key order in one transaction, and verifies every table's count and SHA-256 over
-   canonical JSON rows ordered by primary key. Activation/assignment rows copy in SQLite
+   foreign-key order in one transaction, and verifies every table's row count and an
+   order-independent SHA-256 (a hash of the sorted per-row hashes). JSON columns move as
+   their exact stored text and are compared verbatim, so even a reordered key or a
+   reformatted number fails verification; SQL NULL stays distinct from JSON null.
+   Activation/assignment rows copy in SQLite
    insertion order so generated PostgreSQL `seq` preserves the active selections. Generated
    sequences are excluded from logical row hashes. Output contains table counts only.
    Dry run reads counts and checks target emptiness without creating its schema. Any row in

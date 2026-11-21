@@ -13,8 +13,10 @@ Read README, docs/architecture.md, docs/workflow.md and docs/contributing.md bef
 - `compose.yaml` runs the non-root API/UI images plus search; `Tiltfile.stack` loads only `compose.search.yaml` and keeps local hot reload. API/UI/search ports: 2200/2201/2202, loopback by default. API/UI Docker binding and allowed hosts/origins are configurable; non-loopback allowed hosts require bearer authentication. All Compose files, including `compose.test.yaml`, are provenance dependencies.
 
 - Storage dialect differences belong in `db.py`: SQLite keeps pragmas, `user_version`
-  and rowid ordering; PostgreSQL uses JSONB, `schema_version`, identity `seq` ordering
-  and a transaction advisory writer lock. Test mode and demo seeding stay SQLite-only.
+  and rowid ordering; PostgreSQL uses plain `json` (never `jsonb`: saved records, including
+  evidence with NUL and exact number formatting, must stay verbatim), `schema_version`,
+  identity `seq` ordering and a transaction advisory writer lock. Archive article text is
+  NUL-free on both backends. Test mode and demo seeding stay SQLite-only.
   Keep database credentials out of errors and logs. One API process remains required.
 
 ## Invariants
