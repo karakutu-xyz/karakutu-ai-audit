@@ -1592,16 +1592,13 @@ const textBlocks = (html) => Array.from(
 );
 const prose = (...texts) => texts.map((text) => ({ text, pre: false }));
 
-test("archive HTML detection leaves plain and non-archive text unchanged", () => {
-  for (const plain of ["x<y and z>w", "x<p+1 and y>0", "x<b and y>0"]) {
-    assert.equal(articleHtml.looksLikeHtml(plain), false);
-    assert.equal(articleHtml.articleBlocks(plain, true, articleParse), null);
+test("only archive text with markup is parsed; other text never changes", () => {
+  const parseNever = () => { throw new Error("parsed non-archive or markup-free text"); };
+  for (const text of ["x<y and z>w", "x<p+1 and y>0", "x<b and y>0", "<p>a</p>", "&amp;"]) {
+    assert.equal(articleHtml.articleBlocks(text, false, parseNever), null, text);
   }
-  for (const html of ["</span>", "<!--", "<br>", "<br/>", "<p>",
-    '<p class="fictional">', "<div>", "&name;", "&#123;", "&#x1F;"]) {
-    assert.equal(articleHtml.looksLikeHtml(html), true, html);
-    assert.equal(articleHtml.articleBlocks(html, false, articleParse), null);
-  }
+  assert.equal(articleHtml.articleBlocks("Plain archive text, no markup.", true, parseNever),
+    null);
 });
 
 test("archive paragraphs follow HTML parsing, block boundaries and whitespace", () => {
@@ -1651,9 +1648,13 @@ test("archive detection, leading noscript and block cells follow the review case
   assert.deepEqual(blocks("<table><tr><td><p>a</p></td><td><p>b</p></td></tr></table>"),
     prose("a", "b"));
   assert.deepEqual(blocks("<table><tr><td>a</td><td><b>b</b></td></tr></table>"), prose("a · b"));
-  for (const plain of ["x<y and z>w", "x<p+1 and y>0", "x<b and y>0", "a <b c> d"]) {
-    assert.equal(articleHtml.looksLikeHtml(plain), false, plain);
-  }
+  assert.deepEqual(blocks("<dl><dt>t<dd>d"), prose("t", "d"));
+  assert.deepEqual(blocks("<noscript>hidden"), []);
+  assert.deepEqual(blocks("<img src=fictional.png>"), []);
+  assert.deepEqual(blocks("<table><tr><td>a</td><td><p>b</p></td></tr></table>"),
+    prose("a", "b"));
+  assert.deepEqual(blocks("<table><tr><td><p>a</p></td><td>b</td></tr></table>"),
+    prose("a", "b"));
 });
 
 test("archive formatting stops at the tag limit", () => {
@@ -1690,10 +1691,9 @@ for (const [label, content, expected] of [
     // parse5 needs ~25 s for this depth, and the page never parses it (tag limit).
     const document = label === "50k div levels" ? deepDivs(50_000, "text") : null;
     const start = performance.now();
-    const stray = label === "64k stray angle brackets";
-    assert.equal(articleHtml.looksLikeHtml(content), !stray);
-    if (stray) {
-      assert.equal(articleHtml.articleBlocks(content, true, articleParse), null);
+    if (label === "64k stray angle brackets") {
+      const shown = articleHtml.articleBlocks(content, true, articleParse);
+      assert.deepEqual(Array.from(shown, (block) => ({ ...block })), expected);
     } else {
       // Past the tag limit the page shows raw text without asking the parser at all.
       assert.equal(articleHtml.articleBlocks(content, true, () => {

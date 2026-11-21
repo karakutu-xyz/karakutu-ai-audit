@@ -10,22 +10,6 @@ export interface ParsedNode {
 export const browserParse = (html: string): ParsedNode =>
   new DOMParser().parseFromString(html, "text/html");
 
-// Element names that mark HTML when they appear as a bare tag, e.g. `<p>` or `<img/>`.
-const bareTags = "p|div|br|hr|img|span|a|b|i|em|strong|ul|ol|li|table|tr|td|th|h[1-6]|" +
-  "blockquote|figure|figcaption|section|article|header|footer|pre|code|script|style|svg";
-const bareTag = new RegExp(`<(?:${bareTags})[\\t\\n\\f\\r ]*\\/?>`, "i");
-
-export function looksLikeHtml(content: string): boolean {
-  // Detection only: the browser parser owns all HTML interpretation. Plain text such as
-  // `x<b and y>0` never matches: a tag needs a closing form, no attributes, or an
-  // attribute with a quoted value (`<p title="…">`, `<img src="…">`).
-  return /<!--|<\/[a-z][^<>]*>/i.test(content) ||
-    bareTag.test(content) ||
-    /<[a-z][a-z0-9-]*[\t\n\f\r ]+[a-z_:][-a-z0-9_:.]*[\t\n\f\r ]*=[\t\n\f\r ]*["']/i
-      .test(content) ||
-    /&(?:[a-z][a-z0-9]*|#[0-9]+|#x[0-9a-f]+);/i.test(content);
-}
-
 const hidden = new Set([
   "script", "style", "svg", "math", "noscript", "template", "head", "title",
   "iframe", "object", "embed", "canvas", "select", "button",
@@ -45,12 +29,16 @@ export function htmlToBlocks(
   let parts: string[] = [];
   let preDepth = 0;
   const rows: number[] = [];
+  // A cell separator waits for the next cell's inline text, so a block boundary in between
+  // (e.g. <td><p>…) drops it instead of leaving a stray "·".
+  let separatorPending = false;
   const flush = () => {
     const joined = parts.join("");
     const text = preDepth ? joined : joined.split("\n")
       .map((line) => line.replace(/\s+/g, " ").trim()).join("\n").trim();
     if (text.trim()) blocks.push({ text, pre: preDepth > 0 });
     parts = [];
+    separatorPending = false;
   };
 
   // Entry/exit frames avoid recursion even for deeply nested parsed documents.
@@ -61,6 +49,10 @@ export function htmlToBlocks(
     const { node, exit } = stack.pop()!;
     if (node.nodeType === 3) {
       const value = node.nodeValue ?? "";
+      if (separatorPending && value.trim()) {
+        if (parts.some((part) => part.trim())) parts.push(" · ");
+        separatorPending = false;
+      }
       parts.push(preDepth ? value : value.replace(/\s+/g, " "));
       continue;
     }
@@ -82,8 +74,7 @@ export function htmlToBlocks(
     if (pre) preDepth++;
     if (name === "tr") rows.push(0);
     if (!preDepth && (name === "td" || name === "th") && rows.length) {
-      // Separate cells inside one block only; block content in cells already splits.
-      if (rows[rows.length - 1]++ && parts.some((part) => part.trim())) parts.push(" · ");
+      if (rows[rows.length - 1]++) separatorPending = true;
     }
     if (name === "br") parts.push("\n");
     stack.push({ node, exit: true });
@@ -114,6 +105,9 @@ export function articleBlocks(
   isArchive: boolean,
   parse: (html: string) => ParsedNode = browserParse,
 ): TextBlock[] | null {
-  if (!isArchive || !looksLikeHtml(content) || tooManyTags(content)) return null;
+  // Archive content is stored HTML, so it is parsed as HTML (a literal "<" in it is "&lt;").
+  // Text from anywhere else (benchmarks, submissions) is never parsed and never changes, and
+  // archive text without "<" or "&" would come out of the parser unchanged anyway.
+  if (!isArchive || !/[<&]/.test(content) || tooManyTags(content)) return null;
   return htmlToBlocks(content, parse);
 }
