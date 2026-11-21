@@ -130,6 +130,9 @@ export type ArchiveState =
   | "disabled" | "unchecked" | "ok" | "wallet_missing" | "wallet_unreadable"
   | "auth_unavailable" | "unreachable" | "rejected";
 
+export type SearchState =
+  | "disabled" | "unchecked" | "ok" | "unreachable" | "rejected";
+
 export interface ServiceStatus {
   service: string;
   mode: RunMode;
@@ -137,7 +140,8 @@ export interface ServiceStatus {
   model_name: string;
   model_provider: "lmstudio" | "openai_compatible";
   response_format: "json_schema" | "json_object" | "auto";
-  search_provider: string;
+  search_provider: "disabled" | "searxng";
+  search: SearchState;
   archive_reads_enabled: boolean;
   archive: ArchiveState;
   live_ingestion_enabled: boolean;

@@ -385,6 +385,9 @@ def _web(t: _Trace, mode: str, *, failed=False):
             reasoning="Fictional same-story copy confirmed." if mode in ("likely_moved", "found")
             else "The fictional page does not reproduce this story.")
     out = web_search._ground(raw, fetched, t.article, len(sim.hits) + 1)
+    out.search_queries = 1
+    out.web_hits = 1
+    out.archive_candidates = len(sim.hits)
     src = t.state["source"]
     if src.dead_source:
         out.dead_same_story.insert(0, src.dead_source)
@@ -437,7 +440,8 @@ def _execute(article: Article, mode: str, prompt_texts: dict[str, str]):
         t.skip_rest("similarity found a measured relocation")
         web = web_search.WebSearchEvidence(relocated_to=sim.relocated_to, matches=[sim.relocated_to],
             relocation_old_in_new=sim.relocation_old_in_new, relocation_new_in_old=sim.relocation_new_in_old,
-            hits_searched=len(sim.hits), live_pages_read=len(sim.fetched.live), reasoning=sim.reason)
+            hits_searched=len(sim.hits), archive_candidates=len(sim.hits),
+            live_pages_read=len(sim.fetched.live), reasoning=sim.reason)
         return t, _response(t, web, short=StageName.SIMILARITY)
     relevant = mode not in ("low_interest", "kept_in_scope")
     rel = _relevance(t, relevant, failed=mode == "relevance_failure")

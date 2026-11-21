@@ -130,6 +130,9 @@ change between test/live, reads reload and review/benchmark drafts reset.
 The page stays mounted; its reads discard all data from the previous epoch.
 The mode pill stays in the sticky top bar. Service capabilities and
 the in-memory API token control live in Settings; 401 errors link there.
+Settings shows fixed search health labels (disabled, not checked, reachable,
+unreachable at SEARXNG_URL, or refused with a JSON-output hint) alongside archive
+state. The backend caches its bounded reachability probe for 30 seconds.
 Reloading clears the token; nothing uses local/session storage.
 
 A run's immutable workflow id loads independently of run polling and has a
@@ -150,7 +153,11 @@ Article detail reads `/api/articles/:ref` and the latest `/api/runs/:id` through
 hooks. Its story uses the latest computed `RunStory`, preferring the full run's
 summary as its records arrive. Completed steps show footnotes derived only from
 recognized fields in that run's stored step output/evidence: fetched URLs and
-HTTP status, containment, search matches, attribution quotes and related removals.
+HTTP status, containment, story matches, attribution quotes and related removals.
+Web evidence separates attempted/failed queries, web search hits, archive
+candidates, cited-source leads and the merged candidate total; historical totals
+are labelled as candidates. Total query failure explicitly says the web was not
+searched.
 Failed/skipped steps keep their stored reasons. A null or failed original probe
 and a dead cited source never mark the original URL unavailable; that note needs
 an explicit 404/410 original probe record. No archive link is fabricated.

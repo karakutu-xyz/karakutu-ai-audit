@@ -278,6 +278,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
                 "model_name": app.state.audit_engine.public_config.get("model_name", settings.model_name),
                 "model_provider": settings.model_provider, "response_format": settings.response_format,
                 "search_provider": settings.search_provider,
+                "search": await search_state(),
                 "archive_reads_enabled": bool(settings.archive_base_url),
                 "archive": archive_state(),
                 "live_ingestion_enabled": bool(settings.live_ingestion_enabled and settings.api_auth_token),
@@ -542,6 +543,13 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
             if await cancel_active_run(run_id) is not None:
                 cancelled.append(run_id)
         return {"cancelled": cancelled}
+
+    async def search_state():
+        # Stay offline even if an injected test engine exposes a live client.
+        if test_mode or settings.search_provider == "disabled":
+            return "disabled"
+        client = getattr(app.state.audit_engine, "search", None)
+        return await client.probe() if client else "unchecked"
 
     def archive_client():
         # Test mode must stay offline even if an injected engine exposes a client.

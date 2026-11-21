@@ -165,6 +165,8 @@ class DemoEngine:
             missing = verdict == Verdict.POSSIBLE_CENSORSHIP
             details.update({
                 "hits_searched": 1, "live_pages_read": 0 if missing else 1,
+                "search_queries": 1, "search_queries_failed": 0,
+                "web_hits": 1, "archive_candidates": 0, "cited_source_leads": 0,
                 "matches": [OTHER_URL] if found else [],
                 "dead_same_story": [{"url": OTHER_URL, "reason": "Demo HTTP 404",
                                      "source": "demo"}] if missing else [],

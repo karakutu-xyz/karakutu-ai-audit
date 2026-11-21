@@ -22,6 +22,7 @@ from audit.domain import (
     Verdict,
 )
 from audit.search.textmatch import MOVED_THRESHOLD, PARTIAL_MIN
+from audit.workflow.web_search import candidate_counts, search_failure_note
 
 
 ORDER = [StageName.CLASSIFICATION, StageName.SIMILARITY, StageName.RELEVANCE,
@@ -116,6 +117,11 @@ def _source_details(src) -> dict:
 def _web_details(web) -> dict:
     return {
         "hits_searched": web.hits_searched, "live_pages_read": web.live_pages_read,
+        "search_queries": web.search_queries,
+        "search_queries_failed": web.search_queries_failed,
+        "web_hits": web.web_hits,
+        "archive_candidates": web.archive_candidates,
+        "cited_source_leads": web.cited_source_leads,
         "unreadable_count": web.unreadable_count,
         "matches": [m.url for m in web.matches],
         "dead_same_story": [{"url": d.url, "reason": d.reason, "source": d.source}
@@ -149,7 +155,7 @@ def _decide(web) -> tuple[Verdict, str]:
             f"page(s) on the same topic measured as a DIFFERENT article, not a "
             f"republication of the removed one, and were set aside: {urls}."
         )
-    return verdict, findings
+    return verdict, search_failure_note(web) + findings
 
 
 def _decide_verdict(web) -> tuple[Verdict, str]:
@@ -286,7 +292,7 @@ def _decide_verdict(web) -> tuple[Verdict, str]:
     if web.live_pages_read:
         return (
             Verdict.INCONCLUSIVE,
-            f"Read {web.live_pages_read} live page(s) from {web.hits_searched} search hit(s), "
+            f"Read {web.live_pages_read} live page(s) from {candidate_counts(web)}, "
             "but none was confirmed to be the same story, and no copy was demonstrably gone. "
             "The search only covers the top results and its recall is known to be poor, so this "
             "is not evidence the story is absent. No inference of censorship.",
@@ -294,7 +300,7 @@ def _decide_verdict(web) -> tuple[Verdict, str]:
     if web.unreadable_count:
         return (
             Verdict.INCONCLUSIVE,
-            f"The search returned {web.hits_searched} link(s), but all {web.unreadable_count} "
+            f"The candidate list contained {candidate_counts(web)}, but all {web.unreadable_count} "
             "were non-article files (PDFs, sitemaps), bot-blocked, or unreachable — no readable "
             "news page came back, so the story was never actually searched for. This is a "
             "SEARCH-QUALITY failure, not evidence about the removed article. "
@@ -302,7 +308,6 @@ def _decide_verdict(web) -> tuple[Verdict, str]:
         )
     return (
         Verdict.INCONCLUSIVE,
-        f"The search returned no usable results at all ({web.hits_searched} hit(s)), so the "
-        "story was never actually searched for. The search backend may have failed; that "
-        "cannot be told apart from genuine absence. No inference of censorship.",
+        f"There were no usable results at all ({candidate_counts(web)}), so the "
+        "story could not be checked against readable pages. No inference of censorship.",
     )

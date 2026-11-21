@@ -496,6 +496,8 @@ def stop(*_):
     sys.exit(0)
 signal.signal(signal.SIGTERM, stop)
 log("started")
+if name == "uv":
+    log("search_url " + os.environ.get("SEARXNG_URL", ""))
 while True:
     time.sleep(0.02)
 '''
@@ -505,7 +507,8 @@ while True:
         executable.chmod(0o700)
     env_path = tmp_path / ".env"
     env_path.write_text("RUN_MODE=live\nMODEL_ENABLED=true\nSEARXNG_SECRET=fictional\n"
-                        + ("SEARCH_PROVIDER=searxng\n" if search else "SEARCH_PROVIDER=disabled\n"))
+                        + ("SEARCH_PROVIDER=searxng\nSEARXNG_URL=\nKARAKUTU_SEARCH_PORT=2252\n"
+                           if search else "SEARCH_PROVIDER=disabled\n"))
     env = {key: value for key, value in os.environ.items() if key not in example_blocks()}
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
     env["RUNNER_TEST_EVENTS"] = str(events)
@@ -530,9 +533,56 @@ while True:
         assert text.index("uv sync --frozen --check --offline") < text.index("uv started")
         assert ("docker " in text) == search
         if search:
+            assert "uv search_url http://127.0.0.1:2252" in text
             assert "up -d --wait" in text
             assert "stop karakutu-audit-search" in text
     finally:
         if process.poll() is None:
             process.terminate()
             process.communicate(timeout=5)
+
+
+@pytest.mark.parametrize('assignment', ['', 'SEARXNG_URL=\n'])
+def test_runner_derives_search_url_from_published_port(tmp_path, assignment):
+    result = runner(tmp_path, 'RUN_MODE=live\nMODEL_ENABLED=true\nSEARCH_PROVIDER=searxng\n'
+                    'SEARXNG_SECRET=fictional\nKARAKUTU_SEARCH_PORT=2252\n' + assignment)
+    assert result.returncode == 0, result.stderr
+    assert 'Derived SEARXNG_URL=http://127.0.0.1:2252' in result.stderr
+    assert 'Would start SearXNG' in result.stdout
+
+
+@pytest.mark.parametrize('url, port', [
+    ('http://127.0.0.1:2202', '2252'), ('http://localhost:2252', ''),
+    ('http://[::1]:2202', '2252'), ('http://localhost', '2252'),
+    ('http://127.0.0.2:2202', '2252'), ('http://[0:0:0:0:0:0:0:1]:2202', '2252'),
+    ('http://localhost.:2202', '2252'), ('http://app.localhost:2202', '2252'),
+    ('http://127.1:2202', '2252'), ('http://2130706433:2202', '2252'),
+    ('http://0x7f.1:2202', '2252'),
+])
+def test_runner_refuses_loopback_port_mismatch_before_start(tmp_path, url, port):
+    result = runner(tmp_path, 'RUN_MODE=live\nMODEL_ENABLED=true\nSEARCH_PROVIDER=searxng\n'
+                    f'SEARXNG_SECRET=fictional\nSEARXNG_URL={url}\n'
+                    f'KARAKUTU_SEARCH_PORT={port}\n')
+    assert result.returncode != 0
+    assert 'SEARXNG_URL loopback port' in result.stderr
+    assert f'KARAKUTU_SEARCH_PORT={port or "2202"}' in result.stderr
+    assert 'clear it to derive it' in result.stderr
+    assert 'Would start' not in result.stdout
+
+
+@pytest.mark.parametrize('url', ['https://search.example:4452', 'http://127.0.0.1:2252',
+                                'http://localhost:2252', 'http://[::1]:2252'])
+def test_runner_leaves_remote_and_matching_urls_alone(tmp_path, url):
+    result = runner(tmp_path, 'RUN_MODE=live\nMODEL_ENABLED=true\nSEARCH_PROVIDER=searxng\n'
+                    'SEARXNG_SECRET=fictional\nKARAKUTU_SEARCH_PORT=2252\n'
+                    f'SEARXNG_URL={url}\n')
+    assert result.returncode == 0, result.stderr
+    assert 'Derived SEARXNG_URL' not in result.stderr
+
+
+def test_runner_test_mode_ignores_search_port_mismatch(tmp_path):
+    result = runner(tmp_path, 'RUN_MODE=test\nSEARCH_PROVIDER=searxng\n'
+                    'KARAKUTU_SEARCH_PORT=2252\nSEARXNG_URL=http://127.0.0.1:2202\n')
+    assert result.returncode == 0, result.stderr
+    assert 'Derived SEARXNG_URL' not in result.stderr
+    assert 'Would start SearXNG' not in result.stdout

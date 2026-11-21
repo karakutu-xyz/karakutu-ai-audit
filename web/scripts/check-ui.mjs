@@ -1543,6 +1543,18 @@ test("Settings waits for service and workflow content, or ends on either error",
     assert.ok(html.includes(label), archive);
     assert.ok(!html.includes(">Enabled</"), archive);
   }
+  for (const [search, label] of Object.entries({
+    disabled: "Disabled",
+    unchecked: "SearXNG · not checked yet",
+    ok: "SearXNG · reachable",
+    unreachable: "SearXNG · unreachable at the configured SEARXNG_URL",
+    rejected: "SearXNG · refused the request (is JSON output enabled?)",
+  })) {
+    status = { mode: "live", search_provider: "searxng", search };
+    const html = renderToStaticMarkup(runtime.render(() => page.SettingsPage()));
+    assert.ok(html.includes(label), search);
+    assert.ok(!html.includes(">searxng</"), search);
+  }
   runtime.unmount();
 });
 
@@ -2400,9 +2412,25 @@ test("story evidence uses stored measurements and never treats a failed probe as
   assert.equal(originalIsDead(step, original), false);
   lines = evidenceSummary({ name: "web_search", output: { details: {
     matches: ["https://copy.invalid/report"], hits_searched: 7, live_pages_read: 2,
+    search_queries: 3, search_queries_failed: 1, web_hits: 4,
+    archive_candidates: 2, cited_source_leads: 1,
   } } });
-  assert.ok(lines.some((line) => line.text === "Search match · copy.invalid"));
-  assert.ok(lines.some((line) => line.text === "7 search hits"));
+  assert.ok(lines.some((line) => line.text === "Story match · copy.invalid"));
+  for (const text of ["7 total candidates", "4 search hits", "2 archive candidates",
+    "1 cited-source leads", "3 search queries attempted", "1 search queries failed"]) {
+    assert.ok(lines.some((line) => line.text === text), text);
+  }
+  const failed = evidenceSummary({ name: "web_search", output: { details: {
+    search_queries: 3, search_queries_failed: 3, hits_searched: 2,
+    web_hits: 0, archive_candidates: 2, cited_source_leads: 0,
+  } } });
+  assert.ok(failed.some((line) =>
+    line.text === "Web search failed; the web was not searched."));
+  const historical = evidenceSummary({ name: "web_search", output: { details: {
+    hits_searched: 5,
+  } } });
+  assert.equal(historical.length, 1);
+  assert.equal(historical[0].text, "5 total candidates");
   assert.equal(evidenceSummary({ name: "classification", output: {} }).length, 0);
 });
 
