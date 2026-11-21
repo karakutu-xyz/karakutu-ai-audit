@@ -421,7 +421,11 @@ def test_archive_import_and_lazy_fill_once(tmp_path, fail):
         imported = client.post("/api/articles/import?days=90")
         assert imported.status_code == 200
         assert imported.json() == {"imported": 1, "updated": 0, "skipped": 2}
-        assert engine.archive.calls[0][0] == "list"
+        kind, start, end = engine.archive.calls[0]
+        assert kind == "list"
+        # The archive's audit listing takes Unix seconds, as related removals sends them.
+        assert type(start) is int and type(end) is int
+        assert end - start == 90 * 86400
         assert client.post("/api/articles/import").json() == {"imported": 0, "updated": 0, "skipped": 3}
         assert client.post("/api/articles/import?days=91").status_code == 422
         stored = client.app.state.store.article("ka-42")
@@ -435,7 +439,9 @@ def test_archive_import_and_lazy_fill_once(tmp_path, fail):
         assert [c[0] for c in engine.archive.calls].count("detail") == 1
         assert detail["content"] == ("" if fail else FICTION)
         if not fail:
-            assert detail["language"] == "en" and detail["removed_at"] == "3"
+            # Archive check dates are Unix seconds; stored dates are ISO like published_at.
+            assert detail["language"] == "en"
+            assert detail["removed_at"] == "1970-01-01T00:00:03+00:00"
             assert len(detail["snapshot"]["versions"]) == 2
             assert "news_text" not in str(detail["snapshot"])
             assert detail["links"]["archive_url"] is None

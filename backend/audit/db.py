@@ -575,7 +575,9 @@ class Store:
             row.snapshot = {"versions": [{"title": v.title, "check_date": v.check_date,
                                          "content_hash": v.content_hash} for v in versions]}
             dead = first_dead_check_date(record.checks)
-            row.removed_at = str(dead) if dead is not None else None
+            # Archive check dates are Unix seconds; store ISO, like published_at.
+            row.removed_at = (datetime.fromtimestamp(int(dead), timezone.utc).isoformat()
+                              if dead is not None else None)
             row.updated_at = now()
             return True
 
