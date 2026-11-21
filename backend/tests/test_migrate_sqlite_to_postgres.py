@@ -261,3 +261,56 @@ def test_copy_strip_nul_cleans_text_and_keeps_json_exact(tmp_path, database_url)
         target.close()
     assert saved["label"] == "fictionallabel"
     assert saved["output"]["findings"] == "evidence\x00kept"
+
+
+@pytest.mark.parametrize("first, second", [
+    ('{"a":1,"b":2}', '{"b":2,"a":1}'),
+    ('{"n":-0.0}', '{"n":0}'),
+    ('{"a":1,"a":2}', '{"a":2}'),
+    ('{"n":1e20}', '{"n":100000000000000000000}'),
+])
+def test_hash_keeps_stored_json_text_verbatim(tmp_path, first, second):
+    """PostgreSQL json keeps the exact text, so any textual change must fail verification."""
+    from sqlalchemy import create_engine, text
+    from audit.db import Run
+    url = f"sqlite:///{tmp_path / 'verbatim.sqlite3'}"
+    store = Store(url)
+    workflow(store)
+    run = create(store)
+    store.close()
+    engine = create_engine(url)
+    columns = [column for column in Run.__table__.columns if column.name != "seq"]
+    digests = []
+    for raw in (first, second):
+        with engine.begin() as connection:
+            connection.execute(text("UPDATE runs SET output = :raw WHERE id = :id"),
+                               {"raw": raw, "id": run["id"]})
+        with engine.connect() as connection:
+            digests.append(copy._digest(connection, Run.__table__, columns))
+    engine.dispose()
+    assert digests[0] != digests[1]
+
+
+def test_strip_nul_verification_ignores_changed_primary_key_order(tmp_path, database_url):
+    """Stripping NUL from refs can reorder rows; verification must not depend on order."""
+    from sqlalchemy import create_engine, text
+    url = f"sqlite:///{tmp_path / 'order.sqlite3'}"
+    store = Store(url)
+    store.import_articles([{"article_id": 1, "url": "https://paper.example/a"},
+                           {"article_id": 2, "url": "https://paper.example/b"}])
+    store.close()
+    engine = create_engine(url)
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE articles SET ref = :new WHERE ref = 'ka-2'"),
+                           {"new": "ka-\x00b"})
+        connection.execute(text("UPDATE articles SET ref = 'ka-a' WHERE ref = 'ka-1'"))
+    engine.dispose()
+    report = []
+    copy.copy_database(url, database_url, strip_nul=True, nul_report=report,
+                       _target_backend=backend(database_url))
+    assert ("articles", "ref", 1) in report
+    target = Store(database_url)
+    try:
+        assert {item["ref"] for item in target.articles()["items"]} == {"ka-a", "ka-b"}
+    finally:
+        target.close()

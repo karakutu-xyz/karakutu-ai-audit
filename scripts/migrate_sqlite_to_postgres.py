@@ -61,6 +61,8 @@ def _encode(value) -> str:
     """Type-tagged canonical text: no value of one type can encode like another."""
     if value is SQL_NULL:
         return "N"
+    if isinstance(value, _JsonText):
+        return "J" + json.dumps(str(value), ensure_ascii=True)
     if value is None:
         return "n"
     if isinstance(value, bool):
@@ -88,22 +90,18 @@ def _raw(columns):
             for column in columns]
 
 
-def _reject_constant(_name):
-    raise CopyRefused("Non-finite number in stored data")
+class _JsonText(str):
+    """Stored JSON text, hashed verbatim: PostgreSQL `json` keeps it byte for byte, so key
+    order, duplicate keys and number formatting must all survive the copy."""
 
 
 def _exact(row: dict, columns) -> dict:
-    """Decode JSON text with exact numbers (Decimal), for hashing only."""
+    """Prepare a row for hashing: JSON columns as verbatim text, SQL NULL kept distinct."""
     values = dict(row)
     for column in columns:
-        text = values[column.name]
-        if not _is_json(column):
-            continue
-        if text is None:
-            values[column.name] = SQL_NULL
-        else:
-            values[column.name] = json.loads(text, parse_float=Decimal,
-                                             parse_constant=_reject_constant)
+        if _is_json(column):
+            text = values[column.name]
+            values[column.name] = SQL_NULL if text is None else _JsonText(text)
     return values
 
 
@@ -139,19 +137,19 @@ def _strip(row: dict, text_names: set[str]) -> dict:
 
 
 def _digest(connection, table, columns, *, strip_nul=False):
-    digest = hashlib.sha256()
-    count = 0
-    # Database locale must not change the canonical row order across backends.
-    collation = "BINARY" if connection.dialect.name == "sqlite" else "C"
-    query = select(*_raw(columns)).order_by(
-        *(column.collate(collation) for column in table.primary_key))
+    """Count and an order-independent digest of the table: a hash of the sorted per-row
+    hashes. Row order (collation, or primary keys changed by --strip-nul) cannot matter,
+    while any changed, missing or extra row does."""
     text_names = {column.name for column in _text_columns(columns)} if strip_nul else set()
-    for row in connection.execute(query).mappings():
+    row_hashes = []
+    for row in connection.execute(select(*_raw(columns))).mappings():
         encoded = _encode(_exact(_strip(dict(row), text_names), columns)).encode()
-        digest.update(len(encoded).to_bytes(8, "big"))
-        digest.update(encoded)
-        count += 1
-    return count, digest.digest()
+        row_hashes.append(hashlib.sha256(encoded).digest())
+    row_hashes.sort()
+    digest = hashlib.sha256()
+    for row_hash in row_hashes:
+        digest.update(row_hash)
+    return len(row_hashes), digest.digest()
 
 
 def copy_database(source_url, target_url, *, dry_run=False, strip_nul=False, nul_report=None,
