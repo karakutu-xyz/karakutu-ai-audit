@@ -479,13 +479,14 @@ if [ "$name" = docker ] || [ "$1" = sync ]; then
   log "$*"
   exit 0
 fi
-# The handler is set before "started" is logged, so a stop is never missed.
-trap '${nap:+kill "$nap"} 2>/dev/null; log stopped; exit 0' TERM
-log started
+# "started" is the last event before the wait, and the handler is set before it, so the
+# test has every event it checks once it sees "started", and a stop is never missed.
+# The handler runs once the current short nap ends; the fake leaves nothing behind.
+trap 'log stopped; exit 0' TERM
 [ "$name" = uv ] && log "search_url ${SEARXNG_URL-}"
+log started
 while :; do
-  sleep 1 & nap=$!
-  wait "$nap"
+  sleep 0.2
 done
 """
 
@@ -527,27 +528,31 @@ def test_runner_terminates_children_using_only_fake_commands(tmp_path, search):
         except ProcessLookupError:
             pass
 
-    def drain():
-        """Read the runner's output; a fake it left holding the pipes is killed first."""
+    def finish(timeout):
+        """Read the runner's output and whether everything exited by itself.
+
+        A timeout means a group member still holds the pipes, so the group is alive.
+        """
         try:
-            return process.communicate(timeout=5)
+            return (*process.communicate(timeout=timeout), True)
         except subprocess.TimeoutExpired:
             kill_group()
-            return process.communicate(timeout=RUNNER_HANG_SECONDS)
+            return (*process.communicate(timeout=RUNNER_HANG_SECONDS), False)
 
     try:
         deadline = time.monotonic() + RUNNER_HANG_SECONDS
         while not ("uv started" in seen() and "node started" in seen()):
             if process.poll() is not None:
-                out, err = drain()
+                out, err, _ = finish(5)  # Already failing: do not wait out the cap.
                 pytest.fail(f"Runner exited {process.returncode} before both children "
                             f"started.\nevents:\n{seen()}\nstdout:\n{out}\nstderr:\n{err}")
             if time.monotonic() > deadline:
                 pytest.fail(f"Fake API/UI did not start.\nevents:\n{seen()}")
             time.sleep(0.02)
         process.send_signal(signal.SIGINT)
-        _, err = process.communicate(timeout=RUNNER_HANG_SECONDS)
+        _, err, stopped = finish(RUNNER_HANG_SECONDS)
         text = seen()
+        assert stopped, f"Runner or a fake did not stop.\nevents:\n{text}\nstderr:\n{err}"
         assert "uv stopped" in text and "node stopped" in text, (text, err)
         # The offline dependency check runs before anything starts.
         assert text.index("uv sync --frozen --check --offline") < text.index("uv started")
