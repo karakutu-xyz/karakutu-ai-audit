@@ -413,7 +413,7 @@ def test_test_mode_disables_import_and_lazy_archive_fill(tmp_path):
         # An injected archive client must not bypass the run-mode boundary.
         response = client.post("/api/articles/import")
         assert response.status_code == 409
-        assert response.json() == {"error": {"code": "archive_unavailable"}}
+        assert response.json() == {"error": {"code": "archive_unavailable", "reason": "not_configured"}}
         client.app.state.store.import_articles([
             {"article_id": 42, "url": "https://paper.example/archived", "title": "Fictional archive story"},
         ])
@@ -484,7 +484,7 @@ def test_lazy_fill_keeps_text_when_removal_date_is_unusable(tmp_path, entries, d
 def test_archive_unavailable_and_live_article_audit(tmp_path, database_url):
     engine = FakeEngine()
     with TestClient(create_app(settings(tmp_path, database_url=database_url), engine)) as client:
-        assert client.post("/api/articles/import").json() == {"error": {"code": "archive_unavailable"}}
+        assert client.post("/api/articles/import").json() == {"error": {"code": "archive_unavailable", "reason": "not_configured"}}
         assert client.post("/api/articles/import").status_code == 409
     engine.archive = FakeArchive()
     with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, live_ingestion_enabled=True), engine)) as client:

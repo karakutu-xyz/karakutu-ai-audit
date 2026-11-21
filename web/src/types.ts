@@ -126,6 +126,10 @@ export interface Workflow {
 
 export type RunMode = "test" | "live";
 
+export type ArchiveState =
+  | "disabled" | "unchecked" | "ok" | "wallet_missing" | "wallet_unreadable"
+  | "auth_unavailable" | "unreachable" | "rejected";
+
 export interface ServiceStatus {
   service: string;
   mode: RunMode;
@@ -135,6 +139,7 @@ export interface ServiceStatus {
   response_format: "json_schema" | "json_object" | "auto";
   search_provider: string;
   archive_reads_enabled: boolean;
+  archive: ArchiveState;
   live_ingestion_enabled: boolean;
   writes_enabled: false;
   prompts_editable: boolean;

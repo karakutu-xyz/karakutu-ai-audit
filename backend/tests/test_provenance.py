@@ -1,5 +1,7 @@
 from copy import deepcopy
 
+import pytest
+
 from audit.provenance import build_base, build_workflow, with_prompts
 
 
@@ -23,10 +25,11 @@ def test_fingerprint_never_includes_api_secrets_or_data_paths(tmp_path):
     assert build_workflow({"model_api_key": "private", "data_dir": "/private"}, source_root=tmp_path)["id"] == build_workflow({}, source_root=tmp_path)["id"]
 
 
-def test_search_compose_is_a_behavior_dependency(tmp_path):
+@pytest.mark.parametrize('name', ['compose.search.yaml', 'compose.wallet.yaml'])
+def test_compose_is_a_behavior_dependency(tmp_path, name):
     source = tmp_path / "backend" / "audit"
     source.mkdir(parents=True)
-    search = tmp_path / "compose.search.yaml"
+    search = tmp_path / name
     search.write_text("services: {}")
     one = build_workflow({}, source_root=source)
     assert one["definition"]["dependencies"][search.name] == "services: {}"

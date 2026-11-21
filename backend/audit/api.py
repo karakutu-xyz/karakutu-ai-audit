@@ -278,6 +278,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
                 "model_provider": settings.model_provider, "response_format": settings.response_format,
                 "search_provider": settings.search_provider,
                 "archive_reads_enabled": bool(settings.archive_base_url),
+                "archive": archive_state(),
                 "live_ingestion_enabled": bool(settings.live_ingestion_enabled and settings.api_auth_token),
                 "writes_enabled": False, "prompts_editable": bool(settings.api_auth_token)}
 
@@ -547,6 +548,16 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
             return None
         return getattr(app.state.audit_engine, "archive", None)
 
+    def archive_state():
+        client = archive_client()
+        return getattr(client, "state", "unchecked") if client and client.enabled else "disabled"
+
+    def archive_unavailable():
+        state = archive_state()
+        reason = "not_configured" if state == "disabled" else state
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "archive_unavailable", "reason": reason}})
+
     def article_or_404(ref):
         result = app.state.store.article(ref)
         if result is None:
@@ -561,11 +572,12 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
         return app.state.store.articles(status=status, verdict=verdict.value if verdict else None,
                                          category=category, q=q, limit=limit, offset=offset)
 
-    @app.post("/api/articles/import", response_model=ArticleImported)
+    @app.post("/api/articles/import", response_model=ArticleImported,
+              responses={409: {"model": SafeErrorResponse}})
     async def import_articles(days: int = Query(default=30, ge=1, le=90)):
         client = archive_client()
         if client is None or not client.enabled:
-            return JSONResponse(status_code=409, content={"error": {"code": "archive_unavailable"}})
+            return archive_unavailable()
         # The archive's audit listing filters on Unix seconds, never ISO dates.
         end = int(datetime.now(timezone.utc).timestamp())
         try:
@@ -573,7 +585,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
         except Exception:
             items = None
         if items is None:
-            return JSONResponse(status_code=409, content={"error": {"code": "archive_unavailable"}})
+            return archive_unavailable()
         return app.state.store.import_articles(items)
 
     @app.get("/api/articles/{ref}", response_model=ArticleDetail)

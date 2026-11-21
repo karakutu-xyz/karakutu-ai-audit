@@ -8,6 +8,8 @@ TEST_PROJECT ?= $(PROJECT)-test
 WEB_PORT := $(or $(KARAKUTU_WEB_PORT),2201)
 LIVE_FILES ?= -f compose.yaml
 LIVE := $(COMPOSE) -p $(PROJECT) $(LIVE_FILES)
+# The wrapper selects compose.wallet.yaml from literal .env/caller configuration.
+LIVE_START := python3 scripts/compose_live.py -p $(PROJECT) $(LIVE_FILES) --
 TEST := $(COMPOSE) -p $(TEST_PROJECT) -f compose.yaml -f compose.test.yaml
 # The live data volume and the API image that backup and restore run in (Compose's default names).
 VOLUME ?= $(PROJECT)_karakutu-audit-data
@@ -25,8 +27,9 @@ test:
 # Real model, search and read-only archive from .env. No write-back to karakutu.
 live:
 	@test -f .env || { echo "live mode needs .env; copy .env.example and fill it"; exit 1; }
+	@python3 scripts/compose_live.py --check
 	$(TEST) down
-	$(LIVE) up --build -d --wait
+	$(LIVE_START) up --build -d --wait
 	@echo "LIVE mode at http://localhost:$(WEB_PORT)"
 
 down:
@@ -42,7 +45,7 @@ logs:
 
 # Inspect the effective database setting before SQLite volume operations.
 storage-sqlite:
-	@$(LIVE) run --rm --no-deps -T --entrypoint python karakutu-audit-api -c \
+	@$(LIVE_START) run --rm --no-deps -T --entrypoint python karakutu-audit-api -c \
 	  'import os,sys; from audit.config import database_backend; url=os.environ.get("DATABASE_URL", ""); sys.exit("backup/restore supports SQLite only; use PostgreSQL provider backups" if url and database_backend(url).get_backend_name() != "sqlite" else 0)'
 
 # Copy the live data volume into BACKUP_DIR while the API is stopped, then start it again.
@@ -55,8 +58,8 @@ backup: storage-sqlite
 	       -v "$(VOLUME)":/data:ro -v "$$dir":/backup \
 	       "$(API_IMAGE)" -czf "/backup/karakutu-audit-data-$(STAMP).tar.gz" --exclude=./.pre-restore -C /data . \
 	  && echo "backup written to $$dir/karakutu-audit-data-$(STAMP).tar.gz" \
-	  || { $(LIVE) up -d --wait karakutu-audit-api; echo "backup failed; the API is running again"; exit 1; }
-	$(LIVE) up -d --wait karakutu-audit-api
+	  || { $(LIVE_START) up -d --wait karakutu-audit-api; echo "backup failed; the API is running again"; exit 1; }
+	$(LIVE_START) up -d --wait karakutu-audit-api
 
 # Replace the live data volume with BACKUP_FILE. The archive and its database are checked first,
 # so a damaged backup changes nothing (scripts/volume_restore.py). START=0 leaves the API stopped
@@ -70,9 +73,9 @@ restore: storage-sqlite
 	       -v "$(VOLUME)":/data -v "$$file":/backup.tar.gz:ro \
 	       -v "$(CURDIR)/scripts/volume_restore.py":/restore/volume_restore.py:ro \
 	       "$(API_IMAGE)" /restore/volume_restore.py /backup.tar.gz /data \
-	  || { if [ "$(START)" = 1 ]; then $(LIVE) up -d --wait karakutu-audit-api; fi; \
+	  || { if [ "$(START)" = 1 ]; then $(LIVE_START) up -d --wait karakutu-audit-api; fi; \
 	       echo "restore refused or rolled back; the data is unchanged"; exit 1; }
-	@if [ "$(START)" = 1 ]; then $(LIVE) up -d --wait karakutu-audit-api; \
+	@if [ "$(START)" = 1 ]; then $(LIVE_START) up -d --wait karakutu-audit-api; \
 	 else echo "data restored; the API is left stopped (START=0)"; fi
 
 # End-to-end Docker check from a fresh clone of the committed HEAD. Offline after the image

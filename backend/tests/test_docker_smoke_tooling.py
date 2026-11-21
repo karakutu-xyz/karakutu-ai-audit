@@ -176,3 +176,75 @@ def test_volume_guard_refuses_postgres_before_any_database_access():
     allowed = subprocess.run([sys.executable, "-c", guard], env=env,
                              capture_output=True, text=True)
     assert allowed.returncode == 0 and not allowed.stdout + allowed.stderr
+
+
+def test_wallet_override_only_supplies_the_api_secret():
+    import yaml
+
+    base = yaml.safe_load((ROOT / 'compose.yaml').read_text())
+    assert base['services']['karakutu-audit-api']['environment']['ARCHIVE_WALLET_PATH'] == ''
+    text = (ROOT / 'compose.wallet.yaml').read_text()
+    override = yaml.safe_load(text)
+    assert override['secrets'] == {'archive_wallet': {'file': '${ARCHIVE_WALLET_PATH}'}}
+    assert override['services'] == {'karakutu-audit-api': {
+        'secrets': ['archive_wallet'],
+        'environment': {'ARCHIVE_WALLET_PATH': '/run/secrets/archive_wallet'}}}
+    assert 'compose.wallet.yaml' in (ROOT / 'backend/Dockerfile').read_text()
+    assert 'compose.yaml compose.wallet.yaml' in (ROOT / 'scripts/docker_smoke.sh').read_text()
+
+
+def test_make_wallet_selection_and_preflight_are_value_free(tmp_path):
+    import os
+    import subprocess
+
+    # Only these temporary files and a fake Docker executable are touched.
+    (tmp_path / 'scripts').symlink_to(ROOT / 'scripts', target_is_directory=True)
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    events = tmp_path / 'events'
+    docker = bin_dir / 'docker'
+    docker.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$COMPOSE_TEST_EVENTS"\n')
+    docker.chmod(0o700)
+    wallet = tmp_path / 'fabricated wallet.json'
+    wallet.write_text('{}')
+    backup = tmp_path / 'fabricated-backup.tar.gz'
+    backup.write_text('fabricated; fake Docker never opens this')
+    env = {k: v for k, v in os.environ.items() if k != 'ARCHIVE_WALLET_PATH'}
+    env.update(PATH=str(bin_dir) + os.pathsep + env['PATH'], COMPOSE_TEST_EVENTS=str(events))
+
+    def run(target, value, *, caller=None):
+        events.write_text('')
+        (tmp_path / '.env').write_text(f"ARCHIVE_WALLET_PATH='{value}'\n")
+        effective = dict(env)
+        if caller is not None:
+            effective['ARCHIVE_WALLET_PATH'] = caller
+        result = subprocess.run([
+            'make', '--no-print-directory', '-f', str(ROOT / 'Makefile'), target,
+            f'BACKUP_FILE={backup}', f'BACKUP_DIR={tmp_path}',
+        ], cwd=tmp_path, env=effective, capture_output=True, text=True)
+        assert str(wallet) not in result.stdout + result.stderr
+        return result, events.read_text().splitlines()
+
+    for target in ('live', 'restore', 'backup'):
+        for configured in ('', str(wallet)):
+            result, commands = run(target, configured)
+            assert result.returncode == 0, result.stderr
+            starts = [command for command in commands if ' up ' in command]
+            assert starts
+            assert all((' -f compose.wallet.yaml ' in command) == bool(configured)
+                       for command in starts)
+            assert all('compose.wallet.yaml' not in command for command in commands
+                       if '-p karakutu-ai-audit-test ' in command)
+    # An explicitly empty caller variable overrides .env, as with Compose.
+    result, commands = run('live', str(wallet), caller='')
+    assert result.returncode == 0
+    assert all('compose.wallet.yaml' not in command for command in commands)
+    # Caller configuration takes precedence over an empty .env.
+    result, commands = run('live', '', caller=str(wallet))
+    assert result.returncode == 0
+    assert any('compose.wallet.yaml' in command for command in commands)
+    for target in ('live', 'restore', 'backup'):
+        result, commands = run(target, str(tmp_path / 'absent'))
+        assert result.returncode != 0 and not commands
+        assert 'ARCHIVE_WALLET_PATH must name an existing file' in result.stderr
+        assert str(tmp_path / 'absent') not in result.stdout + result.stderr

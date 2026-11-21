@@ -1,9 +1,17 @@
 """Optional, GET-only archive integration; never writes to the archive."""
+from typing import Literal
+
 import httpx
 from audit.clients.models import ArticleRecord, SimilarArticlesResult
 from audit.clients.concepts import Concept
 from audit.model import trace
 from audit.clients.auth import ArweaveWalletAuth
+
+ArchiveState = Literal[
+    "disabled", "unchecked", "ok", "wallet_missing", "wallet_unreadable",
+    "auth_unavailable", "unreachable", "rejected",
+]
+
 
 class KarakutuClient:
     def __init__(self, base_url="", wallet_path="", wallet_json=""):
@@ -11,6 +19,24 @@ class KarakutuClient:
         self.enabled = bool(self.base_url)
         self.http = httpx.AsyncClient(timeout=15)
         self.auth = ArweaveWalletAuth(wallet_path=wallet_path, wallet_json=wallet_json, base_url=self.base_url) if wallet_path or wallet_json else None
+
+        self.state: ArchiveState = (
+            (self.auth.wallet_state if self.auth else None) or "unchecked"
+        ) if self.enabled else "disabled"
+
+    def _record_state(self, event):
+        """Project call outcomes to fixed public labels, never upstream messages."""
+        if event['error_type'] == 'AuthenticationUnavailable':
+            self.state = (getattr(self.auth, 'wallet_state', None)
+                          or getattr(self.auth, 'failure_kind', None) or 'auth_unavailable')
+        elif event['error_type'] == 'AuthenticationRejected':
+            self.state = 'rejected'
+        elif event['error_type']:
+            status = event.get('retry_status') or event['status']
+            self.state = ('rejected' if event['error_type'] == 'HTTPStatusError'
+                          and status in (401, 403) else 'unreachable')
+        else:
+            self.state = 'ok'
 
     async def close(self):
         await self.http.aclose()
@@ -26,15 +52,20 @@ class KarakutuClient:
         # Explicit wallet configuration must fail closed, rather than silently becoming public.
         if self.auth and not token:
             event['error_type'] = 'AuthenticationUnavailable'
+            self._record_state(event)
             return None
+        completed = True
         try:
             headers = {'Authorization': f'Bearer {token}'} if token else {}
             result = await self.http.get(self.base_url + path, params=params, headers=headers)
             event['status'] = result.status_code
-            if result.status_code == 401 and self.auth:
+            if result.status_code in (401, 403) and self.auth:
                 token = await self.auth.get_token(force=True, rejected_token=token)
                 if not token:
-                    event['error_type'] = 'AuthenticationUnavailable'
+                    event['error_type'] = (
+                        'AuthenticationRejected' if getattr(self.auth, 'refresh_throttled', False)
+                        else 'AuthenticationUnavailable'
+                    )
                     return None
                 result = await self.http.get(self.base_url + path, params=params, headers={'Authorization': f'Bearer {token}'})
                 event['retry_status'] = result.status_code
@@ -44,6 +75,13 @@ class KarakutuClient:
         except (httpx.HTTPError, ValueError) as exc:
             event['error_type'] = type(exc).__name__
             return None
+        except BaseException:
+            # A cancelled or interrupted read has no outcome: keep the previous state.
+            completed = False
+            raise
+        finally:
+            if completed:
+                self._record_state(event)
 
     async def get_article_by_url(self, url):
         body = await self._get('/articles', {'url': url})
