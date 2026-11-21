@@ -4,6 +4,7 @@ import ipaddress
 import os
 from pathlib import Path
 import re
+import socket
 import sys
 from typing import Mapping
 from urllib.parse import urlsplit
@@ -57,6 +58,12 @@ def is_loopback(host: str) -> bool:
     try:
         return ipaddress.ip_address(host).is_loopback
     except ValueError:
+        pass
+    try:
+        # Shorthand IPv4 spellings HTTP clients accept (127.1, 2130706433, 0x7f.1);
+        # inet_aton parses literals only and never resolves a name.
+        return ipaddress.IPv4Address(socket.inet_aton(host)).is_loopback
+    except (OSError, ValueError):
         return False
 
 

@@ -102,6 +102,13 @@ async def test_probe_keeps_rejection_until_a_real_search_succeeds():
     available = True
     search._probe_at = None
     assert await search.probe() == 'rejected'
+    # A real query that cannot connect does not clear the remembered rejection either.
+    available = False
+    assert (await search.search_checked('fictional'))[1]
+    assert search.state == 'unreachable'
+    available = True
+    search._probe_at = None
+    assert await search.probe() == 'rejected'
     status = 200
     assert await search.search_checked('fictional') == ([], False)
     assert await search.probe() == 'ok'

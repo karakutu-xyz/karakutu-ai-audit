@@ -96,7 +96,9 @@ class Search(BaseSearchProvider):
         self._transport = transport
         self._probe_at = None
         self._probe_lock = asyncio.Lock()
-        self._search_state = self.state
+        # A rejection is remembered until a real search succeeds; neither a probe nor a
+        # later transport failure can clear it.
+        self._rejected = False
         self._search_generation = 0
 
     async def probe(self) -> SearchState:
@@ -116,7 +118,7 @@ class Search(BaseSearchProvider):
                     async with httpx.AsyncClient(timeout=2, transport=self._transport) as client:
                         async with client.stream('GET', self.base + '/healthz'):
                             pass  # Headers suffice; never download an upstream body.
-                state = "rejected" if self._search_state == "rejected" else "ok"
+                state = "rejected" if self._rejected else "ok"
             except Exception:
                 state = "unreachable"
             if generation == self._search_generation:
@@ -148,14 +150,17 @@ class Search(BaseSearchProvider):
                     raise ValueError('search response has no results list')
             results = results_from_hits(hits, lambda h:(h.get('url'), h.get('title') or '', h.get('content') or ''), query=query, provider='SearXNG', max_results=max_results)
             event['results'] = dump(results)
-            self.state = self._search_state = 'ok'
+            self.state = 'ok'
+            self._rejected = False
             self._search_generation += 1
             return results, False
         except Exception as exc:
             event['error_type'] = type(exc).__name__
-            self.state = self._search_state = (
-                'unreachable' if isinstance(exc, httpx.TransportError) else 'rejected'
-            )
+            if isinstance(exc, httpx.TransportError):
+                self.state = 'unreachable'
+            else:
+                self.state = 'rejected'
+                self._rejected = True
             self._search_generation += 1
             return [], True
 

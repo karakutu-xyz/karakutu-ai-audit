@@ -556,6 +556,8 @@ def test_runner_derives_search_url_from_published_port(tmp_path, assignment):
     ('http://[::1]:2202', '2252'), ('http://localhost', '2252'),
     ('http://127.0.0.2:2202', '2252'), ('http://[0:0:0:0:0:0:0:1]:2202', '2252'),
     ('http://localhost.:2202', '2252'), ('http://app.localhost:2202', '2252'),
+    ('http://127.1:2202', '2252'), ('http://2130706433:2202', '2252'),
+    ('http://0x7f.1:2202', '2252'),
 ])
 def test_runner_refuses_loopback_port_mismatch_before_start(tmp_path, url, port):
     result = runner(tmp_path, 'RUN_MODE=live\nMODEL_ENABLED=true\nSEARCH_PROVIDER=searxng\n'
