@@ -208,6 +208,8 @@ class ArticleSummary(BaseModel):
     url: str
     published_at: str | None
     removed_at: str | None
+    # False only for an archive article whose details (text, removal date) are not loaded yet.
+    removal_checked: bool
     category: Literal["live", "benchmark"]
     status: ArticleStatus
     latest_run_id: str | None

@@ -932,3 +932,24 @@ def test_removal_dates_stored_by_older_versions_read_as_iso(tmp_path, stored, sh
         assert store.articles()["items"][0]["removed_at"] == shown
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_removal_checked_tells_not_loaded_from_no_removal_found(tmp_path, fail, database_url):
+    engine = FakeEngine()
+    engine.archive = FakeArchive(fail)
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), engine)) as client:
+        assert client.post("/api/articles/import").status_code == 200
+        listed = client.get("/api/articles").json()["items"]
+        assert [(item["ref"], item["removal_checked"]) for item in listed] == [("ka-42", False)]
+        detail = client.get("/api/articles/ka-42").json()
+        # Opening loads the archive details; a failed load stays unchecked so it can retry.
+        assert detail["removal_checked"] is (not fail)
+        assert client.get("/api/articles").json()["items"][0]["removal_checked"] is (not fail)
+        store = client.app.state.store
+        values = article_values({"url": "https://run.example/case", "title": "Fictional run case",
+                                 "content": FICTION}, "benchmark")
+        with Session(store.engine) as session, session.begin():
+            session.add(ArticleRow(**values))
+        flags = {item["ref"]: item["removal_checked"] for item in client.get("/api/articles").json()["items"]}
+        assert flags[values["ref"]] is True

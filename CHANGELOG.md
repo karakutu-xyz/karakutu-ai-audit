@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Import archive articles from the Articles page in live mode with archive reads (1 to 90 days), showing imported, updated and skipped counts or the safe error code; the empty page says how to get articles, and an archive article whose details are not loaded yet shows "Not checked yet" instead of an empty removal date (new `removal_checked` field in article summaries).
 - Display archive HTML as readable paragraphs without changing stored content, API responses or model inputs.
 
 - Polish the review UI: origin `article` reads "Article audit" in the Runs ledger, run detail, article history and the Origin filter alike; article stories and run detail share one disclaimer, "This is not a finding of censorship; a person decides." (the API's `human_review_note` now uses that wording, so the workflow version changes; verdicts, prompts and thresholds do not); the Runs and Benchmarks tables fit a 1024px window without scrolling.

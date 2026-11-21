@@ -10,6 +10,7 @@ import {
 import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
 import { Loading } from "../components/Loading";
+import { ArchiveImport, archiveImportAvailable } from "../components/ArchiveImport";
 
 function ArticleRow({ article, back }: { article: ArticleSummary; back: string }) {
   const href = `/articles/${encodeURIComponent(article.ref)}`;
@@ -29,7 +30,9 @@ function ArticleRow({ article, back }: { article: ArticleSummary; back: string }
         <div className="article-meta">{article.source || article.host}</div>
       </td>
       <td>{articleDate(article.published_at)}</td>
-      <td>{articleDate(article.removed_at)}</td>
+      <td>{article.removed_at === null && !article.removal_checked
+        ? <span className="help">Not checked yet</span>
+        : articleDate(article.removed_at)}</td>
       <td><ArticleStatusChip status={article.status} /></td>
       <td>
         {article.latest_verdict && <VerdictChip verdict={article.latest_verdict} />}
@@ -42,7 +45,8 @@ function ArticleRow({ article, back }: { article: ArticleSummary; back: string }
 
 export function ArticlesPage() {
   const route = useRoute();
-  const { token, epoch, articlesLedgerEpoch: ledgerEpoch } = useApi();
+  const { token, epoch, status: service, articlesLedgerEpoch: ledgerEpoch } = useApi();
+  const canImport = archiveImportAvailable(service);
   const epochChanged =
     ledgerEpoch.current.token !== token || ledgerEpoch.current.epoch !== epoch;
   const { query } = route;
@@ -109,6 +113,11 @@ export function ArticlesPage() {
         <p className="help ledger-description">
           Open an article to read what the audit did and the evidence behind it.
         </p>
+        {canImport && (
+          <div className="ledger-create">
+            <ArchiveImport onImported={refresh} />
+          </div>
+        )}
       </div>
       <div className="filters" role="search" aria-label="Filter articles">
         <label>
@@ -164,9 +173,15 @@ export function ArticlesPage() {
         ) : inventory.loading ? <Loading>Checking article inventory…</Loading> : (
           <EmptyState title={inventory.data?.total === 0
             ? "No articles yet" : "No articles match these filters"}>
-            <p>{inventory.data?.total === 0
-              ? "Articles appear here when imported or submitted for audit."
-              : "Try another search, status, verdict or category."}</p>
+            <p>{inventory.data?.total !== 0
+              ? "Try another search, status, verdict or category."
+              : canImport
+                ? "Use Import from archive above to load recently removed articles, " +
+                  "or submit one for audit."
+                : service?.mode === "live"
+                  ? "Archive reads are off on this server, so articles appear only " +
+                    "when submitted for audit."
+                  : "Articles appear here when imported or submitted for audit."}</p>
             {inventory.data?.total !== 0 && (
               <Link href="/articles">Clear filters</Link>
             )}
