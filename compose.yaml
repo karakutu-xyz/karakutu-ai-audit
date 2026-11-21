@@ -13,7 +13,7 @@ services:
     environment:
       RUN_MODE: live
       DATA_DIR: /data
-      DATABASE_URL: ""
+      DATABASE_URL: ${DATABASE_URL:-}
       SEARXNG_URL: http://karakutu-audit-search:8080
       MODEL_BASE_URL: ${CONTAINER_MODEL_BASE_URL:-http://host.docker.internal:1234/v1}
       # The API refuses to start on a non-loopback published address without API_AUTH_TOKEN.

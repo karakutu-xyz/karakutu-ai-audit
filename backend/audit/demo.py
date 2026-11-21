@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from audit.clients.concepts import Concept
 from audit.config import has_demo_marker, is_test_database_path
 from audit.db import (
+    begin_write,
     ACTIVATION_ORDER, ArticleRow, article_values, ERRORS, PromptActivation, PromptVersion, Reaction, Run, Store, Workflow,
 )
 from audit.domain import (
@@ -675,7 +676,7 @@ def seed(database_url: str) -> dict:
     try:
         store.sync_prompt_defaults(DEFAULTS)
         with Session(store.engine) as session, session.begin():
-            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            begin_write(session.connection())
             prompt_sets = _seed_prompt_history(session)
             runs = _runs(prompt_sets)
             reactions = _reactions(runs)

@@ -7,7 +7,16 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 from audit.domain import Article, AuditRequest, AuditResponse, StageName, Verdict
 
 
-class ArticleInput(Article):
+class TextInput(BaseModel):
+    @field_validator("*", mode="before")
+    @classmethod
+    def no_nul(cls, value):
+        if isinstance(value, str) and "\x00" in value:
+            raise ValueError("invalid_text")
+        return value
+
+
+class ArticleInput(Article, TextInput):
     model_config = ConfigDict(extra="forbid")
     url: str = Field(min_length=1, max_length=4096)
     title: str = Field(min_length=1, max_length=2000)
@@ -26,7 +35,7 @@ class ArticleInput(Article):
         return value
 
 
-class RunInput(BaseModel):
+class RunInput(TextInput):
     model_config = ConfigDict(extra="forbid")
     removed_article: ArticleInput
     similar_articles: list[ArticleInput] = Field(default_factory=list, max_length=5)
@@ -37,7 +46,7 @@ class RunInput(BaseModel):
         return AuditRequest.model_validate(self.model_dump(include={"removed_article", "similar_articles"}))
 
 
-class ReactionInput(BaseModel):
+class ReactionInput(TextInput):
     model_config = ConfigDict(extra="forbid")
     reaction: Literal["agree", "disagree", "needs_review"]
     reviewer: str = Field(min_length=1, max_length=120)
@@ -261,7 +270,7 @@ class RunList(BaseModel):
     total: int = Field(ge=0)
 
 
-class PromptAuthorInput(BaseModel):
+class PromptAuthorInput(TextInput):
     model_config = ConfigDict(extra="forbid")
     author: str = Field(min_length=1, max_length=120)
     note: str = Field(default="", max_length=2000)

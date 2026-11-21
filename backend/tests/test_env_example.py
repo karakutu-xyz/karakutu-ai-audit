@@ -18,13 +18,15 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
 # These are process/Make internals, not application settings.
 INTERNAL = {
-    "CURDIR", "COMPOSE", "WEB_PORT", "LIVE", "TEST", "STAMP",
+    "CURDIR", "MAKE", "COMPOSE", "WEB_PORT", "LIVE", "TEST", "STAMP",
     "TMPDIR",  # standard OS temporary directory, not a project setting
 }
 # Substrings alone would mistake a numeric budget and a CLI boolean for credentials.
 NON_SECRETS = {"MODEL_MAX_TOKENS": "output budget", "API_TOKEN": "Make boolean flag"}
 # Keep explicit and reasoned if a future tool needs a key it cannot statically expose.
-EXAMPLE_ONLY = {}
+EXAMPLE_ONLY = {
+    "TEST_POSTGRES_URL": "Read only by the opt-in database fixture in backend/tests/conftest.py",
+}
 
 
 def inventory() -> dict[str, set[str]]:

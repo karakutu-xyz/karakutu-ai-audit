@@ -133,6 +133,17 @@ def has_demo_marker(path: Path, *, include_wal: bool = False) -> bool:
         return False
 
 
+def database_backend(database_url: str):
+    """Validate the driver without including the submitted URL in errors."""
+    try:
+        url = make_url(database_url)
+    except (ArgumentError, ValueError):
+        raise ValueError("Unsupported DATABASE_URL backend") from None
+    if url.drivername not in {"sqlite", "sqlite+pysqlite", "postgresql+psycopg"}:
+        raise ValueError("Unsupported DATABASE_URL backend")
+    return url
+
+
 def canonical_database(database_url: str) -> tuple[str, bool, bool]:
     """Return the URL to open (the resolved path that was checked), whether that path is a
     test database path (`is_test_database_path`), and whether the file already holds demo data.
@@ -141,12 +152,9 @@ def canonical_database(database_url: str) -> tuple[str, bool, bool]:
     symlink cannot make the checked file differ from the opened one. URI filenames and paths
     that do not reparse to themselves are refused.
     """
-    try:
-        url = make_url(database_url)
-    except ArgumentError:
-        raise ValueError("Invalid DATABASE_URL") from None
-    if url.get_backend_name() != "sqlite":
-        raise ValueError("Only SQLite storage is supported")
+    url = database_backend(database_url)
+    if url.get_backend_name() == "postgresql":
+        return database_url, False, False
     if "uri" in url.query or (url.database or "").startswith("file:"):
         raise ValueError("SQLite URI filenames are not supported in DATABASE_URL")
     if not url.database or url.database == ":memory:":

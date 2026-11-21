@@ -186,6 +186,10 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
     async def lifespan(app: FastAPI):
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         store = Store(settings.database_url)
+        if not test_mode and store.has_demo_data():
+            # Fail closed: a copied or restored demo database never receives real runs.
+            store.close()
+            raise RuntimeError("Live mode must not use a database holding demo data")
         app.state.store = store
         app.state.tasks = set()
         app.state.run_tasks = {}
@@ -599,7 +603,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
             article = article_or_404(ref)
             if article["category"] == "live" and not test_mode and not (settings.live_ingestion_enabled and settings.api_auth_token):
                 raise HTTPException(404)
-            # Store re-reads the article and checks for active work inside BEGIN IMMEDIATE.
+            # Store re-reads the article and checks for active work under the database writer lock.
             return submit(None, article["category"], "article", article_ref=ref)
 
     @app.post("/api/benchmarks/runs", status_code=202, response_model=RunDetail)

@@ -110,6 +110,11 @@ runs and workflow snapshots can contain sensitive content, so protect the databa
 
 ## Backup and restore
 
+These targets support SQLite only and refuse a PostgreSQL `DATABASE_URL` before stopping
+the API. PostgreSQL backups and restores are the managed provider’s job; configure retention,
+point-in-time recovery and restore drills with that provider. Preserve any local private
+files separately.
+
 Run these from the checkout. Both stop the API first and start it again afterwards, so SQLite is
 never copied or replaced while it is being written; the whole volume, WAL sidecar files
 included, is covered. They use the live stack's own API image, so nothing is downloaded. Replace
@@ -148,7 +153,7 @@ curl -fsS http://127.0.0.1:2200/health
 ```
 
 Check the current workflow version in the UI or query `GET /api/workflow` with the bearer token;
-its `id` identifies the current snapshot. Startup applies pending SQLite migrations. Migrations
+its `id` identifies the current snapshot. Startup applies pending migrations for the configured backend. Migrations
 are forward-only, and older code refuses a database with a newer schema.
 
 To roll back, restore first with the current checkout, whose `make restore` and image hold the
@@ -176,7 +181,12 @@ coordinate the queue. `MAX_CONCURRENT_RUNS` controls parallel audits inside the 
 make smoke
 ```
 
-The smoke suite clones committed `HEAD` into a temporary directory and builds without cache;
+`make smoke` also calls `make test-postgres`, which checks the current checkout against
+a throwaway PostgreSQL 17 container on a free loopback port. Its random password stays
+in the script environment, its database is isolated per test, and an exit trap removes
+the container. This pass needs the local uv test environment and the PostgreSQL image.
+
+The Docker smoke suite clones committed `HEAD` into a temporary directory and builds without cache;
 uncommitted changes are not tested. It exercises test mode, live mode with an offline fake
 model, access controls, persistence, image hygiene and Compose configuration. Builds need image
 and package registries; the live stage runs on an internal Docker network with no route out, so
@@ -189,3 +199,70 @@ Set `SMOKE_REF` to test another commit (its Makefile must support the `PROJECT` 
 `SMOKE_API_PORT`, `SMOKE_WEB_PORT` and `SMOKE_SEARCH_PORT` for ports,
 `SMOKE_UPGRADE_FROM` to test migration from an older commit, or `SMOKE_KEEP_IMAGES=1` to retain
 built images. Defaults and details are in [`scripts/docker_smoke.sh`](../scripts/docker_smoke.sh).
+
+## PostgreSQL storage
+
+The database provider is undecided. Use any compatible managed PostgreSQL server and
+set the live `DATABASE_URL` through protected runtime configuration, for example:
+
+```text
+postgresql+psycopg://audit:<password>@db.example.invalid:5432/audit?sslmode=require
+```
+
+Require SSL remotely. Prefer `sslmode=verify-full` with the provider's `sslrootcert`
+when certificate verification is available. Percent-encode password punctuation in the
+URL. Treat the whole URL as a secret; never paste effective Compose configuration into
+logs or tickets. Recreate the API after changing it. The database role needs DDL rights
+for startup migrations. PostgreSQL still requires exactly one API process.
+
+For an optional local PostgreSQL service, set a generated `POSTGRES_PASSWORD` in the
+protected `.env`, then run:
+
+```sh
+docker compose -p karakutu-ai-audit -f compose.yaml -f compose.postgres.yaml up -d --wait db
+```
+
+The service publishes only `127.0.0.1:5432`, retains a separate named volume, and is
+unused by default `make test` and `make live`. Point container `DATABASE_URL` at
+`postgresql+psycopg://audit:<password>@db:5432/audit` (local development only), set
+`LIVE_FILES='-f compose.yaml -f compose.postgres.yaml'`, then use `make live`.
+For a local host process use `127.0.0.1` instead of `db`. The local container does not
+configure TLS; the remote SSL requirement still applies to managed servers.
+
+### Move existing SQLite data
+
+1. Stop intake and the API. Take a consistent SQLite backup and retain it for rollback.
+   Upgrade the SQLite file with the current application first (schema version 5).
+2. Provision an empty target database. Do not start the API against it yet. Supply source
+   and target URLs from protected shell variables; avoid putting credentials in history.
+3. Preview counts, then copy with the same URLs:
+
+   ```sh
+   uv run python scripts/migrate_sqlite_to_postgres.py "$source_url" "$target_url" --dry-run
+   uv run python scripts/migrate_sqlite_to_postgres.py "$source_url" "$target_url"
+   ```
+
+   The script opens the source read-only, creates target schema through `Store`, copies in
+   foreign-key order in one transaction, and verifies every table's row count and an
+   order-independent SHA-256 (a hash of the sorted per-row hashes). JSON columns move as
+   their exact stored text and are compared verbatim, so even a reordered key or a
+   reformatted number fails verification; SQL NULL stays distinct from JSON null.
+   Activation/assignment rows copy in SQLite
+   insertion order so generated PostgreSQL `seq` preserves the active selections. Generated
+   sequences are excluded from logical row hashes. Output contains table counts only.
+   Dry run reads counts and checks target emptiness without creating its schema. Any row in
+   any target application or unrelated table refuses the operation; the singleton migration
+   version record is metadata. Failed copies roll back all copied rows, leaving empty schema.
+   A successful copy cannot be rerun into the now populated target. If old rows hold NUL
+   characters in text columns, which PostgreSQL text cannot store, the copy refuses and
+   names each table, column and row count; rerun with `--strip-nul` to remove them from
+   those text columns only. JSON columns keep NUL exactly. A test database or one
+   holding demo data is never copied, and live startup on any backend refuses a database
+   that holds demo data.
+4. Set the protected `DATABASE_URL`, recreate the API, check health and saved history, and
+   resume intake. Keep the SQLite backup until the move and provider backups are verified.
+   Restoring the original configuration/file is a rollback only before accepting new writes;
+   after that, reconcile new records before switching back.
+
+Run `make test-postgres` to exercise store, API, article and copy tests against the throwaway
+server. Default `uv run pytest -q` remains offline on SQLite.

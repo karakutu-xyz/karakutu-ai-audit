@@ -2,7 +2,10 @@
 
 ## Storage
 
-SQLite is the default: `data/audit.sqlite3` plus its WAL/SHM files, through SQLAlchemy 2. The database stores:
+SQLite is the default: `data/audit.sqlite3` plus its WAL/SHM files, through SQLAlchemy 2.
+Live mode also supports PostgreSQL with psycopg v3 through `DATABASE_URL`; JSON columns
+use PostgreSQL `json` there (not `jsonb`), which keeps the saved text verbatim: exact
+number formatting, key order and `\u0000` escapes. Test mode and demo seeding remain SQLite-only. The database stores:
 
 | Table | Contents |
 | --- | --- |
@@ -30,7 +33,18 @@ delivery are deferred until a live producer exists.
 
 ### Schema changes
 
-`db.py` maintains ordered `MIGRATIONS` and SQLite `PRAGMA user_version`. Version 1 marks the original schema; version 2 adds prompt tables; version 3 adds `model_assignments`; version 4 adds `articles`, `runs.article_ref` and the article/activity indexes, then backfills existing runs. Migration 3 was already allocated, so articles use 4 without changing applied migrations. A fresh database creates all tables at the latest version. Existing databases (including unversioned databases at version 0) apply each pending migration and version bump in one transaction, then create any new tables. Failures roll back that migration, including DDL, and leave the last successful version. Databases newer than the code are refused.
+`db.py` maintains ordered `MIGRATIONS`: SQLite stores the version in `PRAGMA user_version`;
+PostgreSQL uses a singleton `schema_version` table. Version 1 marks the original schema; version 2 adds prompt tables; version 3 adds `model_assignments`; version 4 adds `articles`, `runs.article_ref` and the article/activity indexes, then backfills existing runs. Migration 3 was already allocated, so articles use 4 without changing applied migrations. Version 5 adds nullable, unused `seq` columns to existing SQLite append-only activation
+and assignment tables and widens unbounded archive metadata on PostgreSQL. Fresh
+PostgreSQL tables generate `seq` with `Identity()`. A fresh database creates all tables at the latest version. Existing databases (including unversioned databases at version 0) apply each pending migration and version bump in one transaction, then create any new tables. Failures roll back that migration, including transactional DDL on either backend, and leave the last successful version. Databases newer than the code are refused.
+
+Every migration runs under the global transaction writer lock: `begin_write` uses
+SQLite `BEGIN IMMEDIATE` or PostgreSQL `pg_advisory_xact_lock` with one fixed application
+key. The same lock protects article check-then-insert, import, prompt version numbering,
+activation and model assignment/snapshot transactions. It serializes these writers until
+commit or rollback. It does not coordinate the in-process execution queue across replicas.
+`insertion_order` preserves SQLite rowid ordering and uses PostgreSQL `seq` for activation
+and assignment selection, so timestamps and random IDs never select the newest row.
 
 For every schema change, add a numbered migration; never edit an applied one. Test upgrades with retained rows, repeat startup, and failure rollback. JSON fields allow evidence formats to evolve without routine column migrations. Back up data before upgrading. Use a consistent SQLite backup (the SQLite backup API, or stop the service first); copying only a live `.sqlite3` file can omit WAL data.
 
@@ -41,21 +55,23 @@ For every schema change, add a numbered migration; never edit an applied one. Te
 whitespace, lowercases scheme/host and drops the fragment; path and query retain their
 case and spelling. The normalized URL has a unique index, and non-null `archive_id`
 values have a partial unique index. An existing `ka-<id>` row is canonical when that
-archive ID is imported again, including when its URL changes. `ref` is String(80);
-`source` and `host` are String(200); `published_at`, `removed_at`, `created_at` and
-`updated_at` are String(40); `archive_id` is String(80), `language` String(20), and
-`category`/`origin` String(20). URL, title and content are text; nullable `snapshot`
-is JSON containing version titles, check dates and hashes, never duplicated full text.
+archive ID is imported again, including when its URL changes. `ref`, `source`, `host`,
+`published_at`, `removed_at`, `archive_id` and `language` are Text because archive input
+has no length bounds; `runs.article_ref` is also Text. Version 5 widens these on PostgreSQL;
+SQLite already accepts arbitrary lengths and needs no physical width change.
+`created_at`/`updated_at` are String(40), and `category`/`origin` String(20).
+URL, title and content are Text; nullable `snapshot` is JSON (`json` on PostgreSQL)
+containing version titles, check dates and hashes, never duplicated full text.
 Source, publication/removal dates, archive ID and language are nullable.
 
 Migration 4 processes runs in batches of 500 in creation order (SQLite insertion
 order breaks ties), creates one article per normalized URL, and links runs with batch
-updates. It extracts URL/title/publication metadata in SQLite and reads content only
+updates. It extracts URL/title/publication metadata with SQLAlchemy JSON indexing and reads content only
 for the first run of each new article. The first run supplies title, content and category.
 The migration also backfills `search_text`, a text column containing NFKC-normalized,
 Unicode-casefolded title, source, host and URL, separated by spaces. Article inserts and
 updates maintain this value. Historical run inputs and workflow snapshots do
-not change. Every submission route creates or selects its article in the same SQLite
+not change. Every submission route creates or selects its article in the same database
 transaction as the run insertion. Subsequent runs retain the original article text;
 each run still preserves its own submitted input. `runs.article_ref` is a nullable,
 indexed plain column; the composite `(article_ref, created_at)` index supports history.
@@ -66,6 +82,9 @@ Seed a test database with `uv run python scripts/seed_demo.py --db data/audit-te
 or pass `--database-url sqlite:///data/audit-test.sqlite3`. The Python entry point is
 `audit.demo.seed(database_url)`; test mode calls it on every start. It performs no
 network/model calls and prints counts only. Exit 0 means seeded (or already seeded).
+Demo data stays SQLite and test-mode only: live startup refuses any database, SQLite or
+PostgreSQL, that holds a demo workflow, and the SQLite-to-PostgreSQL copy refuses a test
+or demo source.
 
 Only a test database is accepted: a file named `*-test.sqlite3`, a path under `data/demo/`,
 or a database that already holds the demo workflows (`wf_demo_*`). The resolved path counts,
@@ -232,7 +251,7 @@ The article audit route uses the saved URL/title/content/publication date, no si
 articles, the article's category, and origin `article`. Benchmark re-runs inherit label
 and expected verdict from the latest benchmark run. Submission uses the same current
 workflow/prompt/model capture and task bookkeeping as other run routes. An app lock
-serializes article submissions; `BEGIN IMMEDIATE` checks for **any** queued/running
+serializes article submissions; the database writer lock checks for **any** queued/running
 run and inserts atomically. A conflict returns 409
 `{"error":{"code":"run_in_progress","run_id":"<existing id>"}}`.
 Missing content returns 422 `{"error":{"code":"article_has_no_content"}}`;
@@ -309,7 +328,7 @@ The editable names are `relevance`, `classification_coarse`, `classification_fin
 
 Supported steps are `classification`, `relevance`, `related_removals`, `source`, and `web_search`. Similarity makes no model call. Unknown steps (including similarity) return 422 `unknown_step`; names missing from an available provider catalog return 422 `unknown_model`. Provider discovery excludes IDs containing `embed` or `rerank`; a failed discovery returns an empty list and `models_unavailable`, never exception text. When discovery is unavailable, names are accepted. Synthetic/model-disabled mode makes no discovery call, returns an empty list without an error and accepts configured names. Clearing an override uses JSON null; blank names are invalid. Author is required and nonblank (1–120 characters); note is optional (up to 2,000); model names are at most 200 characters.
 
-At startup the newest persisted assignment for a step takes precedence over `MODEL_NAME_<STEP>`; without an assignment, the environment applies. An API null clears the override and selects the resolved default, overriding any environment step value across restarts. `source` remains `api` after a clear. Assignments are append-only, ordered by SQLite insertion order, and atomically committed with the new workflow snapshot under the prompt activation lock. Each submission captures its workflow before queueing; already queued/running runs retain their earlier mapping. Prompt activation preserves current model assignments, and model assignment preserves current prompts. Model keys never enter public configurations or fingerprints.
+At startup the newest persisted assignment for a step takes precedence over `MODEL_NAME_<STEP>`; without an assignment, the environment applies. An API null clears the override and selects the resolved default, overriding any environment step value across restarts. `source` remains `api` after a clear. Assignments are append-only, ordered by insertion (SQLite rowid or PostgreSQL seq), and atomically committed with the new workflow snapshot under the prompt activation lock. Each submission captures its workflow before queueing; already queued/running runs retain their earlier mapping. Prompt activation preserves current model assignments, and model assignment preserves current prompts. Model keys never enter public configurations or fingerprints.
 
 Definitions now use `format_version` 3; unchanged setups receive a new workflow ID on restart. Effective model mapping, provider and response mode affect the ID; assignment metadata and credentials do not. Historical workflows, runs and inputs stay immutable.
 
@@ -321,7 +340,8 @@ All routes with article/run data require the bearer token when `API_AUTH_TOKEN` 
 
 Hosts are normalized to lowercase and must be plain hostnames or IP literals (unbracketed for IPv6; request hosts are compared after the same IP canonicalization); wildcards, schemes, ports, paths, userinfo, whitespace, empty labels and non-canonical numeric IPv4 spellings (leading zeros, hexadecimal, abbreviated, or a numeric last label) are rejected. Origins normalize scheme/host case, write ports as numbers and drop the scheme default (`:80` for HTTP, `:443` for HTTPS) as browsers do, and must be exactly `http://host[:port]` or `https://host[:port]` (bracket IPv6 hosts; they are stored in the browser's hexadecimal form, so `[::ffff:192.0.2.1]` becomes `[::ffff:c000:201]`). Wildcards, `null`, userinfo, paths including a trailing slash, query strings and fragments are rejected. Invalid entries stop startup without echoing their values. Any non-loopback host requires `API_AUTH_TOKEN`; startup fails with `Non-loopback ALLOWED_HOSTS require API_AUTH_TOKEN` if it is absent. Token length validation still requires at least 32 characters. Origins permit mutation requests; they do not enable cross-origin browser reads or change authentication.
 
-Docker reads `.env` at runtime, stores SQLite under `/data` in a named volume, and overrides local search/model paths for the container network. `KARAKUTU_BIND_ADDRESS` controls published API/UI interfaces (default `127.0.0.1`), independently of the allowed Host list. `CONTAINER_MODEL_BASE_URL` selects the container's model endpoint; `MODEL_BASE_URL` remains the local/Tilt setting. Preserve Host through reverse proxies so the backend can validate the browser's actual host. Remote use should terminate TLS before the API/UI. SearXNG remains loopback-only on port 2202.
+Docker reads `.env` at runtime, stores default SQLite under `/data` in a named volume
+(or connects to PostgreSQL through `DATABASE_URL`), and overrides local search/model paths for the container network. `KARAKUTU_BIND_ADDRESS` controls published API/UI interfaces (default `127.0.0.1`), independently of the allowed Host list. `CONTAINER_MODEL_BASE_URL` selects the container's model endpoint; `MODEL_BASE_URL` remains the local/Tilt setting. Preserve Host through reverse proxies so the backend can validate the browser's actual host. Remote use should terminate TLS before the API/UI. SearXNG remains loopback-only on port 2202.
 
 Prompt POST routes always require a configured `API_AUTH_TOKEN` and matching bearer token, including on a loopback service with other reads open. With no configured token they return 403 `prompt_writes_require_token` before parsing the body; a missing/wrong bearer token when configured returns 401. Model assignment POSTs use the same guard; without a configured token they return 403 `model_writes_require_token`, and missing/wrong bearer tokens return 401. The same browser-origin check applies. Prompt edits change verdict semantics: benchmark before relying on a new version. `writes_enabled: false` continues to describe archive writes only.
 
@@ -341,3 +361,19 @@ data/audit.sqlite3  all stored runs, reactions and workflow snapshots
 ```
 
 The ignore rules also cover `reports/`, `exports/`, `fixtures/`, `datasets/`, `private/`, `runs/`, `.env*`, wallet files, database sidecars, JSON/JSONL/CSV/TSV/Parquet files. Only explicit configuration manifests and `openapi.json` are allowed JSON files. Documentation stays tracked under `docs/`; generated reports do not belong there. Tests generate fabricated inputs inline. `scripts/check_data_hygiene.py` catches tracked/staged private paths, including forced Git additions. It also scans the staged content of every file for home-directory paths, email addresses, private keys, keyfile members and common API tokens, URLs on real hosts, and bare real hostnames in prose, comments and string literals. Reserved names pass: `.example`/`.invalid`/`.test`/`.localhost`, `example.<tld>`, internal suffixes such as `.local`/`.internal`, single-label and numeric hosts, and IP literals. Outlet domains are reference data and may appear only in the lookup tables named in the script (`workflow/source.py`, `search/urls.py`, `workflow/web_search.py`); `LICENSE` and lockfiles are exempt from the host rules only. The required pinned uv build-image reference is allowed only as the exact backend Dockerfile `FROM` directive; comments, URLs and other image references remain scanned. Likewise, the project's public repository URL is allowed only as the exact `git clone` line of the README quick start. The patterns are heuristics: they cannot detect real article prose or real names, so never paste either into source, prompts, tests or docs.
+
+### String length contract
+
+The storage width audit retains bounded columns where all writers fit: generated
+workflow IDs use at most 67 of 80 characters; generated run/reaction/prompt/activation/
+assignment IDs fit 40; registered prompt/step names fit 80; SHA-256 uses exactly 64.
+Enums (category, origin, status, reaction and activation kind) fit 20, and verdicts fit 50.
+API labels and model names are bounded to 200; reviewers and authors to 120. Internal
+UTC timestamps fit 40. Prompt texts, notes, article URLs/titles/content and search text
+are Text. Unbounded archive metadata uses Text as listed above. No allowed API input
+is truncated. Submitted text fields reject NUL characters before database access with
+the existing 422 codes-only validation envelope; submitted values are never echoed.
+Archive article data is upstream text written into text columns, which PostgreSQL cannot
+hold with NUL characters, so NUL is removed from it (and from its snapshot) before the
+write, on both backends. Run and workflow records, including captured evidence and model
+output, are JSON and stored exactly, NUL included.

@@ -1,4 +1,4 @@
-"""SQLite persistence for immutable workflows and append-only human reactions.
+"""SQLAlchemy persistence for immutable workflows and append-only human reactions.
 
 One local service process owns the worker queue. Interrupted runs fail on restart;
 no model work is silently replayed. Workflow and input JSON are never updated.
@@ -13,14 +13,94 @@ from uuid import uuid4
 from unicodedata import normalize
 from urllib.parse import urlsplit, urlunsplit
 
-from sqlalchemy import JSON, Index, ForeignKey, bindparam, case, or_, String, Text, UniqueConstraint, create_engine, event, func, inspect, literal_column, select, update
-from sqlalchemy.engine import Connection, make_url
+from sqlalchemy import (
+    JSON, Identity, Integer, Index, ForeignKey, bindparam, case, or_, String, Text,
+    UniqueConstraint, create_engine, event, func, inspect, literal_column, select, update,
+)
+from sqlalchemy.engine import Connection
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.schema import CreateColumn
+from sqlalchemy.sql.expression import ColumnElement
+
+from audit.config import database_backend
 
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# PostgreSQL `json`, not `jsonb`: it keeps the saved text verbatim (exact number formatting
+# and key order) and accepts the \u0000 escape, so captured evidence is stored exactly.
+JSON_VALUE = JSON()
+WRITER_LOCK = 684219705
+
+
+def begin_write(connection: Connection):
+    # One global writer lock protects check-then-insert paths and snapshot changes.
+    # Explicit BEGIN also makes SQLite DDL transactional.
+    if connection.dialect.name == "sqlite":
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+    else:
+        connection.exec_driver_sql(f"SELECT pg_advisory_xact_lock({WRITER_LOCK})")
+
+
+class _InsertionOrder(ColumnElement):
+    inherit_cache = False
+    type = Integer()
+
+    def __init__(self, table):
+        self.table = getattr(table, "__table__", table)
+
+
+@compiles(_InsertionOrder)
+def _sequence_order(element, compiler, **kw):
+    table = element.table
+    # Migration 4's legacy runs have no append sequence; their PK breaks ties.
+    column = table.c.seq if "seq" in table.c else next(iter(table.primary_key))
+    return compiler.process(column, **kw)
+
+
+@compiles(_InsertionOrder, "sqlite")
+def _sqlite_order(element, compiler, **kw):
+    return compiler.preparer.format_table(element.table) + ".rowid"
+
+
+def insertion_order(table):
+    """Insertion order, independent of timestamps and random IDs."""
+    return _InsertionOrder(table)
+
+
+def get_version(connection: Connection) -> int:
+    if connection.dialect.name == "sqlite":
+        return connection.exec_driver_sql("PRAGMA user_version").scalar_one()
+    if not inspect(connection).has_table("schema_version"):
+        return 0
+    return connection.exec_driver_sql("SELECT version FROM schema_version").scalar_one()
+
+
+def set_version(connection: Connection, version: int):
+    if connection.dialect.name == "sqlite":
+        connection.exec_driver_sql(f"PRAGMA user_version={int(version)}")
+    else:
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS schema_version "
+            "(singleton INTEGER PRIMARY KEY CHECK (singleton = 1), version INTEGER NOT NULL)")
+        connection.exec_driver_sql("DELETE FROM schema_version")
+        connection.exec_driver_sql(
+            "INSERT INTO schema_version (singleton, version) VALUES (1, %s)", (version,))
+
+
+@compiles(CreateColumn, "postgresql")
+def _postgres_column(element, compiler, **kw):
+    ddl = compiler.visit_create_column(element, **kw)
+    # PostgreSQL identity is implicitly NOT NULL and rejects an explicit NULL.
+    # SQLite needs the same metadata column nullable because it does not generate seq.
+    if element.element.identity is not None and element.element.nullable:
+        return ddl.removesuffix(" NULL")
+    return ddl
 
 
 class Base(DeclarativeBase):
@@ -30,25 +110,35 @@ class Base(DeclarativeBase):
 class Workflow(Base):
     __tablename__ = "workflows"
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
-    snapshot: Mapped[dict] = mapped_column(JSON)
+    snapshot: Mapped[dict] = mapped_column(JSON_VALUE)
 
 
 class ArticleRow(Base):
     __tablename__ = "articles"
-    __table_args__ = (Index("uq_articles_archive_id", "archive_id", unique=True,
-                           sqlite_where=literal_column("archive_id IS NOT NULL")),)
-    ref: Mapped[str] = mapped_column(String(80), primary_key=True)
-    url: Mapped[str] = mapped_column(Text, unique=True, index=True)
+    __table_args__ = (
+        Index("uq_articles_archive_id", "archive_id", unique=True,
+              sqlite_where=literal_column("archive_id IS NOT NULL"),
+              postgresql_where=literal_column("archive_id IS NOT NULL")),
+        # URL identity. SQLite indexes the full text, as before. A PostgreSQL B-tree entry
+        # is limited to about a third of a page, so a long (allowed) URL would fail there:
+        # uniqueness uses md5(url) and equality lookups a hash index, neither size-limited.
+        Index("ix_articles_url", "url", unique=True).ddl_if(dialect="sqlite"),
+        Index("uq_articles_url_md5", func.md5(literal_column("url")),
+              unique=True).ddl_if(dialect="postgresql"),
+        Index("ix_articles_url_hash", "url", postgresql_using="hash").ddl_if(dialect="postgresql"),
+    )
+    ref: Mapped[str] = mapped_column(Text, primary_key=True)
+    url: Mapped[str] = mapped_column(Text)
     title: Mapped[str] = mapped_column(Text)
     search_text: Mapped[str] = mapped_column(Text)
-    source: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    host: Mapped[str] = mapped_column(String(200))
-    published_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    removed_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    archive_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    language: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    host: Mapped[str] = mapped_column(Text)
+    published_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    removed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    archive_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    language: Mapped[str | None] = mapped_column(Text, nullable=True)
     content: Mapped[str] = mapped_column(Text)
-    snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    snapshot: Mapped[dict | None] = mapped_column(JSON_VALUE, nullable=True)
     category: Mapped[str] = mapped_column(String(20))
     origin: Mapped[str] = mapped_column(String(20))
     created_at: Mapped[str] = mapped_column(String(40))
@@ -81,6 +171,21 @@ def readable_removed_at(value):
     return value
 
 
+def without_nul(value):
+    """PostgreSQL text columns cannot hold NUL characters; SQLite can. Archive article data
+    is unvalidated upstream input written into text columns, so drop NUL there (also nested
+    in the article snapshot) before a write, keeping both backends' stored values identical.
+    JSON columns (runs, workflows) are PostgreSQL `json`, which stores NUL as \u0000 exactly;
+    submitted input is rejected at the schema."""
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, dict):
+        return {without_nul(key): without_nul(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [without_nul(item) for item in value]
+    return value
+
+
 def normalized_url(url: str) -> str:
     parts = urlsplit(url.strip())
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, ""))
@@ -105,7 +210,7 @@ class ArticleStoreError(ValueError):
 class Run(Base):
     __tablename__ = "runs"
     __table_args__ = (Index("ix_runs_article_activity", "article_ref", "created_at"),)
-    article_ref: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    article_ref: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     workflow_id: Mapped[str] = mapped_column(ForeignKey("workflows.id"), index=True)
     category: Mapped[str] = mapped_column(String(20), index=True)
@@ -117,11 +222,11 @@ class Run(Base):
     article_title: Mapped[str] = mapped_column(Text)
     verdict: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     synthetic: Mapped[bool]
-    input: Mapped[dict] = mapped_column(JSON)
-    output: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    steps: Mapped[list] = mapped_column(JSON)
-    model: Mapped[dict] = mapped_column(JSON)
-    error: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    input: Mapped[dict] = mapped_column(JSON_VALUE)
+    output: Mapped[dict | None] = mapped_column(JSON_VALUE, nullable=True)
+    steps: Mapped[list] = mapped_column(JSON_VALUE)
+    model: Mapped[dict] = mapped_column(JSON_VALUE)
+    error: Mapped[dict | None] = mapped_column(JSON_VALUE, nullable=True)
     expected_verdict: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
 
@@ -152,6 +257,7 @@ class PromptVersion(Base):
 
 
 class PromptActivation(Base):
+    seq: Mapped[int | None] = mapped_column(Integer, Identity(), nullable=True)
     __tablename__ = "prompt_activations"
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     name: Mapped[str] = mapped_column(String(80), index=True)
@@ -163,6 +269,7 @@ class PromptActivation(Base):
 
 
 class ModelAssignment(Base):
+    seq: Mapped[int | None] = mapped_column(Integer, Identity(), nullable=True)
     __tablename__ = "model_assignments"
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     step: Mapped[str] = mapped_column(String(80), index=True)
@@ -192,8 +299,8 @@ def _articles(connection: Connection):
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_runs_article_ref ON runs (article_ref)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_runs_article_activity ON runs (article_ref, created_at)")
     # Keyset over metadata only: repeated runs never load their full article text.
-    rowid = literal_column("runs.rowid")
-    fields = [func.json_extract(Run.input, f"$.removed_article.{key}").label(key)
+    rowid = insertion_order(Run)
+    fields = [Run.input["removed_article"][key].as_string().label(key)
               for key in ("url", "title", "published_at")]
     cursor = None
     while True:
@@ -215,7 +322,7 @@ def _articles(connection: Connection):
         missing = {url: row for url, row in first.items() if url not in refs}
         if missing:
             contents = dict(connection.execute(select(Run.id,
-                func.json_extract(Run.input, "$.removed_article.content")).where(
+                Run.input["removed_article"]["content"].as_string()).where(
                     Run.id.in_([row["id"] for row in missing.values()]))).all())
             values = []
             for url, row in missing.items():
@@ -231,10 +338,34 @@ def _articles(connection: Connection):
         cursor = (rows[-1]["created_at"], rows[-1]["rowid"])
 
 
-MIGRATIONS: list[tuple[int, Callable[[Connection], None]]] = [(1, _baseline), (2, _prompt_tables), (3, _model_assignments), (4, _articles)]
+# Unbounded archive metadata has no API length contract. Text preserves SQLite behavior.
+WIDENED_COLUMNS = {
+    "articles": ("ref", "source", "host", "published_at", "removed_at",
+                 "archive_id", "language"),
+    "runs": ("article_ref",),
+}
+
+
+def _portable_storage(connection: Connection):
+    for table in (PromptActivation.__table__, ModelAssignment.__table__):
+        columns = {column["name"] for column in inspect(connection).get_columns(table.name)}
+        if "seq" not in columns:
+            suffix = ("INTEGER" if connection.dialect.name == "sqlite" else
+                      "INTEGER GENERATED BY DEFAULT AS IDENTITY")
+            connection.exec_driver_sql(f"ALTER TABLE {table.name} ADD COLUMN seq {suffix}")
+    if connection.dialect.name == "postgresql":
+        for table, columns in WIDENED_COLUMNS.items():
+            for column in columns:
+                connection.exec_driver_sql(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE TEXT")
+
+
+MIGRATIONS: list[tuple[int, Callable[[Connection], None]]] = [
+    (1, _baseline), (2, _prompt_tables), (3, _model_assignments), (4, _articles),
+    (5, _portable_storage),
+]
 SCHEMA_VERSION = MIGRATIONS[-1][0]
-# SQLite insertion order defines "newest", even when timestamps tie or clocks change.
-ACTIVATION_ORDER = literal_column("prompt_activations.rowid").desc()
+# Insertion order defines "newest", even when timestamps tie or clocks change.
+ACTIVATION_ORDER = insertion_order(PromptActivation).desc()
 
 
 class PromptStoreError(ValueError):
@@ -252,52 +383,73 @@ ERRORS = {
 class Store:
     def __init__(self, database_url: str, *,
                  migrations: list[tuple[int, Callable[[Connection], None]]] | None = None):
-        url = make_url(database_url)
-        if url.get_backend_name() != "sqlite":
-            raise ValueError("Only SQLite storage is supported")
-        memory = not url.database or url.database == ":memory:"
-        if not memory:
-            Path(url.database).parent.mkdir(parents=True, exist_ok=True)
-        options: dict[str, Any] = {"connect_args": {"check_same_thread": False, "timeout": 5}}
-        if memory:
-            options["poolclass"] = StaticPool
-        self.engine = create_engine(database_url, **options)
+        url = database_backend(database_url)
+        if url.get_backend_name() == "sqlite":
+            memory = not url.database or url.database == ":memory:"
+            if not memory:
+                Path(url.database).parent.mkdir(parents=True, exist_ok=True)
+            options: dict[str, Any] = {
+                "connect_args": {"check_same_thread": False, "timeout": 5}}
+            if memory:
+                options["poolclass"] = StaticPool
+        else:
+            options = {"pool_pre_ping": True, "pool_size": 5, "max_overflow": 5,
+                       "pool_recycle": 1800, "connect_args": {"connect_timeout": 10}}
+        self.engine = create_engine(url, hide_parameters=True, **options)
 
-        @event.listens_for(self.engine, "connect")
-        def sqlite_options(connection, _record):
-            cursor = connection.cursor()
-            cursor.execute("PRAGMA foreign_keys=ON")
-            cursor.execute("PRAGMA busy_timeout=5000")
-            cursor.execute("PRAGMA journal_mode=WAL")
-            cursor.close()
+        if url.get_backend_name() == "sqlite":
+            @event.listens_for(self.engine, "connect")
+            def sqlite_options(connection, _record):
+                cursor = connection.cursor()
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.execute("PRAGMA busy_timeout=5000")
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.close()
 
         migrations = MIGRATIONS if migrations is None else migrations
         schema_version = migrations[-1][0]
         try:
             with self.engine.connect() as connection:
-                version = connection.exec_driver_sql("PRAGMA user_version").scalar_one()
+                version = get_version(connection)
                 if version > schema_version:
                     raise ValueError("Database schema is newer than this code supports")
                 fresh = not inspect(connection).get_table_names()
                 connection.rollback()
                 if fresh:
                     with connection.begin():
-                        connection.exec_driver_sql("BEGIN IMMEDIATE")
+                        begin_write(connection)
                         Base.metadata.create_all(connection)
-                        connection.exec_driver_sql(f"PRAGMA user_version={schema_version}")
+                        set_version(connection, schema_version)
                 else:
                     for target, migrate in migrations:
                         if target > version:
                             with connection.begin():
                                 # Explicit BEGIN also makes SQLite DDL transactional.
-                                connection.exec_driver_sql("BEGIN IMMEDIATE")
+                                begin_write(connection)
                                 migrate(connection)
-                                connection.exec_driver_sql(f"PRAGMA user_version={target}")
+                                set_version(connection, target)
                     Base.metadata.create_all(connection)
                     connection.commit()
+        except DBAPIError as error:
+            self.engine.dispose()
+            if error.connection_invalidated or not getattr(error, "statement", None):
+                backend = url.get_backend_name()
+                raise RuntimeError(
+                    f"Database unreachable ({backend} at {url.host or 'local'}/{url.database or ''})"
+                ) from None
+            raise
         except Exception:
             self.engine.dispose()
             raise
+
+    def has_demo_data(self) -> bool:
+        """True when the database holds a demo workflow (`wf_demo_*`), on any backend.
+
+        Live mode must never serve demo data. The SQLite file check in config runs before
+        this, but cannot inspect a server database, so startup asks the store as well."""
+        with self.engine.connect() as connection:
+            return connection.execute(select(Workflow.id).where(
+                func.substr(Workflow.id, 1, 8) == "wf_demo_").limit(1)).first() is not None
 
     def close(self):
         self.engine.dispose()
@@ -327,7 +479,7 @@ class Store:
             raise ValueError("invalid run origin")
         run_id = "run_" + uuid4().hex
         with Session(self.engine) as session, session.begin():
-            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            begin_write(session.connection())
             if article_ref is not None:
                 article = session.get(ArticleRow, article_ref)
                 if article is None:
@@ -502,9 +654,10 @@ class Store:
     def import_articles(self, items: list[dict]) -> dict:
         counts = {"imported": 0, "updated": 0, "skipped": 0}
         with Session(self.engine) as session, session.begin():
-            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            begin_write(session.connection())
             seen = set()
             for item in items:
+                item = without_nul(item) if isinstance(item, dict) else item
                 archive_id = item.get("article_id")
                 url = item.get("url") or ""
                 try:
@@ -590,10 +743,10 @@ class Store:
             if str(record.id) != (expected_archive_id or ref[3:]):
                 return False
             versions = sorted(record.versions, key=lambda v: v.check_date or 0)
-            row.content = versions[-1].news_text if versions else record.news_text
-            row.language = record.language_code
-            row.snapshot = {"versions": [{"title": v.title, "check_date": v.check_date,
-                                         "content_hash": v.content_hash} for v in versions]}
+            row.content = without_nul(versions[-1].news_text if versions else record.news_text)
+            row.language = without_nul(record.language_code)
+            row.snapshot = without_nul({"versions": [{"title": v.title, "check_date": v.check_date,
+                                         "content_hash": v.content_hash} for v in versions]})
             # Archive check dates are Unix seconds; store ISO, like published_at. Checks are
             # unvalidated upstream data: an unusable date leaves the removal date unknown
             # instead of discarding the article text.
@@ -647,7 +800,7 @@ class Store:
 
     def sync_prompt_defaults(self, defaults: dict[str, str]):
         with Session(self.engine) as session, session.begin():
-            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            begin_write(session.connection())
             for name, text in defaults.items():
                 existing = session.scalars(select(PromptVersion).where(PromptVersion.name == name)).all()
                 if any(row.origin == "default" and row.text == text for row in existing):
@@ -687,7 +840,7 @@ class Store:
 
     def create_prompt_version(self, name: str, text: str, author: str, note: str) -> dict:
         with Session(self.engine) as session, session.begin():
-            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            begin_write(session.connection())
             if session.scalar(select(PromptVersion.id).where(PromptVersion.name == name, PromptVersion.text == text)):
                 raise PromptStoreError("duplicate_version")
             row = self._insert_version(session, name, text, "api", author, note)
@@ -697,7 +850,7 @@ class Store:
     def activate_prompt(self, name: str, version: int | None, kind: str, author: str, note: str,
                         build_snapshot: Callable[[dict[str, str]], dict]) -> tuple[dict, dict]:
         with Session(self.engine) as session, session.begin():
-            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            begin_write(session.connection())
             active = self._active(session, name)
             if kind == "rollback":
                 previous = session.scalars(select(PromptActivation).where(
@@ -729,14 +882,14 @@ class Store:
 
     def model_assignments(self) -> dict[str, str | None]:
         with Session(self.engine) as session:
-            rows = session.scalars(select(ModelAssignment).order_by(literal_column("model_assignments.rowid"))).all()
+            rows = session.scalars(select(ModelAssignment).order_by(insertion_order(ModelAssignment))).all()
             return {row.step: row.model for row in rows}
 
     def assign_model(self, step: str, model: str | None, author: str, note: str,
                      build_snapshot: Callable[[], dict]) -> dict:
         """Commit the append-only assignment and its workflow snapshot together."""
         with Session(self.engine) as session, session.begin():
-            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            begin_write(session.connection())
             session.add(ModelAssignment(id="ma_" + uuid4().hex, step=step, model=model,
                                         author=author, note=note, created_at=now()))
             snapshot = build_snapshot()

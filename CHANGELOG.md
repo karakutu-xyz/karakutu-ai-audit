@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add optional PostgreSQL storage, verified SQLite data copying and isolated database checks.
+
 - Add a Stop audit button to the article page's side rail while the latest audit is queued or running; after a stop the page shows the stopped run and reloads the article.
 - Fix archive import, which always answered `archive_unavailable`: the audit listing is now filtered with Unix seconds. Store archive removal dates as ISO, show dates stored as Unix seconds by older versions as ISO, and keep the article text when the archive's removal date is unusable.
 - Clarify empty run ledgers, and disable live article audits when the server switches them off.
