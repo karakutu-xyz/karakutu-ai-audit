@@ -8,7 +8,7 @@ import asyncio
 import difflib
 import importlib
 import importlib.util
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from hmac import compare_digest
 import json
@@ -566,10 +566,10 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
         client = archive_client()
         if client is None or not client.enabled:
             return JSONResponse(status_code=409, content={"error": {"code": "archive_unavailable"}})
-        end = datetime.now(timezone.utc)
+        # The archive's audit listing filters on Unix seconds, never ISO dates.
+        end = int(datetime.now(timezone.utc).timestamp())
         try:
-            items = await client.audits_created_between((end - timedelta(days=days)).date().isoformat(),
-                                                        end.date().isoformat())
+            items = await client.audits_created_between(end - days * 86400, end)
         except Exception:
             items = None
         if items is None:

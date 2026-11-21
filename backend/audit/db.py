@@ -5,6 +5,7 @@ no model work is silently replayed. Workflow and input JSON are never updated.
 """
 from collections.abc import Callable
 import hashlib
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -152,6 +153,22 @@ def article_search_text(title: str, source: str | None, host: str, url: str) -> 
 @event.listens_for(ArticleRow, "before_update")
 def _refresh_article_search(_mapper, _connection, row):
     row.search_text = article_search_text(row.title, row.source, row.host, row.url)
+
+
+LEGACY_NUMBER = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
+
+
+def readable_removed_at(value):
+    """Older versions stored archive removal dates as Unix seconds, written with `str()` of
+    whatever the archive sent ("1700000000", "1700000000.0", "1e+30"). Present them as ISO
+    like new rows, on every backend, without a migration; an unusable number becomes unknown
+    and anything that is not a plain number (an ISO date) is returned unchanged."""
+    if isinstance(value, str) and LEGACY_NUMBER.fullmatch(value.strip()):
+        try:
+            return datetime.fromtimestamp(float(value), timezone.utc).isoformat()
+        except (ValueError, OverflowError, OSError):
+            return None
+    return value
 
 
 def without_nul(value):
@@ -609,8 +626,10 @@ class Store:
             total = session.scalar(select(func.count()).select_from(query).where(*conditions))
             rows = session.execute(select(query).where(*conditions).order_by(
                 query.c.activity.desc(), query.c.ref).limit(limit).offset(offset)).mappings()
-            return {"items": [{key: value for key, value in row.items() if key != "activity"}
-                              for row in rows], "total": total, "limit": limit, "offset": offset}
+            items = [{key: value for key, value in row.items() if key != "activity"} for row in rows]
+            for item in items:
+                item["removed_at"] = readable_removed_at(item["removed_at"])
+            return {"items": items, "total": total, "limit": limit, "offset": offset}
 
     def article(self, ref: str) -> dict | None:
         from audit.run_summary import summarize_run
@@ -620,6 +639,7 @@ class Store:
                 return None
             summary = dict(session.execute(self._article_query().where(ArticleRow.ref == ref)).mappings().one())
             summary.pop("activity")
+            summary["removed_at"] = readable_removed_at(summary["removed_at"])
             runs = session.scalars(select(Run).where(Run.article_ref == ref)
                                    .order_by(Run.created_at.desc(), Run.id.desc())).all()
             history = []
@@ -727,8 +747,15 @@ class Store:
             row.language = without_nul(record.language_code)
             row.snapshot = without_nul({"versions": [{"title": v.title, "check_date": v.check_date,
                                          "content_hash": v.content_hash} for v in versions]})
-            dead = first_dead_check_date(record.checks)
-            row.removed_at = without_nul(str(dead)) if dead is not None else None
+            # Archive check dates are Unix seconds; store ISO, like published_at. Checks are
+            # unvalidated upstream data: an unusable date leaves the removal date unknown
+            # instead of discarding the article text.
+            try:
+                dead = first_dead_check_date(record.checks)
+                row.removed_at = (datetime.fromtimestamp(int(dead), timezone.utc).isoformat()
+                                  if dead is not None else None)
+            except (TypeError, ValueError, OverflowError, OSError):
+                row.removed_at = None
             row.updated_at = now()
             return True
 
