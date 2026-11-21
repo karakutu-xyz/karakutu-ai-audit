@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import sys
 from typing import Mapping
+from urllib.parse import urlsplit
 
 
 # Shell variables Bash treats specially; never accepted as setting names.
@@ -47,6 +48,34 @@ def documented_keys(example: Path) -> set[str]:
 
 def missing(value: str) -> bool:
     return not value.strip() or "<" in value or ">" in value
+
+
+def local_search_url(values: Mapping[str, str]) -> str:
+    """Resolve the local runner's search endpoint before starting any process."""
+    url = values.get("SEARXNG_URL", "")
+    if values.get("RUN_MODE") != "live" or values.get("SEARCH_PROVIDER") != "searxng":
+        return url
+    port = values.get("KARAKUTU_SEARCH_PORT") or "2202"
+    if not port.isdigit() or not 1 <= int(port) <= 65535:
+        raise ValueError("KARAKUTU_SEARCH_PORT: choose a port from 1 to 65535")
+    if not url:
+        url = f"http://127.0.0.1:{port}"
+    try:
+        parsed = urlsplit(url)
+        url_port = parsed.port
+        if url_port is None:
+            url_port = 443 if parsed.scheme == "https" else 80
+        host = (parsed.hostname or "").lower()
+    except ValueError:
+        raise ValueError("SEARXNG_URL: use a valid search URL") from None
+    if host in {"127.0.0.1", "localhost", "::1"} and url_port != int(port):
+        raise ValueError(
+            f"SEARXNG_URL loopback port {url_port} differs from "
+            f"KARAKUTU_SEARCH_PORT={port}. Set SEARXNG_URL to "
+            f"http://127.0.0.1:{port}, clear it to derive it, or change "
+            "KARAKUTU_SEARCH_PORT to match."
+        )
+    return url
 
 
 def issues(values: Mapping[str, str], mode: str) -> dict[str, str]:
@@ -111,10 +140,22 @@ def report(values: Mapping[str, str], mode: str) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Emit literal NUL-separated assignments.")
-    parser.add_argument("path", type=Path)
+    parser.add_argument("path", type=Path, nargs="?")
+    parser.add_argument("--local-search", action="store_true")
     parser.add_argument("--example", type=Path,
                         default=Path(__file__).resolve().parent.parent / ".env.example")
     args = parser.parse_args()
+    if args.local_search:
+        try:
+            url = local_search_url(os.environ)
+        except ValueError as error:
+            raise SystemExit(str(error)) from None
+        if not os.environ.get("SEARXNG_URL") and os.environ.get("KARAKUTU_SEARCH_PORT"):
+            print(f"Derived SEARXNG_URL={url} from KARAKUTU_SEARCH_PORT.", file=sys.stderr)
+        print(url)
+        return
+    if args.path is None:
+        parser.error("path is required")
     try:
         values = read_settings(args.path)
         allowed = documented_keys(args.example)

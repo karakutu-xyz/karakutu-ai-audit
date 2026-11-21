@@ -18,7 +18,7 @@ from audit.model import trace
 from audit.jsonsafe import json_safe
 from audit.clients.karakutu import KarakutuClient
 from audit.clients.concepts import ConceptCatalog
-from audit.search.base import SearchResult
+from audit.search.base import BaseSearchProvider, SearchResult, SearchState
 from audit.search._common import results_from_hits
 from audit.workflow import classification, similarity, relevance, related_removals, source, web_search, pipeline
 from audit.workflow.agents import build_stage_agents
@@ -88,28 +88,71 @@ def dump(value):
     return json_safe(value)
 
 
-class Search:
-    def __init__(self, base):
+class Search(BaseSearchProvider):
+    def __init__(self, base, *, transport=None):
         self.base = base.rstrip('/')
+        self.enabled = bool(self.base)
+        self.state: SearchState = "unchecked" if self.enabled else "disabled"
+        self._transport = transport
+        self._probe_at = None
+        self._probe_lock = asyncio.Lock()
+        self._search_state = self.state
+        self._search_generation = 0
+
+    async def probe(self) -> SearchState:
+        """Bounded reachability only; HTTP answers cannot clear search rejection.
+
+        Coalesce concurrent status polls and cache for 30 seconds. A real search
+        completed during a probe owns the newer state. No upstream text escapes.
+        """
+        if not self.enabled:
+            return "disabled"
+        async with self._probe_lock:
+            if self._probe_at is not None and time.monotonic() - self._probe_at < 30:
+                return self.state
+            generation = self._search_generation
+            try:
+                async with asyncio.timeout(2):
+                    async with httpx.AsyncClient(timeout=2, transport=self._transport) as client:
+                        async with client.stream('GET', self.base + '/healthz'):
+                            pass  # Headers suffice; never download an upstream body.
+                state = "rejected" if self._search_state == "rejected" else "ok"
+            except Exception:
+                state = "unreachable"
+            if generation == self._search_generation:
+                self.state = state
+            self._probe_at = time.monotonic()
+            return self.state
+
     async def search(self, query, max_results=5, *, language=None):
+        results, _failed = await self.search_checked(query, max_results, language=language)
+        return results
+
+    async def search_checked(self, query, max_results=5, *, language=None):
         event = {'type':'search', 'query':query, 'max_results':max_results, 'language':language, 'results':[], 'error_type':None}
         events = trace.get()
         if events is not None:
             events.append(event)
         if not self.base:
             event['disabled'] = True
-            return []
+            return [], False
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=15, transport=self._transport) as client:
                 response = await client.get(self.base + '/search', params={'q':query,'format':'json','categories':'general','language':language or 'auto'})
                 response.raise_for_status()
                 hits = response.json().get('results') or []
             results = results_from_hits(hits, lambda h:(h.get('url'), h.get('title') or '', h.get('content') or ''), query=query, provider='SearXNG', max_results=max_results)
             event['results'] = dump(results)
-            return results
+            self.state = self._search_state = 'ok'
+            self._search_generation += 1
+            return results, False
         except Exception as exc:
             event['error_type'] = type(exc).__name__
-            return []
+            self.state = self._search_state = (
+                'unreachable' if isinstance(exc, httpx.TransportError) else 'rejected'
+            )
+            self._search_generation += 1
+            return [], True
 
 
 def capture_fetch(fn, kind):
@@ -280,7 +323,20 @@ class AuditEngine:
             result = StageResult(stage=stage, outcome=StageOutcome.PASS if out.relocated_to else StageOutcome.INCONCLUSIVE, explanation=out.reason, details=pipeline._similarity_details(out))
             updates = {'similarity':out}
             if out.relocated_to:
-                updates.update({'stopped':'similarity found a measured relocation', 'web':web_search.WebSearchEvidence(relocated_to=out.relocated_to, relocation_old_in_new=out.relocation_old_in_new, relocation_new_in_old=out.relocation_new_in_old, matches=[out.relocated_to], hits_searched=len(out.hits), live_pages_read=len(out.fetched.live), unreadable_count=len(out.fetched.unreadable), reasoning=out.reason), 'short_circuit':stage})
+                updates.update({
+                    'stopped': 'similarity found a measured relocation',
+                    'web': web_search.WebSearchEvidence(
+                        relocated_to=out.relocated_to,
+                        relocation_old_in_new=out.relocation_old_in_new,
+                        relocation_new_in_old=out.relocation_new_in_old,
+                        matches=[out.relocated_to], hits_searched=len(out.hits),
+                        archive_candidates=len(out.hits),
+                        live_pages_read=len(out.fetched.live),
+                        unreadable_count=len(out.fetched.unreadable),
+                        reasoning=out.reason,
+                    ),
+                    'short_circuit': stage,
+                })
             return result, updates
         if name == 'relevance':
             try:

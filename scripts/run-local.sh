@@ -32,6 +32,11 @@ done < <(python3 "$repo_dir/scripts/env_requirements.py" "$env_file" && printf '
 (( env_parsed )) || exit 1
 # A one-command mode selection takes precedence over the file.
 export RUN_MODE=${mode_override:-${RUN_MODE:-test}}
+if [[ "$RUN_MODE" == live && ${SEARCH_PROVIDER:-disabled} == searxng ]]; then
+  # Resolve/validate before preflight, Docker, or either server; also runs for --check.
+  search_url=$(python3 "$repo_dir/scripts/env_requirements.py" --local-search)
+  export SEARXNG_URL="$search_url"
+fi
 python3 - "$repo_dir/scripts" <<'PY'
 import os
 import sys

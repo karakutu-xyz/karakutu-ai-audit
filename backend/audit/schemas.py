@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from audit.clients.karakutu import ArchiveState
+from audit.search.base import SearchState
 from audit.domain import Article, AuditRequest, AuditResponse, StageName, Verdict
 
 
@@ -97,6 +98,7 @@ class ServiceStatus(BaseModel):
     model_provider: Literal["lmstudio", "openai_compatible"]
     response_format: Literal["json_schema", "json_object", "auto"]
     search_provider: Literal["disabled", "searxng"]
+    search: SearchState
     archive: ArchiveState
     archive_reads_enabled: bool
     live_ingestion_enabled: bool

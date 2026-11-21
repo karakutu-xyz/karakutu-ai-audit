@@ -162,7 +162,7 @@ The generated [OpenAPI contract](../openapi.json) documents validation schemas a
 | Method / path | Purpose |
 | --- | --- |
 | `GET /health` | Minimal local liveness and the run `mode` (`test` or `live`). |
-| `GET /api/status` | Run `mode` and model/search/read/live posture; `archive` is the safe current archive state and `archive_reads_enabled` remains the configuration boolean; `writes_enabled` is always false for archive writes; `prompts_editable` reports whether a token is configured; `model_provider` and `response_format` identify the inference profile. |
+| `GET /api/status` | Run `mode` and model/search/read/live posture; `search_provider` identifies configuration; `search` is the safe current search state; `archive` is the safe current archive state and `archive_reads_enabled` remains the configuration boolean; `writes_enabled` is always false for archive writes; `prompts_editable` reports whether a token is configured; `model_provider` and `response_format` identify the inference profile. |
 | `GET /api/models` | Provider chat-model names (`available`), safe `error` code or null, resolved `default`, and per-step `override` (nullable), `effective` name and `source` (`config` or `api`). |
 | `POST /api/models/steps` | Assign `{step, model: <name or null>, author, note?}` for new runs; return step/override/effective/source and `workflow_id`. |
 | `GET /api/prompts` | List the six prompt names, stages, active summaries and version counts. |
@@ -284,6 +284,30 @@ and it is omitted from `failed_steps`. Exact stored step records remain unchange
 Unreached steps are `pending`. Test-mode cancellation interrupts the demo step
 delay and keeps already-emitted steps; the seed includes one cancelled example.
 The run-list metadata schema is named `RunSummary`; its existing fields are unchanged.
+
+### Search status and evidence
+
+Status `search` is one of `disabled`, `unchecked`, `ok`, `unreachable`, or
+`rejected`, with no URL or upstream error text. Test mode always reports
+`disabled` offline. Live status probes `/healthz` with a two-second bound and a
+30-second cache. Any HTTP answer proves reachability but cannot clear rejection
+learned from a real search query. Settings explains unreachable search in terms
+of the configured SEARXNG_URL and rejected search in terms of JSON output.
+
+New web-search evidence and step `details` include `search_queries` (web queries
+attempted), `search_queries_failed`, `web_hits`, `archive_candidates`, and
+`cited_source_leads`. The three candidate counts partition the merged,
+de-duplicated, capped list; an archive candidate independently returned by web
+search retains its existing upgrade to web evidence. `hits_searched` remains
+the merged total for saved-run and audit-record compatibility. Historical records
+stay unchanged; absent new counts are not inferred as web hits in the UI.
+Demo counts describe simulated queries, never real network calls.
+
+Step and verdict explanations prefix total failure with "Web search failed: all
+3 search queries failed, so the web was not searched. Only archive candidates (2)
+and cited-source leads (0) were available." Partial failure says "1 of 3 search
+queries failed." Page counts distinguish archive candidates, cited-source leads
+and search hits. These descriptions do not change verdicts, thresholds or prompts.
 
 ### Read-only archive import and detail enrichment
 

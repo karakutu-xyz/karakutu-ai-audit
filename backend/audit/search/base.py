@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel
+
+SearchState = Literal["disabled", "unchecked", "ok", "unreachable", "rejected"]
 
 
 class SearchResult(BaseModel):
@@ -17,6 +19,18 @@ class SearchResult(BaseModel):
 
 
 class BaseSearchProvider(ABC):
+    enabled = True
+
+    async def search_checked(self, query: str, max_results: int = 5,
+                             *, language: Optional[str] = None
+                             ) -> tuple[List[SearchResult], bool]:
+        """Return results and whether the query failed; providers never raise.
+
+        Legacy providers that only implement search retain their successful/empty
+        result contract. Providers that swallow failures must override this hook.
+        """
+        return await self.search(query, max_results, language=language), False
+
     @abstractmethod
     async def search(self, query: str, max_results: int = 5,
                      *, language: Optional[str] = None) -> List[SearchResult]:

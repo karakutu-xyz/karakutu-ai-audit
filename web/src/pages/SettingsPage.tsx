@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ArchiveState } from "../types";
+import type { ArchiveState, SearchState } from "../types";
 import { useApi, useServiceStatus, useWorkflow } from "../api/hooks";
 import { useRoute, Link, useScrollRestoration } from "../router";
 import { ConnectionDialog } from "../dialogs/ConnectionDialog";
@@ -17,6 +17,14 @@ const archiveLabels: Record<ArchiveState, string> = {
   auth_unavailable: "Archive sign-in failed",
   unreachable: "Archive unreachable",
   rejected: "Archive refused the request",
+};
+
+const searchLabels: Record<SearchState, string> = {
+  disabled: "Disabled",
+  unchecked: "SearXNG · not checked yet",
+  ok: "SearXNG · reachable",
+  unreachable: "SearXNG · unreachable at the configured SEARXNG_URL",
+  rejected: "SearXNG · refused the request (is JSON output enabled?)",
 };
 
 export function SettingsPage() {
@@ -62,7 +70,7 @@ export function SettingsPage() {
             },
             { label: "Provider", value: status.model_provider },
             { label: "Response format", value: status.response_format },
-            { label: "Search", value: status.search_provider },
+            { label: "Search", value: searchLabels[status.search] },
             {
               label: "Archive reads",
               value: archiveLabels[status.archive],

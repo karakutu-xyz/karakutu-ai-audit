@@ -264,6 +264,12 @@ are required for the offline demo.
    turn on LM Studio's "Serve on Local Network", or set `CONTAINER_MODEL_BASE_URL`
    to an address the container can reach. `/api/status` reports configuration
    capabilities after startup; it does not report model reachability.
+   Settings also reports search reachability, probed within two seconds and
+   cached for 30 seconds. If SearXNG is unreachable, check SEARXNG_URL against
+   KARAKUTU_SEARCH_PORT. The local runner derives an empty URL from the published
+   port and refuses an explicit loopback mismatch, including with --check.
+   For "refused the request", enable JSON output in SearXNG and retry a query;
+   a health response alone cannot establish that JSON search works.
 5. Open **Benchmarks**, choose **New benchmark run**, then **Use a synthetic
    example**. Submit that fictional benchmark and inspect its steps. It uses the
    live model while staying in the benchmark category. No archive writes occur.

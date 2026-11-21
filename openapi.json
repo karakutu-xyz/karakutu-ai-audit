@@ -2180,6 +2180,17 @@
             "title": "Response Format",
             "type": "string"
           },
+          "search": {
+            "enum": [
+              "disabled",
+              "unchecked",
+              "ok",
+              "unreachable",
+              "rejected"
+            ],
+            "title": "Search",
+            "type": "string"
+          },
           "search_provider": {
             "enum": [
               "disabled",
@@ -2206,6 +2217,7 @@
           "model_provider",
           "response_format",
           "search_provider",
+          "search",
           "archive",
           "archive_reads_enabled",
           "live_ingestion_enabled",
