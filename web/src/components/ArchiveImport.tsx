@@ -14,18 +14,22 @@ export function importSummary(result: ArticleImported) {
     `skipped ${result.skipped}`;
 }
 
+// Every message keeps the server's safe code, so the cause stays visible and searchable.
 export function importError(error: unknown) {
-  if (error instanceof ApiError) {
-    if (error.code === "archive_unavailable") {
-      return "The archive could not be reached. Try again later (archive_unavailable).";
-    }
-    if (error.status === 401 || error.status === 403) {
-      return "Check the API token in Settings before importing.";
-    }
-    if (error.status === 422) return "Choose between 1 and 90 days.";
-    if (error.code) return `${error.message} (${error.code})`;
+  if (!(error instanceof ApiError)) return errorMessage(error);
+  const suffix = error.code ? ` (${error.code})` : "";
+  if (error.code === "archive_unavailable") {
+    return "The archive could not be reached. Try again later (archive_unavailable).";
   }
-  return errorMessage(error);
+  if (error.code === "untrusted_origin") {
+    return "This page's address is not an allowed origin for the API; add it to " +
+      "ALLOWED_ORIGINS on the server (untrusted_origin).";
+  }
+  if (error.status === 401 || (error.status === 403 && !error.code)) {
+    return `Check the API token in Settings before importing.${suffix}`;
+  }
+  if (error.status === 422) return `Choose between 1 and 90 days.${suffix}`;
+  return `${error.message}${suffix}`;
 }
 
 export function ArchiveImport({ onImported }: { onImported: () => void }) {

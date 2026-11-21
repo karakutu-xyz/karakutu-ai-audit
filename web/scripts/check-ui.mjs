@@ -2137,7 +2137,15 @@ test("archive import submits the day count, reports counts or the safe error cod
   }
   assert.equal(module.importError(new client.ApiError(401)),
     "Check the API token in Settings before importing.");
-  assert.equal(module.importError(new client.ApiError(422)), "Choose between 1 and 90 days.");
+  assert.equal(module.importError(new client.ApiError(401, "unauthorized")),
+    "Check the API token in Settings before importing. (unauthorized)");
+  assert.ok(module.importError(new client.ApiError(403, "untrusted_origin"))
+    .includes("ALLOWED_ORIGINS"));
+  assert.ok(!module.importError(new client.ApiError(403, "untrusted_origin")).includes("token"));
+  assert.equal(module.importError(new client.ApiError(403, "live_ingestion_disabled")),
+    "The service could not complete this request. Please try again. (live_ingestion_disabled)");
+  assert.equal(module.importError(new client.ApiError(422, "validation_error")),
+    "Choose between 1 and 90 days. (validation_error)");
 });
 
 test("article rail offers Stop audit only while the latest audit is queued or running", () => {

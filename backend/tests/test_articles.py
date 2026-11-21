@@ -953,3 +953,29 @@ def test_removal_checked_tells_not_loaded_from_no_removal_found(tmp_path, fail, 
             session.add(ArticleRow(**values))
         flags = {item["ref"]: item["removal_checked"] for item in client.get("/api/articles").json()["items"]}
         assert flags[values["ref"]] is True
+
+
+@pytest.mark.parametrize("dead", [False, True])
+def test_removal_checked_after_a_load_with_empty_text(tmp_path, dead, database_url):
+    # An archive response may carry no text; the check still happened.
+    class EmptyText(FakeArchive):
+        async def get_article(self, article_id):
+            record = await super().get_article(article_id)
+            versions = [version.model_copy(update={"news_text": ""}) for version in record.versions]
+            checks = record.checks if dead else {"entries": [{"status": 200, "check_date": 2}]}
+            return record.model_copy(update={"versions": versions, "news_text": "", "checks": checks})
+
+    engine = FakeEngine()
+    engine.archive = EmptyText()
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), engine)) as client:
+        assert client.post("/api/articles/import").status_code == 200
+        detail = client.get("/api/articles/ka-42").json()
+        assert detail["content"] == "" and detail["removal_checked"] is True
+        assert (detail["removed_at"] is not None) is dead
+        assert client.get("/api/articles").json()["items"][0]["removal_checked"] is True
+        # Moving the article to another URL clears its details (JSON null): unchecked again.
+        store = client.app.state.store
+        with Session(store.engine) as session, session.begin():
+            row = session.get(ArticleRow, "ka-42")
+            row.snapshot = None
+        assert client.get("/api/articles").json()["items"][0]["removal_checked"] is False
