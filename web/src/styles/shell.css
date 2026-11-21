@@ -1,0 +1,123 @@
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--surface);
+  border-bottom: var(--rule-width) solid var(--rule);
+}
+
+.topbar-inner {
+  max-width: var(--content-width);
+  min-height: var(--topbar-height);
+  margin: 0 auto;
+  padding: 0 var(--space-4);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-4);
+}
+
+.wordmark {
+  color: var(--ink);
+  font: 700 var(--text-xl)/1 var(--font-serif);
+  text-decoration: none;
+  white-space: nowrap;
+  padding: var(--space-2) 0;
+}
+
+.topbar nav {
+  flex: 1;
+  min-width: 0;
+}
+
+.topbar ul {
+  display: flex;
+  gap: var(--space-3);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.topbar nav a {
+  display: block;
+  border-bottom: var(--rule-heavy) solid var(--transparent);
+  padding: var(--space-2) 0;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.topbar nav a.quiet-nav {
+  color: var(--secondary);
+}
+
+.topbar nav a[aria-current="page"] {
+  border-color: var(--ink);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.topbar nav a:hover {
+  color: var(--accent);
+}
+
+.mode-pill {
+  display: inline-flex;
+  padding: var(--space-half) var(--space-1);
+  border: var(--rule-width) solid var(--rule);
+  border-radius: var(--radius-pill);
+  color: var(--secondary);
+  background: var(--surface);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.skip-link,
+.skip-link:hover,
+.skip-link:focus,
+.skip-link:focus-visible,
+.skip-link:active {
+  position: fixed;
+  left: var(--space-2);
+  top: var(--space-1);
+  transform: translateY(-200%);
+  z-index: 30;
+  padding: var(--space-1) var(--space-2);
+  color: var(--surface);
+  background: var(--ink);
+}
+
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: none;
+}
+
+@media (max-width: 720px) {
+  .topbar-inner {
+    gap: 0 var(--space-2);
+    padding: 0 var(--space-2);
+    justify-content: space-between;
+  }
+
+  .topbar nav {
+    order: 3;
+    flex-basis: 100%;
+    overflow-x: auto;
+  }
+
+  .topbar ul {
+    gap: var(--space-3);
+  }
+
+  .topbar nav a {
+    padding: var(--space-1) 0;
+  }
+}
+
+.queue-indicator {
+  color: var(--secondary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}

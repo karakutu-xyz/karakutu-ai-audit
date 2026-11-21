@@ -1,0 +1,66 @@
+# Article material is local-only, including benchmarks and generated reports.
+# Keep corpus files under these directories; never embed real articles in source/tests.
+data/
+datasets/
+fixtures/
+testdata/
+test-data/
+benchmarks/
+live/
+reports/
+exports/
+artifacts/
+runs/
+private/
+.cache/
+*.sqlite
+*.sqlite3
+*.db
+*.sqlite-*
+*.sqlite3-*
+*.db-*
+*.jsonl
+*.ndjson
+*.csv
+*.tsv
+*.parquet
+*.arrow
+*.html.report
+
+# Secrets and runtime settings.
+.env
+.env.*
+!.env.example
+arweave-keyfile*.json
+wallet*.json
+*.jwk
+*.pem
+
+# Tools and generated output.
+.venv*/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage*
+htmlcov/
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.DS_Store
+.idea/
+.vscode/
+CLAUDE.md
+
+# Default-deny JSON corpora, traces, and reports wherever they are saved.
+*.json
+!web/package.json
+!web/package-lock.json
+!web/tsconfig.json
+!web/tsconfig.app.json
+!web/tsconfig.node.json
+!openapi.json
+!docs/audit-record.v1.schema.json

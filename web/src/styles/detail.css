@@ -1,0 +1,338 @@
+.back-link {
+  display: inline-block;
+  margin-bottom: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.verdict-overview {
+  max-width: var(--measure);
+  padding: var(--space-4) 0;
+}
+
+.verdict-headline {
+  margin: var(--space-2) 0;
+  font: 600 var(--text-verdict)/1.25 var(--font-serif);
+}
+
+.verdict-note {
+  font-size: var(--text-sm);
+  color: var(--secondary);
+  margin-bottom: var(--space-2);
+}
+
+.findings {
+  font: 400 var(--text-lg)/var(--leading-body) var(--font-serif);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.flag-list,
+.expected-comparison {
+  margin-top: var(--space-2);
+}
+
+.facts-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-3) 0 var(--space-4);
+  border-top: var(--rule-width) solid var(--rule);
+  border-bottom: var(--rule-width) solid var(--rule);
+  padding: var(--space-3) 0;
+}
+
+.facts-grid dt {
+  color: var(--secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  margin-bottom: var(--space-1);
+}
+
+.facts-grid dd {
+  margin: 0;
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.ruled-section,
+.review-section {
+  padding: var(--space-4) 0;
+  border-top: var(--rule-width) solid var(--rule);
+}
+
+.ruled-section > h2,
+.review-section h3 {
+  margin-bottom: var(--space-1);
+}
+
+.ruled-section > .help {
+  margin-bottom: var(--space-3);
+}
+
+.step-table {
+  min-width: var(--step-table-width);
+}
+
+.step-table th {
+  font-weight: 500;
+}
+
+.step-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: var(--article-column);
+  border: 0;
+  text-align: left;
+  background: var(--transparent);
+  padding: 0;
+  font-weight: 600;
+}
+
+.step-chevron {
+  display: inline-flex;
+  transition: transform var(--motion-fast);
+}
+
+.step-toggle[aria-expanded="true"] .step-chevron {
+  transform: rotate(90deg);
+}
+
+.step-toggle:disabled {
+  border: 0;
+  background: var(--transparent);
+}
+
+.step-reason {
+  max-width: var(--article-column);
+  margin-top: var(--space-1);
+  color: var(--secondary);
+}
+
+.model-cell {
+  max-width: var(--model-column);
+  overflow-wrap: anywhere;
+}
+
+.step-records {
+  max-width: 100%;
+  padding: var(--space-2);
+  background: var(--page);
+}
+
+.step-records > p {
+  max-width: var(--measure);
+}
+
+.step-json {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.step-records > details {
+  border-top: var(--rule-width) solid var(--rule);
+}
+
+.json-inspector,
+.source-view {
+  min-width: 0;
+  border: var(--rule-width) solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  margin-bottom: var(--space-2);
+}
+
+.inspector-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  color: var(--secondary);
+  background: var(--page);
+  border-bottom: var(--rule-width) solid var(--rule);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+pre {
+  max-width: 100%;
+  max-height: var(--inspector-height);
+  margin: 0;
+  padding: var(--space-2);
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+
+.subsection-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.review-section > .help {
+  margin-bottom: var(--space-2);
+}
+
+.reaction-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.reaction-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface);
+  color: var(--ink);
+  border: var(--rule-width) solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+  min-height: var(--control-height);
+  font-size: var(--text-sm);
+}
+
+.reaction-button:hover {
+  border-color: var(--ink);
+}
+
+.reaction-button.active {
+  color: var(--surface);
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+.review-form {
+  margin-top: var(--space-3);
+}
+
+.review-history {
+  margin-top: var(--space-3);
+}
+
+.review-item {
+  padding: var(--space-2) 0;
+  border-top: var(--rule-width) solid var(--rule);
+  overflow-wrap: anywhere;
+}
+
+.review-item > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.review-item time {
+  color: var(--secondary);
+  font-size: var(--text-xs);
+}
+
+.review-item p {
+  margin-top: var(--space-1);
+  white-space: pre-wrap;
+}
+
+.saved-message {
+  margin-top: var(--space-2);
+  color: var(--found-text);
+}
+
+.article-content {
+  white-space: pre-wrap;
+  max-height: var(--inspector-height);
+  overflow-y: auto;
+  padding: var(--space-2);
+  border: var(--rule-width) solid var(--rule);
+  background: var(--surface);
+}
+
+.article-url {
+  overflow-wrap: anywhere;
+  color: var(--secondary);
+  margin-bottom: var(--space-2);
+}
+
+.workflow-version {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.workflow-version code {
+  display: block;
+  margin: var(--space-1) 0;
+}
+
+.workflow-version p {
+  color: var(--secondary);
+  font-size: var(--text-sm);
+}
+
+.workflow-definition {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.definition-step {
+  display: flex;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: var(--rule-width) solid var(--rule);
+}
+
+.definition-step > div {
+  min-width: 0;
+}
+
+.definition-step > span {
+  font: 600 var(--text-xl)/1.3 var(--font-serif);
+  color: var(--secondary);
+}
+
+.definition-step p {
+  font-size: var(--text-sm);
+  color: var(--secondary);
+}
+
+.definition-step code {
+  display: block;
+  margin-top: var(--space-1);
+}
+
+.source-select {
+  margin-bottom: var(--space-2);
+}
+
+@media (max-width: 720px) {
+  .facts-grid,
+  .workflow-definition {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .verdict-overview .chip {
+    white-space: normal;
+  }
+}
+
+@media (min-width: 1000px) {
+  .step-json {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

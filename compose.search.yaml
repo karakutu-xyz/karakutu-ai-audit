@@ -1,0 +1,19 @@
+services:
+  karakutu-audit-search:
+    # Same pinned engine build as the archived auditor, preserving search behavior.
+    image: searxng/searxng@sha256:9aae08475a1c254c096f936ed05119568d291ad7ee5e2f805452a48acba6caea
+    ports:
+      - "127.0.0.1:${KARAKUTU_SEARCH_PORT:-2202}:8080"
+    environment:
+      SEARXNG_BASE_URL: http://localhost:2202/
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-}
+      FORCE_OWNERSHIP: "false"
+    volumes:
+      - ./searxng:/etc/searxng:ro
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6

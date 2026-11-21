@@ -1,0 +1,55 @@
+# Smoke-suite override (scripts/docker_smoke.sh): live mode against the offline fake model,
+# search disabled, authentication on. Never use it for a real deployment.
+# The API and the fake model sit only on an internal network, so the live stack has no route
+# out (no model provider, search, archive, DNS or page fetch can leave the machine). The API is
+# not published; the suite reaches it through the UI's /api and /health proxy.
+networks:
+  smoke-isolated:
+    internal: true
+
+services:
+  karakutu-audit-api:
+    image: ${SMOKE_API_IMAGE:?set by scripts/docker_smoke.sh}
+    pull_policy: never
+    ports: !reset []
+    networks: !override
+      smoke-isolated:
+        aliases: [backend]
+    environment:
+      MODEL_ENABLED: "true"
+      MODEL_PROVIDER: openai_compatible
+      MODEL_RESPONSE_FORMAT: auto
+      MODEL_BASE_URL: http://karakutu-fake-model:8000/v1
+      MODEL_NAME: fake-default
+      MODEL_API_KEY: fake-key
+      MODEL_TIMEOUT: "120"
+      SEARCH_PROVIDER: disabled
+      API_AUTH_TOKEN: ${SMOKE_API_TOKEN:?set by scripts/docker_smoke.sh}
+      ALLOWED_HOSTS: audit.example.test
+    depends_on: !override
+      karakutu-fake-model:
+        condition: service_healthy
+
+  karakutu-audit-web:
+    image: ${SMOKE_WEB_IMAGE:?set by scripts/docker_smoke.sh}
+    pull_policy: never
+    # default: to publish the UI port; smoke-isolated: to reach the API.
+    networks: [default, smoke-isolated]
+
+  karakutu-fake-model:
+    image: ${SMOKE_API_IMAGE:?set by scripts/docker_smoke.sh}
+    pull_policy: never
+    command: ["python", "/smoke/fake_model.py"]
+    networks: [smoke-isolated]
+    environment:
+      FAKE_MODEL_SLOW_SECONDS: "90"
+    volumes:
+      - ${SMOKE_DIR:?set by scripts/docker_smoke.sh}:/smoke:ro
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).close()"]
+      interval: 2s
+      timeout: 3s
+      retries: 15

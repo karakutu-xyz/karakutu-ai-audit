@@ -1,0 +1,10 @@
+# Local-only search: JSON is required by the audit engine. Secret comes from .env.
+use_default_settings: true
+server:
+  limiter: false
+  public_instance: false
+  image_proxy: false
+search:
+  formats: [html, json]
+  default_lang: auto
+  safe_search: 0

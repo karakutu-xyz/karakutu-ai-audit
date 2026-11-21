@@ -1,0 +1,69 @@
+include:
+  - compose.search.yaml
+
+services:
+  karakutu-audit-api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    # Optional so test mode starts without a .env; `make live` requires one.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      RUN_MODE: live
+      DATA_DIR: /data
+      DATABASE_URL: ""
+      SEARXNG_URL: http://karakutu-audit-search:8080
+      MODEL_BASE_URL: ${CONTAINER_MODEL_BASE_URL:-http://host.docker.internal:1234/v1}
+      # The API refuses to start on a non-loopback published address without API_AUTH_TOKEN.
+      KARAKUTU_BIND_ADDRESS: ${KARAKUTU_BIND_ADDRESS:-127.0.0.1}
+      # A non-default UI port adds its loopback browser origins to ALLOWED_ORIGINS.
+      KARAKUTU_WEB_PORT: ${KARAKUTU_WEB_PORT:-2201}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - karakutu-audit-data:/data
+    ports:
+      - "${KARAKUTU_BIND_ADDRESS:-127.0.0.1}:${KARAKUTU_API_PORT:-2200}:2200"
+    networks:
+      default:
+        aliases: [backend]
+    depends_on:
+      karakutu-audit-search:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:2200/health', timeout=3).close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+  karakutu-audit-web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    ports:
+      - "${KARAKUTU_BIND_ADDRESS:-127.0.0.1}:${KARAKUTU_WEB_PORT:-2201}:2201"
+    depends_on:
+      karakutu-audit-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:2201/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+volumes:
+  karakutu-audit-data:

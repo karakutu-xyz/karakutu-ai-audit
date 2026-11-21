@@ -1,0 +1,75 @@
+*
+!pyproject.toml
+!uv.lock
+!backend/
+backend/*
+!backend/audit/
+!backend/audit/**
+!searxng/
+searxng/*
+!searxng/settings.yml
+!compose.yaml
+!compose.search.yaml
+!compose.test.yaml
+!web/
+web/*
+!web/package.json
+!web/package-lock.json
+!web/tsconfig*.json
+!web/index.html
+!web/vite.config.ts
+!web/src/
+!web/src/**
+!web/nginx.conf
+
+# Keep runtime settings, private data and generated output out of every context.
+# Names are matched in any letter case: .ENV or Private/ are the same thing on many filesystems.
+**/.[Ee][Nn][Vv]
+**/.[Ee][Nn][Vv].*
+**/[Dd][Aa][Tt][Aa]
+**/[Dd][Aa][Tt][Aa][Ss][Ee][Tt][Ss]
+**/[Ff][Ii][Xx][Tt][Uu][Rr][Ee][Ss]
+**/[Tt][Ee][Ss][Tt][Dd][Aa][Tt][Aa]
+**/[Tt][Ee][Ss][Tt]-[Dd][Aa][Tt][Aa]
+**/[Bb][Ee][Nn][Cc][Hh][Mm][Aa][Rr][Kk][Ss]
+**/[Ll][Ii][Vv][Ee]
+**/[Rr][Ee][Pp][Oo][Rr][Tt][Ss]
+**/[Ee][Xx][Pp][Oo][Rr][Tt][Ss]
+**/[Aa][Rr][Tt][Ii][Ff][Aa][Cc][Tt][Ss]
+**/[Rr][Uu][Nn][Ss]
+**/[Pp][Rr][Ii][Vv][Aa][Tt][Ee]
+**/[Aa][Rr][Ww][Ee][Aa][Vv][Ee]-[Kk][Ee][Yy][Ff][Ii][Ll][Ee]*
+**/[Ww][Aa][Ll][Ll][Ee][Tt]*.[Jj][Ss][Oo][Nn]
+**/__pycache__
+**/node_modules
+**/dist
+# Extensions are matched in any letter case: export.CSV is the same data as export.csv.
+**/*.[Ss][Qq][Ll][Ii][Tt][Ee]*
+**/*.[Dd][Bb]*
+**/arweave-keyfile*.json
+**/wallet*.json
+**/*.[Jj][Ww][Kk]
+**/*.[Pp][Ee][Mm]
+# Corpus and keyfile formats anywhere in the context, as in .gitignore; then
+# re-allow only the web manifests the image build needs.
+**/*.[Jj][Ss][Oo][Nn]
+**/*.[Jj][Ss][Oo][Nn][Ll]
+**/*.[Nn][Dd][Jj][Ss][Oo][Nn]
+**/*.[Cc][Ss][Vv]
+**/*.[Tt][Ss][Vv]
+**/*.[Pp][Aa][Rr][Qq][Uu][Ee][Tt]
+**/*.[Aa][Rr][Rr][Oo][Ww]
+**/*.[Hh][Tt][Mm][Ll].[Rr][Ee][Pp][Oo][Rr][Tt]
+# Compressed or archived corpora and backups.
+**/*.[Gg][Zz]
+**/*.[Bb][Zz]2
+**/*.[Xx][Zz]
+**/*.[Zz][Ss][Tt]
+**/*.[Zz][Ii][Pp]
+**/*.[Tt][Aa][Rr]
+**/*.[Tt][Gg][Zz]
+**/*.7[Zz]
+**/*.[Bb][Aa][Kk]
+!web/package.json
+!web/package-lock.json
+!web/tsconfig*.json

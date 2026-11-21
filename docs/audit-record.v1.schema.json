@@ -1,0 +1,1044 @@
+{
+  "$defs": {
+    "Article": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "published_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Published At"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url",
+        "title",
+        "content",
+        "published_at"
+      ],
+      "title": "Article",
+      "type": "object"
+    },
+    "ArticleIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "archive_id": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Archive Id"
+        },
+        "content_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Content Sha256",
+          "type": "string"
+        },
+        "published_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Published At"
+        },
+        "ref": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ref"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "archive_id",
+        "url",
+        "title",
+        "published_at",
+        "content_sha256"
+      ],
+      "title": "ArticleIdentity",
+      "type": "object"
+    },
+    "AuditFlag": {
+      "description": "Machine-readable red flags. A flag is a pointer for a human, never a finding.",
+      "enum": [
+        "SOURCE_DEAD",
+        "RELATED_REMOVALS"
+      ],
+      "title": "AuditFlag",
+      "type": "string"
+    },
+    "Classification": {
+      "additionalProperties": false,
+      "properties": {
+        "genre": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConceptTag"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "geographic_scope": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GeographicScope"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gist": {
+          "title": "Gist",
+          "type": "string"
+        },
+        "subject_tags": {
+          "items": {
+            "$ref": "#/$defs/ConceptTag"
+          },
+          "maxItems": 5,
+          "title": "Subject Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "subject_tags",
+        "genre",
+        "geographic_scope",
+        "gist"
+      ],
+      "title": "Classification",
+      "type": "object"
+    },
+    "ConceptTag": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "notation": {
+          "title": "Notation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "notation",
+        "label"
+      ],
+      "title": "ConceptTag",
+      "type": "object"
+    },
+    "Correction": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "correction",
+          "title": "Kind",
+          "type": "string"
+        },
+        "previous_record_id": {
+          "pattern": "^run_[0-9a-f]{32}\\.r[0-9]+$",
+          "title": "Previous Record Id",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "record_error",
+            "redaction"
+          ],
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "previous_record_id",
+        "reason"
+      ],
+      "title": "Correction",
+      "type": "object"
+    },
+    "Error": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "const": "audit_failed",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "Error",
+      "type": "object"
+    },
+    "GeographicScope": {
+      "description": "Reach of the STORY. Mirrors the archive's `GeographicScope` minus `platform_specific`,\nwhich describes the reach of a censorship action, not a property of an article.",
+      "enum": [
+        "local",
+        "regional",
+        "national",
+        "global_scope"
+      ],
+      "title": "GeographicScope",
+      "type": "string"
+    },
+    "Initial": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "initial",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "Initial",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "ModelCall": {
+      "additionalProperties": false,
+      "properties": {
+        "completion_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Completion Sha256"
+        },
+        "error_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Error Type"
+        },
+        "max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Max Tokens"
+        },
+        "parsed_output": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Parsed Output"
+        },
+        "request_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Request Sha256",
+          "type": "string"
+        },
+        "requested_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Requested Model"
+        },
+        "response_format": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Response Format"
+        },
+        "response_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Response Model"
+        },
+        "system_prompt_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "System Prompt Sha256"
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Temperature"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Usage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "user_prompt_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "User Prompt Sha256"
+        }
+      },
+      "required": [
+        "requested_model",
+        "response_model",
+        "response_format",
+        "temperature",
+        "max_tokens",
+        "system_prompt_sha256",
+        "user_prompt_sha256",
+        "request_sha256",
+        "completion_sha256",
+        "parsed_output",
+        "usage",
+        "error_type"
+      ],
+      "title": "ModelCall",
+      "type": "object"
+    },
+    "Producer": {
+      "additionalProperties": false,
+      "properties": {
+        "serialized_at": {
+          "format": "date-time",
+          "title": "Serialized At",
+          "type": "string"
+        },
+        "service": {
+          "const": "karakutu-ai-audit",
+          "title": "Service",
+          "type": "string"
+        }
+      },
+      "required": [
+        "service",
+        "serialized_at"
+      ],
+      "title": "Producer",
+      "type": "object"
+    },
+    "Prompt": {
+      "additionalProperties": false,
+      "properties": {
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sha256",
+        "text"
+      ],
+      "title": "Prompt",
+      "type": "object"
+    },
+    "Provenance": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "title": "Decision",
+          "type": "string"
+        },
+        "dependencies": {
+          "additionalProperties": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "title": "Dependencies",
+          "type": "object"
+        },
+        "format_version": {
+          "title": "Format Version",
+          "type": "integer"
+        },
+        "models": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Models"
+        },
+        "prompts": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Prompt"
+          },
+          "title": "Prompts",
+          "type": "object"
+        },
+        "settings": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Settings",
+          "type": "object"
+        },
+        "sources": {
+          "$ref": "#/$defs/Sources"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/StageName"
+          },
+          "title": "Steps",
+          "type": "array"
+        },
+        "workflow_created_at": {
+          "format": "date-time",
+          "title": "Workflow Created At",
+          "type": "string"
+        },
+        "workflow_id": {
+          "title": "Workflow Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "workflow_id",
+        "workflow_created_at",
+        "format_version",
+        "models",
+        "prompts",
+        "steps",
+        "decision",
+        "settings",
+        "sources",
+        "dependencies"
+      ],
+      "title": "Provenance",
+      "type": "object"
+    },
+    "ReAudit": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "re_audit",
+          "title": "Kind",
+          "type": "string"
+        },
+        "previous_record_id": {
+          "pattern": "^run_[0-9a-f]{32}\\.r[0-9]+$",
+          "title": "Previous Record Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "previous_record_id"
+      ],
+      "title": "ReAudit",
+      "type": "object"
+    },
+    "Request": {
+      "additionalProperties": false,
+      "properties": {
+        "removed_article": {
+          "$ref": "#/$defs/Article"
+        },
+        "similar_articles": {
+          "items": {
+            "$ref": "#/$defs/Article"
+          },
+          "title": "Similar Articles",
+          "type": "array"
+        }
+      },
+      "required": [
+        "removed_article",
+        "similar_articles"
+      ],
+      "title": "Request",
+      "type": "object"
+    },
+    "Result": {
+      "additionalProperties": false,
+      "properties": {
+        "classification": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Classification"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "findings": {
+          "title": "Findings",
+          "type": "string"
+        },
+        "flags": {
+          "items": {
+            "$ref": "#/$defs/AuditFlag"
+          },
+          "title": "Flags",
+          "type": "array"
+        },
+        "short_circuited_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StageName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stages": {
+          "items": {
+            "$ref": "#/$defs/StageResult"
+          },
+          "title": "Stages",
+          "type": "array"
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict"
+        }
+      },
+      "required": [
+        "verdict",
+        "stages",
+        "short_circuited_at",
+        "findings",
+        "classification",
+        "flags"
+      ],
+      "title": "Result",
+      "type": "object"
+    },
+    "Run": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "const": "live",
+          "title": "Category",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "finished_at": {
+          "format": "date-time",
+          "title": "Finished At",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "origin": {
+          "enum": [
+            "api",
+            "webhook",
+            "article"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "synthetic": {
+          "title": "Synthetic",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "origin",
+        "category",
+        "status",
+        "synthetic",
+        "created_at",
+        "finished_at",
+        "duration_ms"
+      ],
+      "title": "Run",
+      "type": "object"
+    },
+    "Sources": {
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "minimum": 0,
+          "title": "Files",
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "files",
+        "sha256"
+      ],
+      "title": "Sources",
+      "type": "object"
+    },
+    "StageName": {
+      "description": "The six steps, in pipeline order (AuditResponse.stages is always this order).",
+      "enum": [
+        "classification",
+        "similarity",
+        "relevance",
+        "related_removals",
+        "source",
+        "web_search"
+      ],
+      "title": "StageName",
+      "type": "string"
+    },
+    "StageOutcome": {
+      "enum": [
+        "pass",
+        "fail",
+        "inconclusive"
+      ],
+      "title": "StageOutcome",
+      "type": "string"
+    },
+    "StageResult": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Confidence"
+        },
+        "details": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Details"
+        },
+        "explanation": {
+          "title": "Explanation",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/StageOutcome"
+        },
+        "skipped": {
+          "title": "Skipped",
+          "type": "boolean"
+        },
+        "stage": {
+          "$ref": "#/$defs/StageName"
+        }
+      },
+      "required": [
+        "stage",
+        "outcome",
+        "confidence",
+        "explanation",
+        "skipped",
+        "details"
+      ],
+      "title": "StageResult",
+      "type": "object"
+    },
+    "Step": {
+      "additionalProperties": false,
+      "properties": {
+        "duration_ms": {
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "evidence": {
+          "items": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "type": "object"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "input": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Input",
+          "type": "object"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model"
+        },
+        "model_calls": {
+          "items": {
+            "$ref": "#/$defs/ModelCall"
+          },
+          "title": "Model Calls",
+          "type": "array"
+        },
+        "name": {
+          "$ref": "#/$defs/StageName"
+        },
+        "output": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Output",
+          "type": "object"
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "failed",
+            "skipped"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "status",
+        "model",
+        "duration_ms",
+        "input",
+        "output",
+        "model_calls",
+        "evidence"
+      ],
+      "title": "Step",
+      "type": "object"
+    },
+    "Usage": {
+      "additionalProperties": false,
+      "properties": {
+        "completion_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Completion Tokens"
+        },
+        "prompt_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Prompt Tokens"
+        },
+        "total_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Total Tokens"
+        }
+      },
+      "required": [
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens"
+      ],
+      "title": "Usage",
+      "type": "object"
+    },
+    "Verdict": {
+      "description": "Audit outcome.\n\nNone of these is a finding of censorship. `POSSIBLE_CENSORSHIP` is a triage flag that\nnominates an article for human review \u2014 the determination that something *was* censored\nis a human call on independent evidence, and this service has no authority to make it.",
+      "enum": [
+        "LIKELY_LOW_PUBLIC_INTEREST",
+        "NOT_REMOVED",
+        "MOVED",
+        "LIKELY_MOVED",
+        "FOUND_ONLINE",
+        "POSSIBLE_CENSORSHIP",
+        "INCONCLUSIVE",
+        "AUDIT_FAILED"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "$id": "urn:karakutu-ai-audit:audit-record:1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "article": {
+      "$ref": "#/$defs/ArticleIdentity"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Error"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "lineage": {
+      "discriminator": {
+        "mapping": {
+          "correction": "#/$defs/Correction",
+          "initial": "#/$defs/Initial",
+          "re_audit": "#/$defs/ReAudit"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Initial"
+        },
+        {
+          "$ref": "#/$defs/ReAudit"
+        },
+        {
+          "$ref": "#/$defs/Correction"
+        }
+      ],
+      "title": "Lineage"
+    },
+    "model": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Model",
+      "type": "object"
+    },
+    "notice": {
+      "const": "Machine triage record. No verdict, including POSSIBLE_CENSORSHIP, is a finding of censorship; a person decides on independent evidence.",
+      "title": "Notice",
+      "type": "string"
+    },
+    "producer": {
+      "$ref": "#/$defs/Producer"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "record_id": {
+      "pattern": "^run_[0-9a-f]{32}\\.r[0-9]+$",
+      "title": "Record Id",
+      "type": "string"
+    },
+    "redactions": {
+      "items": {
+        "pattern": "^(?:/(?:[^~/]|~[01])*)*$",
+        "type": "string"
+      },
+      "title": "Redactions",
+      "type": "array"
+    },
+    "request": {
+      "$ref": "#/$defs/Request"
+    },
+    "result": {
+      "$ref": "#/$defs/Result"
+    },
+    "run": {
+      "$ref": "#/$defs/Run"
+    },
+    "schema": {
+      "const": "karakutu-ai-audit/audit-record",
+      "title": "Schema",
+      "type": "string"
+    },
+    "schema_version": {
+      "pattern": "^1\\.[0-9]+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "steps": {
+      "items": {
+        "$ref": "#/$defs/Step"
+      },
+      "maxItems": 6,
+      "minItems": 6,
+      "title": "Steps",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema",
+    "schema_version",
+    "record_id",
+    "lineage",
+    "article",
+    "request",
+    "run",
+    "result",
+    "error",
+    "steps",
+    "provenance",
+    "model",
+    "producer",
+    "redactions",
+    "notice"
+  ],
+  "title": "karakutu-ai-audit audit record v1",
+  "type": "object"
+}

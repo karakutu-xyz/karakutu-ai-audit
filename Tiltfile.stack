@@ -1,0 +1,29 @@
+# Shared by standalone Tilt and any parent Tiltfile that loads this stack.
+def karakutu_ai_audit_stack(project_dir):
+    docker_compose(project_dir + '/compose.search.yaml', project_name='karakutu-ai-audit')
+    dc_resource('karakutu-audit-search', labels=['karakutu-ai-audit'], links=['http://localhost:2202'])
+    local_resource(
+        'karakutu-ai-audit-api',
+        cmd='uv sync --frozen',
+        serve_cmd=['.venv/bin/python', '-m', 'uvicorn', 'audit.api:app', '--host', '127.0.0.1', '--port', '2200', '--no-access-log'],
+        dir=project_dir,
+        serve_dir=project_dir,
+        serve_env={'PYTHONPATH': 'backend', 'LANGSMITH_TRACING': 'false', 'LANGCHAIN_TRACING_V2': 'false'},
+        deps=[project_dir + '/backend/audit', project_dir + '/pyproject.toml', project_dir + '/uv.lock', project_dir + '/.env', project_dir + '/searxng/settings.yml', project_dir + '/compose.yaml', project_dir + '/compose.search.yaml'],
+        resource_deps=['karakutu-audit-search'],
+        readiness_probe=probe(http_get=http_get_action(port=2200, path='/health'), period_secs=2),
+        links=['http://localhost:2200/docs'],
+        labels=['karakutu-ai-audit'],
+    )
+    local_resource(
+        'karakutu-ai-audit-ui',
+        cmd='npm ci --no-audit --no-fund',
+        serve_cmd=['npm', 'run', 'dev', '--', '--host', '127.0.0.1', '--port', '2201', '--strictPort'],
+        dir=project_dir + '/web',
+        serve_dir=project_dir + '/web',
+        deps=[project_dir + '/web/package.json', project_dir + '/web/package-lock.json'],
+        resource_deps=['karakutu-ai-audit-api'],
+        readiness_probe=probe(http_get=http_get_action(port=2201, path='/'), period_secs=2),
+        links=['http://localhost:2201'],
+        labels=['karakutu-ai-audit'],
+    )

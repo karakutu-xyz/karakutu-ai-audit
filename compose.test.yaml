@@ -1,0 +1,7 @@
+# Test mode override: offline demo engine, synthetic demo data, no search service.
+# Run it as its own Compose project so it gets its own data volume: `make test`.
+services:
+  karakutu-audit-api:
+    environment:
+      RUN_MODE: test
+    depends_on: !reset {}
