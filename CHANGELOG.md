@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- When an article is judged of low public interest and no related-removal pattern keeps it in scope, the skipped source and web search steps now read "Skipped: the article was judged of low public interest" instead of "Skipped: relevance failed", which read like a model failure next to a successful relevance call. Same in the test-mode demo data (re-seeded on start). Verdict rules are unchanged; saved runs keep their text. Backend source is part of the workflow fingerprint, so new runs get a new workflow ID.
+
 - Add optional PostgreSQL storage, verified SQLite data copying and isolated database checks.
 
 - Add a Stop audit button to the article page's side rail while the latest audit is queued or running; after a stop the page shows the stopped run and reloads the article.

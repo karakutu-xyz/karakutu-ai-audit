@@ -299,7 +299,7 @@ class AuditEngine:
             result = StageResult(stage=stage, outcome=StageOutcome.PASS if out.flag else StageOutcome.INCONCLUSIVE if not out.available or out.model_failed else StageOutcome.FAIL, explanation=out.reason, details=pipeline._related_details(out))
             updates = {'related':out, 'flags':flags}
             if not s['relevance'].is_relevant and not out.flag:
-                updates.update({'stopped':'relevance failed', 'low_interest':True, 'short_circuit':StageName.RELEVANCE})
+                updates.update({'stopped':'the article was judged of low public interest', 'low_interest':True, 'short_circuit':StageName.RELEVANCE})
             return result, updates
         if name == 'source':
             try:

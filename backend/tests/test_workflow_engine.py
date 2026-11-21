@@ -42,6 +42,8 @@ async def test_low_interest_short_circuits_after_related_check(monkeypatch):
     assert result['response']['verdict'] == 'LIKELY_LOW_PUBLIC_INTEREST'
     assert [s['status'] for s in result['steps']] == ['skipped','completed','completed','completed','skipped','skipped']
     assert result['response']['short_circuited_at'] == 'relevance'
+    # The relevance call succeeded; the later steps must not read as a failure.
+    assert [s['output']['explanation'] for s in result['steps'][4:]] == ['Skipped: the article was judged of low public interest'] * 2
 
 @pytest.mark.asyncio
 async def test_model_adapter_captures_complete_call_and_failure():
