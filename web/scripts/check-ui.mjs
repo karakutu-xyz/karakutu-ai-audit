@@ -555,7 +555,12 @@ test("article plain text preserves text and converts archive markup for display"
     ['<p title="a > b">Visible</p>', "Visible"],
     ["<p title='a > b < c'>Visible</p>", "Visible"],
     ['<p>Earlier text</p><p class="x', 'Earlier text\n<p class="x'],
-    ["<p broken <p>Visible</p>", "<p broken Visible"],
+    ["<p broken <p>Visible</p>", "<p broken\nVisible"],
+    ["<p>Before</p><!-- <script> --><p>After</p>", "Before\nAfter"],
+    ["<p>Kept</p><!-- unclosed <p>tail", "Kept\n<!-- unclosed\ntail"],
+    ["<table><tr><td>12</td><td>34</td></tr><tr><th>5</th><td>6</td></tr>" +
+      "</table>", "12 34\n5 6"],
+    ["<p>First<p>Second<div>Third</div>Fourth", "First\nSecond\nThird\nFourth"],
     ["<P>UPPERCASE<BR>Text</P>", "UPPERCASE\nText"],
     ["<svg/><p>Visible</p>", "Visible"],
     ["<p>First</p><hr><p>Second</p>", "First\n\nSecond"],

@@ -85,9 +85,11 @@ const articleElements = new Set((
   "noscript button form input label select option textarea"
 ).split(" "));
 const hiddenArticleElements = new Set(["script", "style", "svg", "noscript"]);
-const articleLineEnds = new Set([
-  "p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "blockquote",
-]);
+// Opening or closing any of these starts a new line (paragraphs may be unclosed).
+const articleBlocks = new Set((
+  "p div li ul ol h1 h2 h3 h4 h5 h6 tr table thead tbody blockquote " +
+  "section article header footer aside main nav figure figcaption"
+).split(" "));
 
 // Presentation only: saved article content and audit inputs stay unchanged.
 export function articlePlainText(value: string): string {
@@ -99,6 +101,17 @@ export function articlePlainText(value: string): string {
   let foundTag = false;
   let hidden = "";
   let lower: string | undefined;
+  let atBreak = true;
+  let unclosedComment = false;
+  const text = (end: number) => {
+    const slice = value.slice(textStart, end);
+    if (slice.trim()) atBreak = false;
+    parts.push(slice);
+  };
+  const lineBreak = () => {
+    if (!atBreak) parts.push("\n");
+    atBreak = true;
+  };
   while (cursor < value.length) {
     if (hidden) {
       cursor = lower!.indexOf(`</${hidden}`, cursor);
@@ -109,6 +122,19 @@ export function articlePlainText(value: string): string {
     }
     if (value[cursor] !== "<") {
       cursor++;
+      continue;
+    }
+    if (!hidden && !unclosedComment && value.startsWith("<!--", cursor)) {
+      // Comments hide their contents, tags included. One search per comment.
+      const close = value.indexOf("-->", cursor + 4);
+      if (close === -1) {
+        unclosedComment = true;
+        cursor++;
+        continue;
+      }
+      text(cursor);
+      cursor = close + 3;
+      textStart = cursor;
       continue;
     }
     tagStart.lastIndex = cursor;
@@ -132,7 +158,7 @@ export function articlePlainText(value: string): string {
       }
     }
     if (end === value.length) {
-      if (!hidden) parts.push(value.slice(textStart));
+      if (!hidden) text(value.length);
       textStart = value.length;
       break;
     }
@@ -142,7 +168,7 @@ export function articlePlainText(value: string): string {
       continue;
     }
     foundTag = true;
-    if (!hidden) parts.push(value.slice(textStart, cursor));
+    if (!hidden) text(cursor);
     cursor = end + 1;
     textStart = cursor;
     if (hidden) {
@@ -154,8 +180,15 @@ export function articlePlainText(value: string): string {
       lower ??= value.replace(/[A-Z]/g, (char) => char.toLowerCase());
     } else if (name === "hr") {
       parts.push("\n\n");
-    } else if (name === "br" || (tag[1] && articleLineEnds.has(name))) {
+      atBreak = true;
+    } else if (name === "br") {
       parts.push("\n");
+      atBreak = true;
+    } else if (articleBlocks.has(name)) {
+      lineBreak();
+    } else if ((name === "td" || name === "th") && !tag[1] && !atBreak) {
+      // Separate table cells so "12" and "34" never read as "1234".
+      parts.push(" ");
     }
   }
   if (!foundTag) return value;
