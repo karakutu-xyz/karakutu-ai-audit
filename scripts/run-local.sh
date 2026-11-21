@@ -40,6 +40,9 @@ from env_requirements import report
 if not report(os.environ, os.environ["RUN_MODE"]):
     raise SystemExit(1)
 PY
+# A pulled checkout can keep an older install; stop before Vite fails on a missing
+# import. Offline and quiet when current; prints the exact install command otherwise.
+python3 "$repo_dir/scripts/check_local_deps.py" "$repo_dir" || exit 1
 api_port=${KARAKUTU_API_PORT:-2200}
 web_port=${KARAKUTU_WEB_PORT:-2201}
 # An explicit proxy override is useful when the API is reached through a local proxy.
