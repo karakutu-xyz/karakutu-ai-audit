@@ -1827,6 +1827,16 @@ test("article view shows first audit, re-run, running progress and one review no
   assert.ok(html.includes("Fictional stored explanation."));
   // The stored note is the one disclaimer: it appears once, never next to a second copy.
   assert.equal(html.split(summary.human_review_note).length - 1, 1);
+  const otherNote = "Fictional stored review note.";
+  for (const [note, shown] of [[otherNote, otherNote], [null, "This is not a finding of censorship; a person decides."]]) {
+    const noted = { ...latest, summary: { ...summary, human_review_note: note } };
+    harness.setArticle(fictionalArticle({ runs: [noted], run_count: 1 }));
+    const notedHtml = harness.render();
+    assert.equal(notedHtml.split(shown).length - 1, 1);
+    if (note) assert.ok(!notedHtml.includes("This is not a finding of censorship; a person decides."));
+  }
+  harness.setArticle(fictionalArticle({ runs: [latest], run_count: 1 }));
+  html = harness.render();
   assert.ok(html.includes(`/runs/${latest.id}`));
   harness.setArticle(fictionalArticle({ runs: [{ ...latest,
     status: "running", summary: fictionalStory({ steps: [
