@@ -135,6 +135,7 @@ export function articlePlainText(value: string): string {
   let depth = 0;
   let openAt = -2;
   let closeAt = -2;
+  let commentAt = -2;
   let lower: string | undefined;
   let atBreak = true;
   let unclosedComment = false;
@@ -152,11 +153,28 @@ export function articlePlainText(value: string): string {
       if (closeAt !== -1 && closeAt < cursor) {
         closeAt = lower!.indexOf(`</${hidden}`, cursor);
       }
-      if (hidden === "svg" && openAt !== -1 && openAt < cursor) {
-        openAt = lower!.indexOf("<svg", cursor);
+      let next = closeAt;
+      if (hidden === "svg") {
+        if (openAt !== -1 && openAt < cursor) {
+          openAt = lower!.indexOf("<svg", cursor);
+        }
+        if (commentAt !== -1 && commentAt < cursor) {
+          commentAt = value.indexOf("<!--", cursor);
+        }
+        for (const at of [openAt, commentAt]) {
+          if (at !== -1 && (next === -1 || at < next)) next = at;
+        }
+        if (next !== -1 && next === commentAt) {
+          // Tags inside a comment never change the nesting depth.
+          const end = value.indexOf("-->", next + 4);
+          if (end === -1) {
+            textStart = value.length;
+            break;
+          }
+          cursor = end + 3;
+          continue;
+        }
       }
-      const next = hidden === "svg" && openAt !== -1 &&
-        (closeAt === -1 || openAt < closeAt) ? openAt : closeAt;
       if (next === -1) {
         textStart = value.length;
         break;
@@ -225,7 +243,7 @@ export function articlePlainText(value: string): string {
                value[end - 1] !== "/") {
       hidden = name;
       depth = 1;
-      openAt = closeAt = -2;
+      openAt = closeAt = commentAt = -2;
       // ASCII folding preserves offsets even when text contains e.g. U+0130.
       lower ??= value.replace(/[A-Z]/g, (char) => char.toLowerCase());
     } else if (name === "hr") {

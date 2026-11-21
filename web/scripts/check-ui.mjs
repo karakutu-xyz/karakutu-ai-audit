@@ -572,6 +572,10 @@ test("article plain text preserves text and converts archive markup for display"
     ["<p>Before</p><SVG><Svg ></svG><text>Hidden</text></SVG >After",
       "Before\nAfter"],
     ["<p>Kept</p><svg><svg><text>never closed</text></svg>", "Kept"],
+    ["<p>Before</p><svg><!-- <svg> --></svg><p>After</p>", "Before\nAfter"],
+    ["<p>Before</p><svg><!-- </svg> --><text>Hidden</text></svg>After",
+      "Before\nAfter"],
+    ["<p>Kept</p><svg><!-- never closed </svg>After", "Kept"],
     ["<P>UPPERCASE<BR>Text</P>", "UPPERCASE\nText"],
     ["<svg/><p>Visible</p>", "Visible"],
     ["<p>First</p><hr><p>Second</p>", "First\n\nSecond"],
@@ -605,6 +609,8 @@ test("article plain text scans malformed markup in linear time", (t) => {
     ["nested svg", `<p>a</p>${"<svg>".repeat(50_000)}${"</svg>".repeat(50_000)}b`,
       "a\nb"],
     ["unclosed svg", `<p>a</p>${"<svg>x".repeat(50_000)}`, "a"],
+    ["svg comments", `<p>a</p><svg>${"<!--<svg>-->".repeat(50_000)}</svg>b`,
+      "a\nb"],
   ]) {
     const started = performance.now();
     const actual = format.articlePlainText(input);
