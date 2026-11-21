@@ -868,3 +868,20 @@ def test_fill_article_rejects_a_different_archive_record(tmp_path):
         assert store.article("ka-42")["content"] == ""
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("stored, shown", [
+    ("1700000000", "2023-11-14T22:13:20+00:00"),
+    ("9" * 40, None),
+    ("2026-11-02T11:00:00+00:00", "2026-11-02T11:00:00+00:00"),
+    (None, None),
+])
+def test_removal_dates_stored_by_older_versions_read_as_iso(tmp_path, stored, shown):
+    # Rows filled before ISO storage hold Unix seconds; upgrading must not show raw numbers.
+    store = Store(f"sqlite:///{tmp_path / 'audit.sqlite3'}")
+    values = article_values({"url": "https://older.example/report", "title": "Older fictional row",
+                             "content": FICTION}, "live", "archive")
+    with Session(store.engine) as session, session.begin():
+        session.add(ArticleRow(**values, removed_at=stored))
+    assert store.article(values["ref"])["removed_at"] == shown
+    assert store.articles()["items"][0]["removed_at"] == shown

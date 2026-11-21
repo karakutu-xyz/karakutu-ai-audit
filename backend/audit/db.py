@@ -64,6 +64,18 @@ def _refresh_article_search(_mapper, _connection, row):
     row.search_text = article_search_text(row.title, row.source, row.host, row.url)
 
 
+def readable_removed_at(value):
+    """Older versions stored archive removal dates as Unix seconds ("1700000000"). Present
+    them as ISO like new rows, on every backend, without a migration; anything else is
+    returned unchanged and an unusable number becomes unknown."""
+    if isinstance(value, str) and value.isdigit():
+        try:
+            return datetime.fromtimestamp(int(value), timezone.utc).isoformat()
+        except (ValueError, OverflowError, OSError):
+            return None
+    return value
+
+
 def normalized_url(url: str) -> str:
     parts = urlsplit(url.strip())
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, ""))
@@ -457,8 +469,10 @@ class Store:
             total = session.scalar(select(func.count()).select_from(query).where(*conditions))
             rows = session.execute(select(query).where(*conditions).order_by(
                 query.c.activity.desc(), query.c.ref).limit(limit).offset(offset)).mappings()
-            return {"items": [{key: value for key, value in row.items() if key != "activity"}
-                              for row in rows], "total": total, "limit": limit, "offset": offset}
+            items = [{key: value for key, value in row.items() if key != "activity"} for row in rows]
+            for item in items:
+                item["removed_at"] = readable_removed_at(item["removed_at"])
+            return {"items": items, "total": total, "limit": limit, "offset": offset}
 
     def article(self, ref: str) -> dict | None:
         from audit.run_summary import summarize_run
@@ -468,6 +482,7 @@ class Store:
                 return None
             summary = dict(session.execute(self._article_query().where(ArticleRow.ref == ref)).mappings().one())
             summary.pop("activity")
+            summary["removed_at"] = readable_removed_at(summary["removed_at"])
             runs = session.scalars(select(Run).where(Run.article_ref == ref)
                                    .order_by(Run.created_at.desc(), Run.id.desc())).all()
             history = []
