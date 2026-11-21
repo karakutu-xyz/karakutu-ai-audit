@@ -250,7 +250,10 @@ configure TLS; the remote SSL requirement still applies to managed servers.
    Dry run reads counts and checks target emptiness without creating its schema. Any row in
    any target application or unrelated table refuses the operation; the singleton migration
    version record is metadata. Failed copies roll back all copied rows, leaving empty schema.
-   A successful copy cannot be rerun into the now populated target. A test database or one
+   A successful copy cannot be rerun into the now populated target. If old rows hold NUL
+   characters in text columns, which PostgreSQL text cannot store, the copy refuses and
+   names each table, column and row count; rerun with `--strip-nul` to remove them from
+   those text columns only. JSON columns keep NUL exactly. A test database or one
    holding demo data is never copied, and live startup on any backend refuses a database
    that holds demo data.
 4. Set the protected `DATABASE_URL`, recreate the API, check health and saved history, and

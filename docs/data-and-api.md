@@ -4,7 +4,8 @@
 
 SQLite is the default: `data/audit.sqlite3` plus its WAL/SHM files, through SQLAlchemy 2.
 Live mode also supports PostgreSQL with psycopg v3 through `DATABASE_URL`; JSON columns
-use JSONB there. Test mode and demo seeding remain SQLite-only. The database stores:
+use PostgreSQL `json` there (not `jsonb`), which keeps the saved text verbatim: exact
+number formatting, key order and `\u0000` escapes. Test mode and demo seeding remain SQLite-only. The database stores:
 
 | Table | Contents |
 | --- | --- |
@@ -59,7 +60,7 @@ archive ID is imported again, including when its URL changes. `ref`, `source`, `
 has no length bounds; `runs.article_ref` is also Text. Version 5 widens these on PostgreSQL;
 SQLite already accepts arbitrary lengths and needs no physical width change.
 `created_at`/`updated_at` are String(40), and `category`/`origin` String(20).
-URL, title and content are Text; nullable `snapshot` is JSON (JSONB on PostgreSQL)
+URL, title and content are Text; nullable `snapshot` is JSON (`json` on PostgreSQL)
 containing version titles, check dates and hashes, never duplicated full text.
 Source, publication/removal dates, archive ID and language are nullable.
 
@@ -372,7 +373,7 @@ UTC timestamps fit 40. Prompt texts, notes, article URLs/titles/content and sear
 are Text. Unbounded archive metadata uses Text as listed above. No allowed API input
 is truncated. Submitted text fields reject NUL characters before database access with
 the existing 422 codes-only validation envelope; submitted values are never echoed.
-Upstream text the service stores without validating it (archive article data, and step
-evidence, model output and results from the workflow) has NUL characters removed before
-the write, on both backends, because PostgreSQL text and JSONB cannot hold them. This is
-the one change made to otherwise exact saved records.
+Archive article data is upstream text written into text columns, which PostgreSQL cannot
+hold with NUL characters, so NUL is removed from it (and from its snapshot) before the
+write, on both backends. Run and workflow records, including captured evidence and model
+output, are JSON and stored exactly, NUL included.

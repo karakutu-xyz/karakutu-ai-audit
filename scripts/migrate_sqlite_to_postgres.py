@@ -10,8 +10,8 @@ import math
 from pathlib import Path
 import sys
 
-from sqlalchemy import JSON, MetaData, Text, bindparam, cast, create_engine, func, select
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import JSON, MetaData, String, Text, bindparam, cast, create_engine, func, select
+from sqlalchemy.dialects.postgresql import JSON as PG_JSON
 from sqlalchemy.engine import URL
 
 from audit.config import database_backend, has_demo_marker, is_test_database_path
@@ -35,8 +35,8 @@ def _empty(connection):
 def _number(value) -> str:
     """Exact canonical text for a JSON number: digits and exponent, no rounding.
 
-    PostgreSQL JSONB rewrites numbers (`1e20` comes back as `100000000000000000000`,
-    `-0.0` as `0`), so equal numbers must encode equally and unequal ones never."""
+    Equal numbers must encode equally and unequal ones never, whatever the textual form
+    (`1e20` and `100000000000000000000`, `-0.0` and `0`)."""
     if isinstance(value, float) and not math.isfinite(value):
         raise CopyRefused("Non-finite number in stored data")
     number = Decimal(repr(value)) if isinstance(value, float) else Decimal(value)
@@ -108,30 +108,54 @@ def _exact(row: dict, columns) -> dict:
 
 
 def _insert(table, columns, dialect: str):
-    """Insert JSON columns from their raw text: PostgreSQL parses it into JSONB exactly."""
+    """Insert JSON columns from their raw text: PostgreSQL `json` keeps it verbatim."""
     values = {}
     for column in columns:
         param = bindparam("p_" + column.name, type_=Text if _is_json(column) else column.type)
-        values[column.name] = cast(param, JSONB) if _is_json(column) and dialect == "postgresql" else param
+        values[column.name] = cast(param, PG_JSON) if _is_json(column) and dialect == "postgresql" else param
     return table.insert().values(values)
 
 
-def _digest(connection, table, columns):
+def _text_columns(columns):
+    """Plain text columns; PostgreSQL text cannot hold NUL (JSON keeps it as \u0000)."""
+    return [column for column in columns if isinstance(column.type, String) and not _is_json(column)]
+
+
+def _nul_report(connection, tables):
+    """(table, column, rows) for every source text column holding NUL. Names only."""
+    report = []
+    for table in tables:
+        for column in _text_columns(table.columns):
+            rows = connection.scalar(select(func.count()).select_from(table).where(
+                func.instr(column, func.char(0)) > 0))
+            if rows:
+                report.append((table.name, column.name, rows))
+    return report
+
+
+def _strip(row: dict, text_names: set[str]) -> dict:
+    return {key: value.replace("\x00", "") if key in text_names and isinstance(value, str) else value
+            for key, value in row.items()}
+
+
+def _digest(connection, table, columns, *, strip_nul=False):
     digest = hashlib.sha256()
     count = 0
     # Database locale must not change the canonical row order across backends.
     collation = "BINARY" if connection.dialect.name == "sqlite" else "C"
     query = select(*_raw(columns)).order_by(
         *(column.collate(collation) for column in table.primary_key))
+    text_names = {column.name for column in _text_columns(columns)} if strip_nul else set()
     for row in connection.execute(query).mappings():
-        encoded = _encode(_exact(row, columns)).encode()
+        encoded = _encode(_exact(_strip(dict(row), text_names), columns)).encode()
         digest.update(len(encoded).to_bytes(8, "big"))
         digest.update(encoded)
         count += 1
     return count, digest.digest()
 
 
-def copy_database(source_url, target_url, *, dry_run=False, _target_backend="postgresql"):
+def copy_database(source_url, target_url, *, dry_run=False, strip_nul=False, nul_report=None,
+                  _target_backend="postgresql"):
     source = database_backend(source_url)
     target = database_backend(target_url)
     if source.get_backend_name() != "sqlite" or not source.database or source.database == ":memory:":
@@ -161,6 +185,15 @@ def copy_database(source_url, target_url, *, dry_run=False, _target_backend="pos
             if get_version(source_connection) != SCHEMA_VERSION:
                 raise CopyRefused("Upgrade the source database before copying")
             tables = Base.metadata.sorted_tables
+            # Old SQLite rows may hold NUL in text columns, which PostgreSQL text rejects.
+            # Refuse by default, naming only tables, columns and counts; --strip-nul removes them.
+            found = _nul_report(source_connection, tables)
+            if nul_report is not None:
+                nul_report.extend(found)
+            if found and not strip_nul:
+                where = ", ".join(f"{table}.{column} ({rows} rows)" for table, column, rows in found)
+                raise CopyRefused(f"NUL characters in source text columns: {where}; "
+                                  "rerun with --strip-nul to remove them")
             counts = {table.name: source_connection.scalar(
                 select(func.count()).select_from(table)) for table in tables}
             # Preflight before Store can change the target schema. Dry run never writes it.
@@ -184,10 +217,14 @@ def copy_database(source_url, target_url, *, dry_run=False, _target_backend="pos
                         query = query.order_by(*table.primary_key)
                     rows = source_connection.execute(query).mappings()
                     insert = _insert(table, columns, connection.dialect.name)
+                    text_names = ({column.name for column in _text_columns(columns)}
+                                  if strip_nul else set())
                     while batch := rows.fetchmany(500):
-                        connection.execute(insert, [{"p_" + key: value for key, value in row.items()}
-                                                    for row in batch])
-                    if _digest(source_connection, table, columns) != _digest(connection, table, columns):
+                        connection.execute(insert, [
+                            {"p_" + key: value for key, value in _strip(dict(row), text_names).items()}
+                            for row in batch])
+                    source_digest = _digest(source_connection, table, columns, strip_nul=strip_nul)
+                    if source_digest != _digest(connection, table, columns):
                         raise CopyRefused("Copy verification failed")
             return counts
     finally:
@@ -209,9 +246,13 @@ def main(argv=None):
     parser.add_argument("source_sqlite_url")
     parser.add_argument("target_postgres_url")
     parser.add_argument("--dry-run", action="store_true", help="Print counts without changing the target")
+    parser.add_argument("--strip-nul", action="store_true",
+                        help="Remove NUL characters from source text columns (JSON keeps them)")
     args = parser.parse_args(argv)
     try:
-        counts = copy_database(args.source_sqlite_url, args.target_postgres_url, dry_run=args.dry_run)
+        found = []
+        counts = copy_database(args.source_sqlite_url, args.target_postgres_url, dry_run=args.dry_run,
+                               strip_nul=args.strip_nul, nul_report=found)
     except CopyRefused as refused:
         # Refusal reasons are fixed strings without URLs or values.
         print(f"Database copy refused: {refused}", file=sys.stderr)
@@ -224,6 +265,9 @@ def main(argv=None):
     for table, count in counts.items():
         prefix = "would copy " if args.dry_run else ""
         print(f"{prefix}{table}: {count}")
+    for table, column, rows in found:
+        verb = "would strip" if args.dry_run else "stripped"
+        print(f"{verb} NUL characters in {table}.{column}: {rows} rows")
     return 0
 
 

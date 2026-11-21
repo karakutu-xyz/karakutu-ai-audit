@@ -17,7 +17,6 @@ from sqlalchemy import (
     UniqueConstraint, create_engine, event, func, inspect, literal_column, select, update,
 )
 from sqlalchemy.engine import Connection
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
@@ -32,7 +31,9 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-JSON_VALUE = JSON().with_variant(JSONB(), "postgresql")
+# PostgreSQL `json`, not `jsonb`: it keeps the saved text verbatim (exact number formatting
+# and key order) and accepts the \u0000 escape, so captured evidence is stored exactly.
+JSON_VALUE = JSON()
 WRITER_LOCK = 684219705
 
 
@@ -154,10 +155,11 @@ def _refresh_article_search(_mapper, _connection, row):
 
 
 def without_nul(value):
-    """PostgreSQL text and JSON cannot hold NUL characters; SQLite can. Archive data and
-    workflow evidence (model output, search snippets, archive responses) are unvalidated
-    upstream input, so drop them everywhere (also nested in JSON) before a write, keeping
-    both backends' stored values identical. Submitted input is rejected at the schema."""
+    """PostgreSQL text columns cannot hold NUL characters; SQLite can. Archive article data
+    is unvalidated upstream input written into text columns, so drop NUL there (also nested
+    in the article snapshot) before a write, keeping both backends' stored values identical.
+    JSON columns (runs, workflows) are PostgreSQL `json`, which stores NUL as \u0000 exactly;
+    submitted input is rejected at the schema."""
     if isinstance(value, str):
         return value.replace("\x00", "")
     if isinstance(value, dict):
@@ -501,13 +503,9 @@ class Store:
         with Session(self.engine) as session, session.begin():
             row = session.get(Run, run_id)
             if row is not None and row.status in {"queued", "running"}:
-                # Step evidence holds upstream text (model output, search snippets,
-                # archive responses); PostgreSQL JSONB cannot store NUL.
-                row.steps = [*row.steps, without_nul(step)]
+                row.steps = [*row.steps, step]
 
     def complete_run(self, run_id: str, result: dict):
-        # Same rule as append_step: every stored value is NUL-free on both backends.
-        result = without_nul(result)
         response = result["response"]
         verdict = response.get("verdict")
         failed = verdict == "AUDIT_FAILED"

@@ -78,10 +78,10 @@ def test_copy_failure_rolls_back_all_rows(source_url, database_url, monkeypatch)
     original = copy._digest
     calls = 0
 
-    def corrupted(*args):
+    def corrupted(*args, **kwargs):
         nonlocal calls
         calls += 1
-        result = original(*args)
+        result = original(*args, **kwargs)
         return (result[0] + 1, result[1]) if calls == 4 else result
 
     monkeypatch.setattr(copy, "_digest", corrupted)
@@ -218,3 +218,46 @@ def test_hash_distinguishes_sql_null_from_json_null(tmp_path):
             digests.append(copy._digest(connection, Run.__table__, columns))
     engine.dispose()
     assert digests[0] != digests[1]
+
+
+def _nul_source(tmp_path):
+    from sqlalchemy import create_engine, text
+    url = f"sqlite:///{tmp_path / 'nul.sqlite3'}"
+    store = Store(url)
+    workflow(store)
+    run = create(store)
+    store.complete_run(run["id"], {"response": {"verdict": "INCONCLUSIVE",
+                                                "findings": "evidence\x00kept"}, "steps": []})
+    store.close()
+    engine = create_engine(url)
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE runs SET label = :label WHERE id = :id"),
+                           {"label": "fictional\x00label", "id": run["id"]})
+    engine.dispose()
+    return url, run["id"]
+
+
+def test_copy_refuses_nul_in_text_columns_by_default(tmp_path, database_url, capsys):
+    url, _ = _nul_source(tmp_path)
+    with pytest.raises(copy.CopyRefused, match=r"runs\.label \(1 rows\).*--strip-nul"):
+        copy.copy_database(url, database_url, _target_backend=backend(database_url))
+    with pytest.raises(copy.CopyRefused, match="runs.label"):
+        copy.copy_database(url, database_url, dry_run=True, _target_backend=backend(database_url))
+    assert copy.main([url, "postgresql+psycopg://audit:fictional@db.example.invalid/audit"]) == 1
+    error = capsys.readouterr().err
+    assert "runs.label (1 rows)" in error and "fictional" not in error
+
+
+def test_copy_strip_nul_cleans_text_and_keeps_json_exact(tmp_path, database_url):
+    url, run_id = _nul_source(tmp_path)
+    report = []
+    copy.copy_database(url, database_url, strip_nul=True, nul_report=report,
+                       _target_backend=backend(database_url))
+    assert report == [("runs", "label", 1)]
+    target = Store(database_url)
+    try:
+        saved = target.run(run_id)
+    finally:
+        target.close()
+    assert saved["label"] == "fictionallabel"
+    assert saved["output"]["findings"] == "evidence\x00kept"
