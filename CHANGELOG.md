@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Add a Stop audit button to the article page's side rail while the latest audit is queued or running; after a stop the page shows the stopped run and reloads the article.
+- Fix archive import, which always answered `archive_unavailable`: the audit listing is now filtered with Unix seconds. Store archive removal dates as ISO, and keep the article text when the archive's removal date is unusable.
 - Show readable archive article text, clarify empty run ledgers, and disable live article audits when the server switches them off.
 - Parse local settings literally without shell evaluation, allow unauthenticated compatible model servers, and diagnose Docker model startup failures through logs.
 - Keep internal tracker ids and personal names out of public files: the data-hygiene check now fails on tracker ids (`KRK-` and four digits) in any tracked file or path, binaries included, and docs and comments describe related changes in plain words.
