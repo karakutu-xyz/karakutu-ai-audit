@@ -10,7 +10,8 @@ import math
 from pathlib import Path
 import sys
 
-from sqlalchemy import MetaData, create_engine, func, select
+from sqlalchemy import JSON, MetaData, Text, bindparam, cast, create_engine, func, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import URL
 
 from audit.config import database_backend, has_demo_marker, is_test_database_path
@@ -68,15 +69,49 @@ def _encode(value) -> str:
     raise CopyRefused("Unsupported stored value type")
 
 
+def _is_json(column) -> bool:
+    return isinstance(column.type, JSON)
+
+
+def _raw(columns):
+    """Select JSON columns as their stored text, so no value passes through a float."""
+    return [cast(column, Text).label(column.name) if _is_json(column) else column
+            for column in columns]
+
+
+def _reject_constant(_name):
+    raise CopyRefused("Non-finite number in stored data")
+
+
+def _exact(row: dict, columns) -> dict:
+    """Decode JSON text with exact numbers (Decimal), for hashing only."""
+    values = dict(row)
+    for column in columns:
+        text = values[column.name]
+        if _is_json(column) and text is not None:
+            values[column.name] = json.loads(text, parse_float=Decimal,
+                                             parse_constant=_reject_constant)
+    return values
+
+
+def _insert(table, columns, dialect: str):
+    """Insert JSON columns from their raw text: PostgreSQL parses it into JSONB exactly."""
+    values = {}
+    for column in columns:
+        param = bindparam("p_" + column.name, type_=Text if _is_json(column) else column.type)
+        values[column.name] = cast(param, JSONB) if _is_json(column) and dialect == "postgresql" else param
+    return table.insert().values(values)
+
+
 def _digest(connection, table, columns):
     digest = hashlib.sha256()
     count = 0
     # Database locale must not change the canonical row order across backends.
     collation = "BINARY" if connection.dialect.name == "sqlite" else "C"
-    query = select(*columns).order_by(
+    query = select(*_raw(columns)).order_by(
         *(column.collate(collation) for column in table.primary_key))
     for row in connection.execute(query).mappings():
-        encoded = _encode(dict(row)).encode()
+        encoded = _encode(_exact(row, columns)).encode()
         digest.update(len(encoded).to_bytes(8, "big"))
         digest.update(encoded)
         count += 1
@@ -129,14 +164,16 @@ def copy_database(source_url, target_url, *, dry_run=False, _target_backend="pos
                 _empty(connection)
                 for table in tables:
                     columns = [column for column in table.columns if column.name != "seq"]
-                    query = select(*columns)
+                    query = select(*_raw(columns))
                     if "seq" in table.c:
                         query = query.order_by(insertion_order(table))
                     else:
                         query = query.order_by(*table.primary_key)
                     rows = source_connection.execute(query).mappings()
+                    insert = _insert(table, columns, connection.dialect.name)
                     while batch := rows.fetchmany(500):
-                        connection.execute(table.insert(), [dict(row) for row in batch])
+                        connection.execute(insert, [{"p_" + key: value for key, value in row.items()}
+                                                    for row in batch])
                     if _digest(source_connection, table, columns) != _digest(connection, table, columns):
                         raise CopyRefused("Copy verification failed")
             return counts

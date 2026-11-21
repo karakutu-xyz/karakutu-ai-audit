@@ -166,3 +166,34 @@ def test_copy_verifies_rows_with_exponent_numbers(tmp_path, database_url):
     store.close()
     counts = copy.copy_database(url, database_url, _target_backend=backend(database_url))
     assert counts["runs"] == 1
+
+
+def test_copy_keeps_json_numbers_exact(tmp_path, database_url):
+    """Numbers that a float cannot hold survive the copy and its verification exactly."""
+    import json as json_module
+    from sqlalchemy import Text, cast, text
+    from audit.db import Run
+    url = f"sqlite:///{tmp_path / 'exact.sqlite3'}"
+    store = Store(url)
+    workflow(store)
+    run = create(store)
+    store.close()
+    raw = '{"verdict":"INCONCLUSIVE","a":0.10000000000000001,"b":1e-400,"c":9007199254740993}'
+    from sqlalchemy import create_engine
+    engine = create_engine(url)
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE runs SET output = :raw WHERE id = :id"),
+                           {"raw": raw, "id": run["id"]})
+    engine.dispose()
+    copy.copy_database(url, database_url, _target_backend=backend(database_url))
+    target = Store(database_url)
+    try:
+        with target.engine.connect() as connection:
+            stored = connection.execute(select(cast(Run.output, Text)).where(
+                Run.id == run["id"])).scalar_one()
+    finally:
+        target.close()
+    exact = json_module.loads(stored, parse_float=Decimal)
+    assert exact["a"] == Decimal("0.10000000000000001")
+    assert exact["b"] == Decimal("1e-400")
+    assert exact["c"] == 9007199254740993
