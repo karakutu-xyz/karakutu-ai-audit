@@ -2,6 +2,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -12,21 +13,27 @@ spec.loader.exec_module(deps)
 
 LOCK = {
     "": {"name": "fictional-web", "dependencies": {"fictional-dep": "^1.0.0"}},
-    "node_modules/fictional-dep": {"version": "1.0.0", "integrity": "sha512-fictional"},
+    "node_modules/fictional-dep": {"version": "1.0.0"},
+    "node_modules/fictional-dep/node_modules/fictional-nested": {"version": "3.0.0"},
+    "node_modules/@fictional/scoped": {"version": "4.0.0"},
     "node_modules/fictional-native-other-os": {"version": "2.0.0", "optional": True},
     "node_modules/fictional-dev-native": {"version": "2.0.0", "devOptional": True},
-    "../fictional-workspace": {"link": True},
+    "node_modules/fictional-linked": {"resolved": "packages/linked", "link": True},
+    "packages/linked": {"version": "0.0.0"},
 }
-INSTALLED = {key: value for key, value in LOCK.items()
-             if key in ("node_modules/fictional-dep",)}
+INSTALLED = {
+    "node_modules/fictional-dep": "1.0.0",
+    "node_modules/fictional-dep/node_modules/fictional-nested": "3.0.0",
+    "node_modules/@fictional/scoped": "4.0.0",
+}
 
 
-def write(web: Path, lock=LOCK, installed=INSTALLED):
-    (web / "node_modules").mkdir(parents=True, exist_ok=True)
-    (web / "package-lock.json").write_text(json.dumps({"lockfileVersion": 3, "packages": lock}))
-    if installed is not None:
-        (web / "node_modules/.package-lock.json").write_text(
-            json.dumps({"lockfileVersion": 3, "packages": installed}))
+def write(web: Path, installed=INSTALLED):
+    web.mkdir(parents=True, exist_ok=True)
+    (web / "package-lock.json").write_text(json.dumps({"lockfileVersion": 3, "packages": LOCK}))
+    for path, version in installed.items():
+        (web / path).mkdir(parents=True, exist_ok=True)
+        (web / path / "package.json").write_text(json.dumps({"version": version}))
 
 
 def test_current_install_passes_with_absent_optional_packages(tmp_path):
@@ -34,21 +41,26 @@ def test_current_install_passes_with_absent_optional_packages(tmp_path):
     assert deps.web_current(tmp_path)
 
 
-@pytest.mark.parametrize("installed", [
-    None,  # never installed, or installed before npm kept a record
-    {},  # a lockfile package is missing
-    {"node_modules/fictional-dep": {"version": "0.9.0", "integrity": "sha512-fictional"}},
-    {"node_modules/fictional-dep": {"version": "1.0.0", "integrity": "sha512-other"}},
-    {"node_modules/fictional-dep": "not an entry"},
-])
-def test_missing_or_older_install_is_stale(tmp_path, installed):
-    write(tmp_path, installed=installed)
+def test_a_present_optional_package_must_match(tmp_path):
+    write(tmp_path, {**INSTALLED, "node_modules/fictional-native-other-os": "1.9.0"})
     assert not deps.web_current(tmp_path)
 
 
-def test_unreadable_lockfiles_are_stale(tmp_path):
+@pytest.mark.parametrize("missing", sorted(INSTALLED))
+def test_a_missing_package_folder_is_stale(tmp_path, missing):
+    # For example an interrupted install, or a folder deleted after npm recorded it.
+    write(tmp_path, {k: v for k, v in INSTALLED.items() if k != missing})
+    assert not deps.web_current(tmp_path)
+
+
+def test_an_older_installed_version_is_stale(tmp_path):
+    write(tmp_path, {**INSTALLED, "node_modules/@fictional/scoped": "3.9.0"})
+    assert not deps.web_current(tmp_path)
+
+
+def test_unreadable_files_are_stale(tmp_path):
     write(tmp_path)
-    (tmp_path / "node_modules/.package-lock.json").write_text("{not json")
+    (tmp_path / "node_modules/fictional-dep/package.json").write_text("{not json")
     assert not deps.web_current(tmp_path)
     assert not deps.web_current(tmp_path / "absent")
 
@@ -58,16 +70,20 @@ def test_missing_uv_names_the_guide(tmp_path, monkeypatch):
     assert deps.python_problem(tmp_path) == deps.NO_UV_HINT
 
 
-@pytest.mark.parametrize("code, expected", [(0, None), (1, "uv sync --frozen")])
-def test_python_check_is_offline_and_reports_the_command(tmp_path, monkeypatch, code, expected):
+@pytest.mark.parametrize("code, expected", [(0, None), (1, deps.PYTHON_HINT),
+                                            ("timeout", deps.UV_TIMEOUT_HINT)])
+def test_python_check_is_offline_bounded_and_names_the_command(tmp_path, monkeypatch,
+                                                                code, expected):
     seen = []
 
     def run(args, **kwargs):
-        seen.append(args)
+        seen.append((args, kwargs["timeout"]))
+        if code == "timeout":
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
         return type("Done", (), {"returncode": code})()
 
     monkeypatch.setattr(deps.shutil, "which", lambda name: "/fictional/uv")
     monkeypatch.setattr(deps.subprocess, "run", run)
-    hint = deps.python_problem(tmp_path)
-    assert seen == [["/fictional/uv", "sync", "--frozen", "--check", "--offline", "--quiet"]]
-    assert (hint is None) if expected is None else (expected in hint)
+    assert deps.python_problem(tmp_path) == expected
+    assert seen == [(["/fictional/uv", "sync", "--frozen", "--check", "--offline", "--quiet"],
+                     deps.UV_TIMEOUT_SECONDS)]

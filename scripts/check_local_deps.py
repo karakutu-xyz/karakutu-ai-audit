@@ -13,40 +13,43 @@ import sys
 WEB_HINT = "Web dependencies are missing or out of date; run: npm --prefix web ci"
 PYTHON_HINT = "Python dependencies are missing or out of date; run: uv sync --frozen"
 NO_UV_HINT = "uv is not installed; see docs/getting-started.md"
-# Fields that identify an installed package; any difference means a different install.
-IDENTITY = ("version", "resolved", "integrity")
+UV_TIMEOUT_SECONDS = 60
+UV_TIMEOUT_HINT = (f"uv did not answer within {UV_TIMEOUT_SECONDS} s (another uv command may "
+                   "hold the environment); finish it, or run: uv sync --frozen")
 
 
-def _packages(path: Path) -> dict | None:
+def _json(path: Path) -> dict | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError):
         return None
-    packages = data.get("packages") if isinstance(data, dict) else None
-    return packages if isinstance(packages, dict) else None
+    return data if isinstance(data, dict) else None
 
 
 def web_current(web: Path) -> bool:
-    """Compare the committed lockfile with npm's record of what it installed.
+    """Compare the committed lockfile with the packages actually on disk.
 
-    npm writes `node_modules/.package-lock.json` after every install. A package in the
-    lockfile that is not installed, or installed at another version, means the install
-    predates the lockfile. Optional packages may be absent (other platforms).
+    Every package the lockfile places under `node_modules/` must be there with the locked
+    version. Optional packages may be absent (built for other platforms), but one that is
+    present must match too. Reading each package folder, not npm's own install record,
+    also catches an interrupted install or a deleted folder.
     """
-    wanted = _packages(web / "package-lock.json")
-    installed = _packages(web / "node_modules" / ".package-lock.json")
-    if wanted is None or installed is None:
+    lock = _json(web / "package-lock.json")
+    packages = lock.get("packages") if lock else None
+    if not isinstance(packages, dict):
         return False
-    for name, entry in wanted.items():
-        if not name or not isinstance(entry, dict) or entry.get("link"):
+    for path, entry in packages.items():
+        # The root ("") and workspace sources are not installed copies; links point elsewhere.
+        if not path.startswith("node_modules/") and "/node_modules/" not in path:
             continue
-        have = installed.get(name)
-        if have is None:
+        if not isinstance(entry, dict) or entry.get("link"):
+            continue
+        installed = _json(web / path / "package.json")
+        if installed is None:
             if entry.get("optional") or entry.get("devOptional"):
                 continue
             return False
-        if not isinstance(have, dict) or any(
-                key in entry and have.get(key) != entry[key] for key in IDENTITY):
+        if "version" in entry and installed.get("version") != entry["version"]:
             return False
     return True
 
@@ -56,11 +59,14 @@ def python_problem(repo: Path) -> str | None:
     uv = shutil.which("uv")
     if uv is None:
         return NO_UV_HINT
-    result = subprocess.run(
-        [uv, "sync", "--frozen", "--check", "--offline", "--quiet"],
-        cwd=repo, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL, check=False,
-    )
+    try:
+        result = subprocess.run(
+            [uv, "sync", "--frozen", "--check", "--offline", "--quiet"],
+            cwd=repo, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, check=False, timeout=UV_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return UV_TIMEOUT_HINT
     return None if result.returncode == 0 else PYTHON_HINT
 
 

@@ -148,9 +148,9 @@ after restart. `make env API_TOKEN=1` never rotates an existing file.
   caller already set, even to an empty value, wins over the file: for example
   `RUN_MODE=test make dev`, `RUN_MODE=live make dev` or
   `KARAKUTU_API_PORT=3300 make dev`. It checks required names offline, then that the
-  web and Python installs match their lockfiles (`scripts/check_local_deps.py`: npm's
-  `node_modules/.package-lock.json` against `web/package-lock.json`, and
-  `uv sync --frozen --check --offline`); a stale install stops it with the install
+  web and Python installs match their lockfiles (`scripts/check_local_deps.py`: each package
+  folder's version against `web/package-lock.json`, and
+  `uv sync --frozen --check --offline` with a 60 s limit); a stale install stops it with the install
   command. It starts bundled search only for live + searxng, and runs one loopback
   API and Vite. Ctrl-C
   terminates its children and stops bundled search; do not share those services

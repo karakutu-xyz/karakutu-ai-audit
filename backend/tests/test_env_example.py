@@ -325,13 +325,12 @@ def runner_repo(tmp_path):
     for name in ("run-local.sh", "env_requirements.py", "check_local_deps.py"):
         shutil.copy2(SCRIPTS / name, repo / "scripts" / name)
     shutil.copy2(ROOT / ".env.example", repo / ".env.example")
-    lock = json.dumps({"lockfileVersion": 3, "packages": {
+    (repo / "web/node_modules/fictional-dep").mkdir(parents=True)
+    (repo / "web/package-lock.json").write_text(json.dumps({"lockfileVersion": 3, "packages": {
         "": {"name": "fictional-web"},
         "node_modules/fictional-dep": {"version": "1.0.0"},
-    }})
-    (repo / "web/node_modules").mkdir(parents=True)
-    (repo / "web/package-lock.json").write_text(lock)
-    (repo / "web/node_modules/.package-lock.json").write_text(lock)
+    }}))
+    (repo / "web/node_modules/fictional-dep/package.json").write_text('{"version": "1.0.0"}')
     bin_dir.mkdir()
     (bin_dir / "uv").write_text(FAKE_UV_SYNC)
     (bin_dir / "uv").chmod(0o700)
@@ -356,7 +355,7 @@ def test_runner_stops_on_a_stale_web_install_with_the_command(tmp_path):
     result = runner(tmp_path, "RUN_MODE=test\n")
     assert result.returncode == 0, result.stderr
     assert "dependencies" not in result.stdout + result.stderr  # Quiet when current.
-    installed = tmp_path / "repo/web/node_modules/.package-lock.json"
+    installed = tmp_path / "repo/web/node_modules/fictional-dep/package.json"
     installed.write_text(installed.read_text().replace("1.0.0", "0.9.0"))
     result = runner(tmp_path)
     assert result.returncode != 0
