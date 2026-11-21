@@ -39,13 +39,19 @@ def _skipped(stage: StageName, reason: str) -> StageResult:
     )
 
 
-def _stage_failed(stage: StageName) -> StageResult:
-    """A non-skipped stage that did not complete (the model failed)."""
+MODEL_FAILED = "the analysis model failed"
+STOPPED = "the audit was stopped"
+UNEXPECTED_ERROR = "an unexpected error stopped this step"
+
+
+def _stage_failed(stage: StageName, reason: str = MODEL_FAILED) -> StageResult:
+    """A non-skipped stage that did not complete. The reason defaults to a model failure;
+    a stop or an unexpected error must say so instead of blaming the model."""
     return StageResult(
         stage=stage,
         outcome=StageOutcome.INCONCLUSIVE,
         confidence=None,
-        explanation="Stage did not complete: the analysis model failed.",
+        explanation=f"Stage did not complete: {reason}.",
         skipped=False,
     )
 
