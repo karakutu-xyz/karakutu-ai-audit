@@ -201,3 +201,30 @@ def test_store_reports_demo_data_on_any_backend(database_url):
         assert store.has_demo_data() is True
     finally:
         store.close()
+
+
+def test_long_urls_are_stored_and_unique_on_any_backend(database_url):
+    """A URL near the 4,096-character limit must not hit a B-tree entry-size limit."""
+    import secrets
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.orm import Session
+    from audit.db import ArticleRow, Store, article_values
+    from test_db import workflow
+    url = "https://paper.example/" + secrets.token_hex(2030)  # incompressible, about 4 KB
+    store = Store(database_url)
+    try:
+        workflow(store)
+        payload = {"removed_article": {"url": url, "title": "Fictional long URL",
+                                       "content": "Fictional content."}}
+        first = store.create_run(workflow_id="wf_test", category="benchmark",
+                                 origin="benchmark", input=payload)
+        second = store.create_run(workflow_id="wf_test", category="benchmark",
+                                  origin="benchmark", input=payload)
+        assert first["article_ref"] == second["article_ref"]
+        assert store.articles()["total"] == 1
+        with pytest.raises(IntegrityError), Session(store.engine) as session, session.begin():
+            duplicate = article_values({"url": url, "title": "Duplicate", "content": "x"}, "live")
+            duplicate["ref"] = "u-fictional-duplicate"
+            session.add(ArticleRow(**duplicate))
+    finally:
+        store.close()

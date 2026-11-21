@@ -113,11 +113,20 @@ class Workflow(Base):
 
 class ArticleRow(Base):
     __tablename__ = "articles"
-    __table_args__ = (Index("uq_articles_archive_id", "archive_id", unique=True,
-                           sqlite_where=literal_column("archive_id IS NOT NULL"),
-                           postgresql_where=literal_column("archive_id IS NOT NULL")),)
+    __table_args__ = (
+        Index("uq_articles_archive_id", "archive_id", unique=True,
+              sqlite_where=literal_column("archive_id IS NOT NULL"),
+              postgresql_where=literal_column("archive_id IS NOT NULL")),
+        # URL identity. SQLite indexes the full text, as before. A PostgreSQL B-tree entry
+        # is limited to about a third of a page, so a long (allowed) URL would fail there:
+        # uniqueness uses md5(url) and equality lookups a hash index, neither size-limited.
+        Index("ix_articles_url", "url", unique=True).ddl_if(dialect="sqlite"),
+        Index("uq_articles_url_md5", func.md5(literal_column("url")),
+              unique=True).ddl_if(dialect="postgresql"),
+        Index("ix_articles_url_hash", "url", postgresql_using="hash").ddl_if(dialect="postgresql"),
+    )
     ref: Mapped[str] = mapped_column(Text, primary_key=True)
-    url: Mapped[str] = mapped_column(Text, unique=True, index=True)
+    url: Mapped[str] = mapped_column(Text)
     title: Mapped[str] = mapped_column(Text)
     search_text: Mapped[str] = mapped_column(Text)
     source: Mapped[str | None] = mapped_column(Text, nullable=True)

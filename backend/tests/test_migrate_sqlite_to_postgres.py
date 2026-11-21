@@ -133,3 +133,23 @@ def test_refuses_demo_or_test_source(tmp_path, database_url, capsys, name, demo)
         copy.copy_database(url, database_url, _target_backend=backend(database_url))
     assert copy.main([url, "postgresql+psycopg://audit:fictional@db.example.invalid/audit"]) == 1
     assert "Demo or test databases are never copied" in capsys.readouterr().err
+
+
+def test_hash_treats_equal_json_numbers_alike():
+    """PostgreSQL JSONB rewrites 1e20 as 100000000000000000000; both must hash equally."""
+    assert copy._canonical({"n": 1e20}) == copy._canonical({"n": 100000000000000000000})
+    assert copy._canonical([1.5, 2.0, True, None]) == copy._canonical([1.50, 2, True, None])
+    assert copy._canonical(0.1) != copy._canonical(0.2)
+    assert copy._canonical(True) is True
+
+
+def test_copy_verifies_rows_with_exponent_numbers(tmp_path, database_url):
+    url = f"sqlite:///{tmp_path / 'numbers.sqlite3'}"
+    store = Store(url)
+    workflow(store)
+    run = create(store)
+    store.complete_run(run["id"], {"response": {"verdict": "INCONCLUSIVE", "score": 1e20},
+                                   "steps": [{"name": "fictional", "value": 2.5e-7}]})
+    store.close()
+    counts = copy.copy_database(url, database_url, _target_backend=backend(database_url))
+    assert counts["runs"] == 1

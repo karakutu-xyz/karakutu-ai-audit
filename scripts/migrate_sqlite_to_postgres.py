@@ -3,8 +3,10 @@
 Only counts are printed. Stop the API and take a backup before invoking this tool.
 """
 import argparse
+from decimal import Decimal
 import hashlib
 import json
+import math
 from pathlib import Path
 import sys
 
@@ -29,6 +31,26 @@ def _empty(connection):
             raise CopyRefused("Target database is not empty")
 
 
+def _canonical(value):
+    """Backend-neutral value for hashing: equal JSON numbers hash equally.
+
+    PostgreSQL JSONB rewrites numbers (`1e20` comes back as `100000000000000000000`),
+    so every number becomes its normalized decimal text before hashing."""
+    if isinstance(value, bool) or value is None or isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, Decimal)):
+        if isinstance(value, float) and not math.isfinite(value):
+            raise CopyRefused("Non-finite number in stored data")
+        number = Decimal(repr(value)) if isinstance(value, float) else Decimal(value)
+        return {"$number": format(number.normalize(), "f") if number == number.to_integral()
+                else str(number.normalize())}
+    if isinstance(value, dict):
+        return {key: _canonical(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_canonical(item) for item in value]
+    return value
+
+
 def _digest(connection, table, columns):
     digest = hashlib.sha256()
     count = 0
@@ -37,7 +59,7 @@ def _digest(connection, table, columns):
     query = select(*columns).order_by(
         *(column.collate(collation) for column in table.primary_key))
     for row in connection.execute(query).mappings():
-        encoded = json.dumps(dict(row), sort_keys=True, ensure_ascii=True,
+        encoded = json.dumps(_canonical(dict(row)), sort_keys=True, ensure_ascii=True,
                              separators=(",", ":"), allow_nan=False).encode()
         digest.update(len(encoded).to_bytes(8, "big"))
         digest.update(encoded)
