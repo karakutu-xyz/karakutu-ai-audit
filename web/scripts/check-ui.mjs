@@ -561,6 +561,11 @@ test("article plain text preserves text and converts archive markup for display"
     ["<table><tr><td>12</td><td>34</td></tr><tr><th>5</th><td>6</td></tr>" +
       "</table>", "12 34\n5 6"],
     ["<p>First<p>Second<div>Third</div>Fourth", "First\nSecond\nThird\nFourth"],
+    ["<p>&ldquo;Fiction&rdquo; &mdash; caf&eacute; &hellip; &copy;</p>",
+      "“Fiction” — café … ©"],
+    ["<p>&Ccedil;&scedil;&inodot;&gbreve;&Idot; &iexcl;&yuml; &AMP;</p>",
+      "Çşığİ ¡ÿ &"],
+    ["<p>&unknown; &EACUTE; &Eacute;</p>", "&unknown; &EACUTE; É"],
     ["<P>UPPERCASE<BR>Text</P>", "UPPERCASE\nText"],
     ["<svg/><p>Visible</p>", "Visible"],
     ["<p>First</p><hr><p>Second</p>", "First\n\nSecond"],
