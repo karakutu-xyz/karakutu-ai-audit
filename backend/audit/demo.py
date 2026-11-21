@@ -448,7 +448,7 @@ def _execute(article: Article, mode: str, prompt_texts: dict[str, str]):
         return t, pipeline._audit_failed("The relevance model failed.", stages=t.stages, classification=None)
     rr = _related(t, mode in ("censorship", "kept_in_scope"), relevant)
     if mode == "low_interest":
-        t.skip_rest("relevance failed")
+        t.skip_rest("the article was judged of low public interest")
         cls = t.state["classification"]
         findings = f"Removed article judged not of public interest: {rel.reasoning} " + related_removals.describe(rr)
         return t, AuditResponse(verdict=Verdict.LIKELY_LOW_PUBLIC_INTEREST, stages=t.stages,
