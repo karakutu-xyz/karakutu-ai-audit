@@ -103,6 +103,7 @@ export function RunsPage({
     ? query.get("status")!
     : "";
   const workflow = query.get("workflow_id") ?? "";
+  const filtered = !!((!benchmark && origin) || verdict || status || workflow);
   const parsedOffset = Number(query.get("offset") ?? 0);
   const offset =
     !epochChanged && Number.isSafeInteger(parsedOffset) && parsedOffset > 0
@@ -255,9 +256,14 @@ export function RunsPage({
         <Loading>Loading runs…</Loading>
       ) : data && (
         !runs.length ? (
-          <EmptyState title="No runs match these filters">
-            <p>Adjust the filters, or create a case from Benchmarks.</p>
-            <Link href="/benchmarks">Open Benchmarks</Link>
+          <EmptyState title={filtered
+            ? "No runs match these filters" : "No runs yet"}>
+            <p>{filtered
+              ? "Adjust the filters, or create a case from Benchmarks."
+              : benchmark
+                ? "Choose New benchmark run to submit a controlled case."
+                : "Create a case from Benchmarks."}</p>
+            {!benchmark && <Link href="/benchmarks">Open Benchmarks</Link>}
           </EmptyState>
         ) : (
           <div

@@ -98,6 +98,19 @@ related-removals steps have no archive evidence and classification has no topic 
 audit still runs. Live ingestion (`POST /api/audit` and the webhook) stays off until you set
 `LIVE_INGESTION_ENABLED=true` and an `API_AUTH_TOKEN` of at least 32 characters.
 
+A fresh live database has no articles. To list removed articles from the archive, run
+**Import Articles** (`POST /api/articles/import?days=30`, 1 to 90 days) from
+http://localhost:2200/docs. It only reads the archive and stores titles and links locally; an
+article's text and removal date are read when you first open it. Auditing an imported article
+(**Run first audit** or **Re-run audit**) is a live run, so it needs the same
+`LIVE_INGESTION_ENABLED=true` and `API_AUTH_TOKEN` as live ingestion; without them, use
+benchmarks.
+
+If the archive needs read authentication, `ARCHIVE_WALLET_PATH` must be a path the API process
+can open. `make live` does not mount files from your machine into the container, so a host
+keyfile path makes every archive read fail and import answers `archive_unavailable`. Use
+`RUN_MODE=live make dev` for archive reads with a keyfile.
+
 ### Your first review
 
 1. Open **Benchmarks** and choose **New benchmark run**. Paste an article URL, title and text,

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ArticleDetail } from "../../types";
-import { articleDate } from "../../format";
+import { articleDate, articlePlainText } from "../../format";
 import { record } from "../steps/evidenceSummary";
 
 export function ArticleText({ article }: { article: ArticleDetail }) {
@@ -28,7 +28,7 @@ export function ArticleText({ article }: { article: ArticleDetail }) {
       <div id="removed-text"
         className={`removed-text${expanded ? " expanded" : ""}`}>
         <div ref={text} className="removed-text-body">
-          {article.content || "No article text is stored yet."}
+          {articlePlainText(article.content) || "No article text is stored yet."}
         </div>
       </div>
       {long && <button className="text-button" type="button"

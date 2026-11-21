@@ -77,6 +77,39 @@ export function articleDate(value: string | number | null) {
   );
 }
 
+// Presentation only: saved article content and audit inputs stay unchanged.
+export function articlePlainText(value: string): string {
+  if (!/<[a-z][\w:-]*\b/i.test(value)) return value;
+  const entities: Record<string, string> = {
+    amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", nbsp: " ",
+  };
+  return value
+    .replace(/<(script|style|svg|noscript)\b[^>]*\/>/gi, "")
+    .replace(
+      /<(script|style|svg|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi,
+      "",
+    )
+    .replace(/<\/\s*(p|div|li|h[1-6])\s*>|<br\b[^>]*>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(
+      /&(amp|lt|gt|quot|#39|nbsp|#\d+|#x[\da-f]+);/gi,
+      (entity, name: string) => {
+        const key = name.toLowerCase();
+        if (entities[key] !== undefined) return entities[key];
+        const hex = key.startsWith("#x");
+        const code = Number.parseInt(key.slice(hex ? 2 : 1), hex ? 16 : 10);
+        return code >= 0 && code <= 0x10ffff &&
+          !(code >= 0xd800 && code <= 0xdfff)
+          ? String.fromCodePoint(code) : entity;
+      },
+    )
+    .split(/\r\n?|\n/)
+    .map((line) => line.trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export function shortWorkflow(id: string) {
   return id.length > 15 ? `${id.slice(0, 15)}…` : id;
 }

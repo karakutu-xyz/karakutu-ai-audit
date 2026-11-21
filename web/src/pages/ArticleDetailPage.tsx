@@ -25,6 +25,8 @@ export function ArticleDetailPage({ articleRef }: { articleRef: string }) {
   const run = detail.data?.id === latest?.id ? detail.data : null;
   const summary = run?.summary ?? latest?.summary;
   const running = !!latest && pending(run?.status ?? latest.status);
+  const liveAuditsOff = service?.mode === "live" &&
+    article?.category === "live" && !service.live_ingestion_enabled;
   const recorded = run?.steps.length ?? summary?.steps.filter(
     (step) => !["pending", "running"].includes(step.status),
   ).length ?? 0;
@@ -56,7 +58,7 @@ export function ArticleDetailPage({ articleRef }: { articleRef: string }) {
     ? backState : "/articles";
 
   async function startAudit() {
-    if (!article || submitting || running) return;
+    if (!article || submitting || running || liveAuditsOff) return;
     controller.current?.abort();
     const current = new AbortController();
     controller.current = current;
@@ -175,11 +177,16 @@ export function ArticleDetailPage({ articleRef }: { articleRef: string }) {
               </> },
             ]} />
             <button className="button primary article-audit-button"
-              disabled={running || submitting} onClick={startAudit}>
+              disabled={running || submitting || liveAuditsOff}
+              aria-describedby={liveAuditsOff ? "live-audit-help" : undefined}
+              onClick={startAudit}>
               {running ? `Audit running · step ${progress} of 6`
                 : submitting ? "Starting audit…"
                   : latest ? "Re-run audit" : "Run first audit"}
             </button>
+            {liveAuditsOff && <p className="help" id="live-audit-help">
+              Live audits are switched off on this server.
+            </p>}
             {running && latest && (
               <StopRunButton
                 key={`${epoch}:${latest.id}`}

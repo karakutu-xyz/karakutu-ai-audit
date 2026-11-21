@@ -485,7 +485,7 @@ test("empty, loading and authentication failures provide readable next steps", (
     error: "",
     refresh() {},
   };
-  assert.ok(render(RunsPage).includes("No runs match these filters"));
+  assert.ok(render(RunsPage).includes("No runs yet"));
   runsState = {
     data: null,
     loading: false,
@@ -497,7 +497,63 @@ test("empty, loading and authentication failures provide readable next steps", (
   assert.ok(html.includes("Try again"));
 });
 
+test("empty run ledgers distinguish filters and avoid benchmark self-links", () => {
+  const { RunsPage } = load(path.join(root, "pages/RunsPage.tsx"));
+  runsState = {
+    data: { items: [], total: 0 }, loading: false, error: "", refresh() {},
+  };
+  for (const benchmark of [false, true]) {
+    const page = benchmark ? "benchmarks" : "runs";
+    visit(`https://workbench.invalid/${page}`);
+    let html = render(RunsPage, { benchmark });
+    assert.ok(html.includes("No runs yet"));
+    assert.ok(!html.includes("No runs match these filters"));
+    assert.equal(html.includes('href="/benchmarks"'), !benchmark);
+    assert.ok(html.includes(benchmark
+      ? "Choose New benchmark run to submit a controlled case."
+      : "Create a case from Benchmarks."));
+    const filters = ["status=failed", "verdict=INCONCLUSIVE", "workflow_id=wf_fake"];
+    if (!benchmark) filters.push("origin=live", "origin=article");
+    for (const filter of filters) {
+      visit(`https://workbench.invalid/${page}?${filter}`);
+      html = render(RunsPage, { benchmark });
+      assert.ok(html.includes("No runs match these filters"));
+      assert.ok(html.includes("Adjust the filters, or create a case from Benchmarks."));
+      assert.equal(html.includes('href="/benchmarks"'), !benchmark);
+    }
+  }
+});
+
 const format = load(path.join(root, "format.ts"));
+
+test("article plain text preserves text and converts archive markup for display", () => {
+  for (const plain of ["", "  Fictional text\n\n  unchanged.  ",
+    "A &amp; B; 2 < 3; &#123;"]) {
+    assert.equal(format.articlePlainText(plain), plain);
+  }
+  assert.equal(format.articlePlainText(
+    "<h2> Heading </h2><p> First <em>paragraph</em>. </p>" +
+    "<div>Second<br>line<br/>third<BR />fourth</div><ul><li>Item</li></ul>" +
+    "<p> </p>\n\n\n<p> Last </p>",
+  ), "Heading\nFirst paragraph.\nSecond\nline\nthird\nfourth\nItem\n\nLast");
+  assert.equal(format.articlePlainText(
+    "<p>&amp; &lt; &gt; &quot; &#39; &nbsp; &#123; &#x1F600; &#X41;</p>",
+  ), '& < > " \'   { 😀 A');
+  assert.equal(format.articlePlainText(
+    "<p>Before</p><SCRIPT>hidden\nscript</SCRIPT>" +
+    "<style>hidden style</style><svg><text>hidden vector</text></svg>" +
+    '<noscript>hidden fallback</noscript><svg /><p>After &lt;b&gt;</p>',
+  ), "Before\nAfter <b>");
+  assert.equal(format.articlePlainText(
+    "<p>&#1114112; &#xD800; &amp;lt;</p>",
+  ), "&#1114112; &#xD800; &lt;");
+  const { ArticleText } = load(path.join(root, "features/articles/ArticleText.tsx"));
+  const article = fictionalArticle({ content: "<p>First &amp; safe</p><p>Second</p>" });
+  const html = render(ArticleText, { article });
+  assert.ok(html.includes("First &amp; safe\nSecond"));
+  assert.ok(!html.includes("&lt;p&gt;"));
+  assert.equal(article.content, "<p>First &amp; safe</p><p>Second</p>");
+});
 
 test("shared duration formatting covers seconds, minutes and pending runs", () => {
   for (const [ms, expected] of [
@@ -1531,7 +1587,7 @@ function fictionalStory(overrides = {}) {
 function articleDetailHarness(initial = fictionalArticle()) {
   const runtime = hookRuntime();
   const api = { token: "", epoch: 0, articlesCache: new Map(),
-    status: { mode: "live", live_ingestion_enabled: false } };
+    status: { mode: "live", live_ingestion_enabled: true } };
   let article = initial;
   let run = null;
   let tree;
@@ -1859,6 +1915,34 @@ test("article rail offers Stop audit only while the latest audit is queued or ru
   }
 });
 
+test("article audits respect the live gate while test and benchmark audits stay enabled", () => {
+  const harness = articleDetailHarness();
+  const message = "Live audits are switched off on this server.";
+  for (const [mode, category, enabled, disabled] of [
+    ["live", "live", false, true],
+    ["live", "live", true, false],
+    ["test", "live", false, false],
+    ["live", "benchmark", false, false],
+  ]) {
+    harness.api.status = { mode, live_ingestion_enabled: enabled };
+    harness.setArticle(fictionalArticle({ category }));
+    const html = harness.render();
+    const button = html.match(/<button[^>]*article-audit-button[^>]*>/)?.[0];
+    assert.ok(button);
+    assert.equal(button.includes('disabled=""'), disabled);
+    assert.equal(html.includes(message), disabled);
+    assert.equal(button.includes('aria-describedby="live-audit-help"'), disabled);
+    if (disabled) {
+      harness.start();
+      assert.equal(harness.requests.length, 0);
+      assert.equal(harness.client.articleAuditError(
+        new harness.client.ApiError(404), true,
+      ), message);
+    }
+  }
+  harness.unmount();
+});
+
 test("audit story numbers evidence footnotes from 1 across steps", () => {
   const { AuditStory } = load(path.join(root, "features/steps/AuditStory.tsx"));
   const summary = fictionalStory({ steps: [
@@ -1903,7 +1987,7 @@ for (const [status, message] of [
   [409, "An audit for this article is already running."],
   [401, "Check the API token in Connection settings"],
   [403, "Check the API token in Connection settings"],
-  [404, "Live audits are switched off on this server."],
+  [404, "This resource is unavailable. Refresh the list and try again."],
 ]) {
   test(`article POST ${status} shows a safe inline message`, async () => {
     const harness = articleDetailHarness();
