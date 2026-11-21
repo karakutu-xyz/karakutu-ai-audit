@@ -1641,6 +1641,21 @@ test("archive display skips hidden subtrees and preserves textarea text", () => 
     [...prose("a"), { text: "  x\n y", pre: true }, ...prose("b")]);
 });
 
+test("archive detection, leading noscript and block cells follow the review cases", () => {
+  const blocks = (content) => Array.from(
+    articleHtml.articleBlocks(content, true, articleParse) ?? [], (block) => ({ ...block }));
+  assert.deepEqual(blocks('<p title="a<b">visible'), prose("visible"));
+  assert.notEqual(articleHtml.articleBlocks('<img src="fictional.png">', true, articleParse), null);
+  assert.deepEqual(blocks('<img src="fictional.png">'), []);
+  assert.deepEqual(blocks("<noscript>hidden</noscript><p>shown</p>"), prose("shown"));
+  assert.deepEqual(blocks("<table><tr><td><p>a</p></td><td><p>b</p></td></tr></table>"),
+    prose("a", "b"));
+  assert.deepEqual(blocks("<table><tr><td>a</td><td><b>b</b></td></tr></table>"), prose("a · b"));
+  for (const plain of ["x<y and z>w", "x<p+1 and y>0", "x<b and y>0", "a <b c> d"]) {
+    assert.equal(articleHtml.looksLikeHtml(plain), false, plain);
+  }
+});
+
 test("archive formatting stops at the tag limit", () => {
   const limit = articleHtml.MAX_TAG_OPENINGS;
   const within = "<p>a</p>" + "<b>x</b>".repeat(limit - 1);
@@ -1675,11 +1690,11 @@ for (const [label, content, expected] of [
     // parse5 needs ~25 s for this depth, and the page never parses it (tag limit).
     const document = label === "50k div levels" ? deepDivs(50_000, "text") : null;
     const start = performance.now();
-    assert.equal(articleHtml.looksLikeHtml(content), label === "50k div levels");
-    if (label === "64k stray angle brackets") {
+    const stray = label === "64k stray angle brackets";
+    assert.equal(articleHtml.looksLikeHtml(content), !stray);
+    if (stray) {
       assert.equal(articleHtml.articleBlocks(content, true, articleParse), null);
-    }
-    if (label === "50k div levels") {
+    } else {
       // Past the tag limit the page shows raw text without asking the parser at all.
       assert.equal(articleHtml.articleBlocks(content, true, () => {
         throw new Error("parsed despite the tag limit");

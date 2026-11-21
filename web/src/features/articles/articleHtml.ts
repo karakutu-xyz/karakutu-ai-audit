@@ -10,10 +10,19 @@ export interface ParsedNode {
 export const browserParse = (html: string): ParsedNode =>
   new DOMParser().parseFromString(html, "text/html");
 
+// Element names that mark HTML when they appear as a bare tag, e.g. `<p>` or `<img/>`.
+const bareTags = "p|div|br|hr|img|span|a|b|i|em|strong|ul|ol|li|table|tr|td|th|h[1-6]|" +
+  "blockquote|figure|figcaption|section|article|header|footer|pre|code|script|style|svg";
+const bareTag = new RegExp(`<(?:${bareTags})[\\t\\n\\f\\r ]*\\/?>`, "i");
+
 export function looksLikeHtml(content: string): boolean {
-  // Detection only: the browser parser owns all HTML interpretation.
-  return /<!--|<\/[a-z][^<>]*>|<br[\t\n\f\r ]*\/?>/i.test(content) ||
-    /<(?:p|div)(?:\/?>|[\t\n\f\r ][^<>]*>)/i.test(content) ||
+  // Detection only: the browser parser owns all HTML interpretation. Plain text such as
+  // `x<b and y>0` never matches: a tag needs a closing form, no attributes, or an
+  // attribute with a quoted value (`<p title="…">`, `<img src="…">`).
+  return /<!--|<\/[a-z][^<>]*>/i.test(content) ||
+    bareTag.test(content) ||
+    /<[a-z][a-z0-9-]*[\t\n\f\r ]+[a-z_:][-a-z0-9_:.]*[\t\n\f\r ]*=[\t\n\f\r ]*["']/i
+      .test(content) ||
     /&(?:[a-z][a-z0-9]*|#[0-9]+|#x[0-9a-f]+);/i.test(content);
 }
 
@@ -45,7 +54,9 @@ export function htmlToBlocks(
   };
 
   // Entry/exit frames avoid recursion even for deeply nested parsed documents.
-  const stack = [{ node: parse(content), exit: false }];
+  // A leading <body> makes the parser start in body mode, so leading head-only content
+  // (e.g. <noscript> with scripting disabled) stays inside its element and stays hidden.
+  const stack = [{ node: parse("<body>" + content), exit: false }];
   while (stack.length) {
     const { node, exit } = stack.pop()!;
     if (node.nodeType === 3) {
@@ -71,7 +82,8 @@ export function htmlToBlocks(
     if (pre) preDepth++;
     if (name === "tr") rows.push(0);
     if (!preDepth && (name === "td" || name === "th") && rows.length) {
-      if (rows[rows.length - 1]++) parts.push(" · ");
+      // Separate cells inside one block only; block content in cells already splits.
+      if (rows[rows.length - 1]++ && parts.some((part) => part.trim())) parts.push(" · ");
     }
     if (name === "br") parts.push("\n");
     stack.push({ node, exit: true });
