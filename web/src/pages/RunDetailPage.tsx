@@ -5,6 +5,7 @@ import { Link, useScrollRestoration } from "../router";
 import {
   date,
   humanize,
+  DISCLAIMER,
   originLabel,
   pending,
   runDuration,
@@ -151,7 +152,7 @@ export function RunDetailPage({ id }: { id: string }) {
             </h2>
             {run.status !== "cancelled" && (
               <p className="verdict-note">
-                This is not a finding of censorship; a person decides.
+                {DISCLAIMER}
               </p>
             )}
             {run.status === "cancelled" ? (

@@ -35,9 +35,16 @@ export const runDuration = (run: RunSummary) =>
       ? "In progress"
       : "—";
 
+// Origin `article`: a first audit or a re-run started from an article view. The ledger, run
+// detail, article history and the Runs origin filter all use this one label.
+export const ARTICLE_ORIGIN_LABEL = "Article audit";
+
+// The one authored disclaimer for every verdict area (AGENTS.md).
+export const DISCLAIMER = "This is not a finding of censorship; a person decides.";
+
 export const originLabel = (run: Pick<RunSummary, "category" | "origin">) =>
   run.origin === "article"
-    ? "Manual audit"
+    ? ARTICLE_ORIGIN_LABEL
     : run.category === "benchmark"
       ? "Benchmark"
       : run.origin === "api"

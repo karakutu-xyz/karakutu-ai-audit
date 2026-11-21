@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Polish the review UI: origin `article` reads "Article audit" in the Runs ledger, run detail, article history and the Origin filter alike; article stories and run detail share one disclaimer, "This is not a finding of censorship; a person decides." (the API's `human_review_note` now uses that wording, so the workflow version changes; verdicts, prompts and thresholds do not); the Runs and Benchmarks tables fit a 1024px window without scrolling.
 - Add optional PostgreSQL storage, verified SQLite data copying and isolated database checks.
 
 - Add a Stop audit button to the article page's side rail while the latest audit is queued or running; after a stop the page shows the stopped run and reloads the article.

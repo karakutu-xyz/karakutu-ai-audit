@@ -273,8 +273,8 @@ into the summary. Step lines retain stored explanations (at most 500 characters,
 including an ellipsis when truncated), stored skip reasons, outcomes and execution
 status; a running audit marks the next unrecorded step running and subsequent steps
 pending. Queued runs have pending steps. Failed executions without a verdict receive
-the audit-failed story. Every substantive verdict says: "A person decides; this is
-not a finding of censorship." Failed/in-progress stories have no review note.
+the audit-failed story. Every substantive verdict says: "This is not a finding of
+censorship; a person decides." Failed/in-progress stories have no review note.
 Cancelled runs have verdict label "Stopped by a person" and headline "A person
 stopped this audit before it finished. This is not a result." Their verdict and
 human-review note are null, with no flag sentences. Reached steps retain their

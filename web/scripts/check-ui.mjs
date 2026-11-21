@@ -1545,7 +1545,7 @@ function fictionalStory(overrides = {}) {
     verdict: "INCONCLUSIVE", verdict_label: "Inconclusive",
     headline: "The audit could not establish what happened.",
     sentences: ["Fictional summary sentence."], failed_steps: [], skipped_steps: [],
-    human_review_note: "A person decides; this is not a finding of censorship.",
+    human_review_note: "This is not a finding of censorship; a person decides.",
     steps: [
       { name: "classification", title: "Classify", status: "completed",
         outcome: "pass", line: "Fictional stored explanation." },
@@ -1825,8 +1825,8 @@ test("article view shows first audit, re-run, running progress and one review no
   assert.ok(html.includes("Starts a new run; earlier runs stay in history."));
   assert.ok(html.includes("Skipped: fictional early stop."));
   assert.ok(html.includes("Fictional stored explanation."));
+  // The stored note is the one disclaimer: it appears once, never next to a second copy.
   assert.equal(html.split(summary.human_review_note).length - 1, 1);
-  assert.ok(!html.includes("This is not a finding of censorship; a person decides."));
   assert.ok(html.includes(`/runs/${latest.id}`));
   harness.setArticle(fictionalArticle({ runs: [{ ...latest,
     status: "running", summary: fictionalStory({ steps: [

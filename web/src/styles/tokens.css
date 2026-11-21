@@ -65,7 +65,8 @@
   --focus-offset: 4px;
   --content-width: 1240px;
   --measure: 72ch;
-  --ledger-width: 1080px;
+  /* Fits the content column of a 1024px window; narrower windows scroll the table. */
+  --ledger-width: 900px;
   --step-table-width: 900px;
   --article-column: 280px;
   --model-column: 200px;

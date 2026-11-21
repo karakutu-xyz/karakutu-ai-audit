@@ -33,13 +33,18 @@ table {
 }
 
 
+/* Sized so the longest verdict chip, the status chip with its stop control and the Reviews
+   heading fit at --ledger-width without spilling into the next column. */
 .ledger th:nth-child(1) {
-  width: 28%;
+  width: 25%;
 }
 
-.ledger th:nth-child(2),
-.ledger th:nth-child(6) {
+.ledger th:nth-child(2) {
   width: 10%;
+}
+
+.ledger th:nth-child(3) {
+  width: 20%;
 }
 
 /* Wide enough for the status chip and the row's stop control. */
@@ -47,16 +52,13 @@ table {
   width: 13%;
 }
 
-.ledger th:nth-child(3) {
-  width: 18%;
-}
-
 .ledger th:nth-child(5) {
   width: 14%;
 }
 
+.ledger th:nth-child(6),
 .ledger th:nth-child(7) {
-  width: 7%;
+  width: 9%;
 }
 
 thead {
