@@ -1,9 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ArticleDetail } from "../../types";
 import { articleDate } from "../../format";
 import { record } from "../steps/evidenceSummary";
+import { articleBlocks, browserParse } from "./articleHtml";
 
-export function ArticleText({ article }: { article: ArticleDetail }) {
+export function ArticleText({ article, parse = browserParse }: {
+  article: ArticleDetail;
+  parse?: typeof browserParse;
+}) {
+  const isArchive = !!article.archive_id || article.ref.startsWith("ka-");
+  const blocks = useMemo(() => articleBlocks(article.content, isArchive, parse),
+    [article.content, isArchive, parse]);
   const [expanded, setExpanded] = useState(false);
   const [long, setLong] = useState(false);
   const text = useRef<HTMLDivElement>(null);
@@ -18,7 +25,7 @@ export function ArticleText({ article }: { article: ArticleDetail }) {
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [article.content]);
+  }, [article.content, blocks]);
   const versions = Array.isArray(article.snapshot?.versions)
     ? article.snapshot.versions.map(record) : [];
   return (
@@ -28,7 +35,11 @@ export function ArticleText({ article }: { article: ArticleDetail }) {
       <div id="removed-text"
         className={`removed-text${expanded ? " expanded" : ""}`}>
         <div ref={text} className="removed-text-body">
-          {article.content || "No article text is stored yet."}
+          {!blocks ? article.content || "No article text is stored yet."
+            : blocks.length ? blocks.map((block, index) => block.pre
+              ? <pre key={index}>{block.text}</pre>
+              : <p key={index}>{block.text}</p>)
+              : "The stored article has no readable text."}
         </div>
       </div>
       {long && <button className="text-button" type="button"

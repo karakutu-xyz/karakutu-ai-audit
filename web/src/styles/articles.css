@@ -121,6 +121,20 @@
   display: block;
 }
 
+.removed-text-body > p,
+.removed-text-body > pre {
+  margin: 0;
+}
+
+.removed-text-body > :is(p, pre) + :is(p, pre) {
+  margin-top: var(--space-2);
+}
+
+.removed-text-body > pre {
+  white-space: pre-wrap;
+  line-height: inherit;
+}
+
 .article-history {
   padding: 0;
   margin: var(--space-2) 0;

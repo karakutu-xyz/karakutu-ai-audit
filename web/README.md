@@ -165,6 +165,7 @@ run detail links its title back when `article_ref` is present. Removed text is
 clamped to twelve rendered lines, with a toggle only when it overflows; snapshot
 versions show their saved titles and check dates. The rail follows the story
 below 1000px and sits beside it on wider screens.
+Archive HTML displays as readable text paragraphs; stored content, API responses and model inputs remain unchanged.
 
 Benchmark creation always posts to `/api/benchmarks/runs` and opens the new run.
 The synthetic-example button generates fictional content only when clicked.
