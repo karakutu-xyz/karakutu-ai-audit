@@ -511,18 +511,35 @@ def test_runner_terminates_children_using_only_fake_commands(tmp_path, search):
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
     env["RUNNER_TEST_EVENTS"] = str(events)
     repo, _ = runner_repo(tmp_path)
+    # Its own process group, so the test can always reap the runner and any fake it left.
     process = subprocess.Popen(["bash", str(repo / "scripts/run-local.sh"), "--env-file",
-                                str(env_path)], cwd=tmp_path, env=env,
+                                str(env_path)], cwd=tmp_path, env=env, start_new_session=True,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     def seen():
         return events.read_text() if events.exists() else ""
 
+    def kill_group():
+        # Only while the group is known to be alive (the runner unreaped, or a member
+        # still holding the pipes), so the group ID cannot belong to another process.
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    def drain():
+        """Read the runner's output; a fake it left holding the pipes is killed first."""
+        try:
+            return process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            kill_group()
+            return process.communicate(timeout=RUNNER_HANG_SECONDS)
+
     try:
         deadline = time.monotonic() + RUNNER_HANG_SECONDS
         while not ("uv started" in seen() and "node started" in seen()):
             if process.poll() is not None:
-                out, err = process.communicate()
+                out, err = drain()
                 pytest.fail(f"Runner exited {process.returncode} before both children "
                             f"started.\nevents:\n{seen()}\nstdout:\n{out}\nstderr:\n{err}")
             if time.monotonic() > deadline:
@@ -540,8 +557,8 @@ def test_runner_terminates_children_using_only_fake_commands(tmp_path, search):
             assert "up -d --wait" in text
             assert "stop karakutu-audit-search" in text
     finally:
-        if process.poll() is None:
-            process.terminate()
+        if process.returncode is None:
+            kill_group()
             process.communicate(timeout=RUNNER_HANG_SECONDS)
 
 
