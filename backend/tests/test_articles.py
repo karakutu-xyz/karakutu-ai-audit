@@ -872,7 +872,11 @@ def test_fill_article_rejects_a_different_archive_record(tmp_path):
 
 @pytest.mark.parametrize("stored, shown", [
     ("1700000000", "2023-11-14T22:13:20+00:00"),
+    ("1700000000.0", "2023-11-14T22:13:20+00:00"),
+    (" 1700000000 ", "2023-11-14T22:13:20+00:00"),
     ("9" * 40, None),
+    ("1e+30", None),
+    ("nan", "nan"),
     ("2026-11-02T11:00:00+00:00", "2026-11-02T11:00:00+00:00"),
     (None, None),
 ])

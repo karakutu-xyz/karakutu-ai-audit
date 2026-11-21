@@ -5,6 +5,7 @@ no model work is silently replayed. Workflow and input JSON are never updated.
 """
 from collections.abc import Callable
 import hashlib
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -64,13 +65,17 @@ def _refresh_article_search(_mapper, _connection, row):
     row.search_text = article_search_text(row.title, row.source, row.host, row.url)
 
 
+LEGACY_NUMBER = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
+
+
 def readable_removed_at(value):
-    """Older versions stored archive removal dates as Unix seconds ("1700000000"). Present
-    them as ISO like new rows, on every backend, without a migration; anything else is
-    returned unchanged and an unusable number becomes unknown."""
-    if isinstance(value, str) and value.isdigit():
+    """Older versions stored archive removal dates as Unix seconds, written with `str()` of
+    whatever the archive sent ("1700000000", "1700000000.0", "1e+30"). Present them as ISO
+    like new rows, on every backend, without a migration; an unusable number becomes unknown
+    and anything that is not a plain number (an ISO date) is returned unchanged."""
+    if isinstance(value, str) and LEGACY_NUMBER.fullmatch(value.strip()):
         try:
-            return datetime.fromtimestamp(int(value), timezone.utc).isoformat()
+            return datetime.fromtimestamp(float(value), timezone.utc).isoformat()
         except (ValueError, OverflowError, OSError):
             return None
     return value
