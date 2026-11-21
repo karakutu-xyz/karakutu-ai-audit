@@ -12,6 +12,7 @@ searxng/*
 !compose.search.yaml
 !compose.test.yaml
 !compose.postgres.yaml
+!compose.wallet.yaml
 !web/
 web/*
 !web/package.json
@@ -74,3 +75,6 @@ web/*
 !web/package.json
 !web/package-lock.json
 !web/tsconfig*.json
+
+# Key material can have any extension.
+**/*[Kk][Ee][Yy][Ff][Ii][Ll][Ee]*

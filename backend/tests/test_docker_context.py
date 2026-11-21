@@ -43,7 +43,7 @@ def test_docker_context_excludes_private_data_and_has_no_private_allow_rules():
     for path in [".git/config", "backend/tests/test_api.py", "README.md",
                  "web/node_modules/package/index.js", "web/dist/index.html",
                  "backend/audit/__pycache__/config.pyc", "web/src/wallet-test.json",
-                 "web/src/arweave-keyfile-test.json", "backend/audit/local.sqlite3-wal",
+                 "web/src/arweave-keyfile-test.json", "backend/audit/invented-keyfile.txt", "backend/audit/local.sqlite3-wal",
                  "backend/audit/local.db-shm", "web/src/key.pem", "web/src/key.jwk",
                  "backend/audit/fabricated-corpus.jsonl", "backend/audit/any-key.json",
                  "backend/audit/search/cases.ndjson", "web/src/rows.csv", "web/src/rows.tsv",
@@ -59,7 +59,7 @@ def test_docker_context_excludes_private_data_and_has_no_private_allow_rules():
         assert not included(path, patterns)
     for path in ["pyproject.toml", "uv.lock", "backend/audit/api.py",
                  "backend/audit/search/fetch.py", "searxng/settings.yml", "compose.yaml",
-                 "compose.search.yaml", "compose.test.yaml", "web/package.json", "web/package-lock.json",
+                 "compose.search.yaml", "compose.test.yaml", "compose.wallet.yaml", "web/package.json", "web/package-lock.json",
                  "web/tsconfig.json", "web/index.html", "web/vite.config.ts",
                  "web/src/main.tsx", "web/nginx.conf"]:
         assert included(path, patterns)

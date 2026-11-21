@@ -36,7 +36,7 @@ def build_base(public_config: dict, *, source_root: Path | None = None) -> dict:
                for path in sorted(root.rglob("*.py")) if "__pycache__" not in path.parts}
     dependencies = {}
     for name in ("pyproject.toml", "uv.lock", "searxng/settings.yml", "compose.yaml", "compose.search.yaml",
-                 "compose.test.yaml", "compose.postgres.yaml"):
+                 "compose.test.yaml", "compose.postgres.yaml", "compose.wallet.yaml"):
         path = project / name
         if path.is_file():
             dependencies[name] = path.read_text(encoding="utf-8")

@@ -18,7 +18,8 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY backend/audit ./backend/audit
 COPY searxng/settings.yml ./searxng/settings.yml
-COPY compose.yaml compose.search.yaml compose.test.yaml compose.postgres.yaml ./
+COPY compose.yaml compose.search.yaml compose.test.yaml \
+    compose.postgres.yaml compose.wallet.yaml ./
 RUN groupadd --gid 10001 audit \
     && useradd --uid 10001 --gid audit --no-create-home audit \
     && mkdir /data && chown audit:audit /data

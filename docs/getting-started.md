@@ -10,7 +10,7 @@ parts fit together, read [Architecture](architecture.md). Every variable and its
 | To run | You need |
 | --- | --- |
 | Test mode in Docker | Docker with Compose 2.24 or newer, and `make` |
-| Live mode in Docker | The same, plus an OpenAI-compatible chat model the containers can reach |
+| Live mode in Docker | The same, plus Python 3 and an OpenAI-compatible chat model the containers can reach |
 | Local development | Python 3.11, uv, Node 22+; Docker Compose for live bundled search |
 | Tilt hot reload | The local tools above, Docker Compose and Tilt |
 
@@ -67,8 +67,8 @@ Docker](#development-without-docker)). The database is then `data/demo/audit-tes
    make env
    ```
 
-   Without Python, copy `.env.example` to `.env` yourself and set `SEARXNG_SECRET` to a long
-   random string.
+   Alternatively, copy `.env.example` to `.env` yourself and set `SEARXNG_SECRET`
+   to a long random string. Docker live startup still needs Python 3 for preflight.
 
 2. Point it at a model. With LM Studio, load a chat model and start its server on port 1234;
    the defaults (`MODEL_NAME=auto`) pick the first chat model it reports. For a hosted
@@ -119,10 +119,38 @@ article's text and removal date are read when you first open it. Auditing an imp
 `LIVE_INGESTION_ENABLED=true` and `API_AUTH_TOKEN` as live ingestion; without them, use
 benchmarks.
 
-If the archive needs read authentication, `ARCHIVE_WALLET_PATH` must be a path the API process
-can open. `make live` does not mount files from your machine into the container, so a host
-keyfile path makes every archive read fail and import answers `archive_unavailable`. Use
-`RUN_MODE=live make dev` for archive reads with a keyfile.
+### Docker live with archive reads
+
+Set these in your protected, ignored `.env`, using a host wallet file outside the repo:
+
+```dotenv
+ARCHIVE_BASE_URL=https://archive.example
+ARCHIVE_WALLET_PATH='/absolute/private/archive-wallet.json'
+```
+
+Run `make live`. It uses Python 3 for an offline file preflight, then adds
+`compose.wallet.yaml` only when `ARCHIVE_WALLET_PATH` is non-empty. Compose mounts
+that file read-only as the `archive_wallet` secret. Inside the API container the
+path is always `/run/secrets/archive_wallet`; the host path is never an API
+environment value. A missing file, or one the user running `make` cannot read,
+stops the command before any containers start, naming only the variable.
+Local `make dev` uses the same setting as a host path. Inline `ARCHIVE_WALLET_JSON`
+continues to work and takes precedence over file content.
+
+On Linux, Compose secrets preserve host ownership and permissions. The API runs
+as UID 10001, so a mode-600 file owned by another UID cannot be read. For a
+wallet dedicated to this service, an operator can use `sudo chown 10001 <keyfile>`
+and `chmod 600 <keyfile>`, or arrange group read access for a dedicated group
+available to the container. Do not make the wallet world-readable. Docker Desktop
+on macOS shares files readably.
+
+Check `GET /api/status` (with your API token when configured) and **Settings**.
+The `archive` field reports `ok`, or a fixed state such as `wallet_missing`,
+`wallet_unreadable`, `auth_unavailable`, `unreachable` or `rejected`.
+`unchecked` means no archive call has completed yet; startup catalog reads usually
+replace it. Archive failures do not prevent API startup. Import keeps the
+`archive_unavailable` error code and includes a safe `reason`; see
+[archive states](configuration.md#archive-read-state).
 
 ### Your first review
 

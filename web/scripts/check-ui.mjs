@@ -1523,6 +1523,25 @@ test("Settings waits for service and workflow content, or ends on either error",
   error = "";
   workflow.error = "Fictional workflow error";
   check(true);
+  // Settings renders the safe state labels rather than configuration alone.
+  error = "";
+  workflow = { data: null, error: "" };
+  for (const [archive, label] of Object.entries({
+    disabled: "Disabled · classification catalog and related-removal evidence unavailable",
+    unchecked: "Not checked yet",
+    ok: "OK",
+    wallet_missing: "Archive wallet not found",
+    wallet_unreadable: "Archive wallet cannot be read",
+    auth_unavailable: "Archive sign-in failed",
+    unreachable: "Archive unreachable",
+    rejected: "Archive refused the request",
+  })) {
+    status = { mode: "live", archive_reads_enabled: true, archive };
+    const tree = runtime.render(() => page.SettingsPage());
+    const html = renderToStaticMarkup(tree);
+    assert.ok(html.includes(label), archive);
+    assert.ok(!html.includes(">Enabled</"), archive);
+  }
   runtime.unmount();
 });
 
