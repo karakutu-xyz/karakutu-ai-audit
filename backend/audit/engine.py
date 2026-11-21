@@ -234,11 +234,12 @@ class AuditEngine:
                 result, updates = await self._execute(name, state)
             except asyncio.CancelledError as exc:
                 cancelled = exc
-                result = pipeline._stage_failed(StageName(name))
+                # A person stopped the run (or the service shut down); the model did not fail.
+                result = pipeline._stage_failed(StageName(name), pipeline.STOPPED)
                 result.details = {'error_type': 'CancelledError'}
                 updates = {'stopped':'stage was cancelled', 'failure':'The audit was cancelled.'}
             except Exception as exc:
-                result = pipeline._stage_failed(StageName(name))
+                result = pipeline._stage_failed(StageName(name), pipeline.UNEXPECTED_ERROR)
                 result.details = {'error_type':type(exc).__name__}
                 updates = {'stopped':'stage did not complete', 'failure':'An audit stage failed unexpectedly.'}
             finally:

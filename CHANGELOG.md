@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A step cut off by a stop now reads "Stage did not complete: the audit was stopped." (no outcome) instead of blaming the model, in new step records and in the audit story, including runs saved earlier; an unexpected error says so too. Real model failures keep their wording.
 - `make dev` and `scripts/run-local.sh --check` now check offline that `web/node_modules` and the Python environment match `web/package-lock.json` and `uv.lock` before starting anything. A checkout pulled without reinstalling used to start Vite and fail in the browser on a missing import; now it stops with the command to run (`npm --prefix web ci` or `uv sync --frozen`). Nothing is printed when both are current, and nothing is installed or downloaded.
 
 - Import archive articles from the Articles page in live mode with archive reads (1 to 90 days), showing imported, updated and skipped counts or the safe error code; the empty page says how to get articles, and an archive article whose details are not loaded yet shows "Not checked yet" instead of an empty removal date (new `removal_checked` field in article summaries).

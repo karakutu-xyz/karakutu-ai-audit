@@ -1026,3 +1026,33 @@ def test_only_one_archive_import_runs_at_a_time(tmp_path, database_url):
                 release.set()
             assert first.result(5).json() == {"imported": 1, "updated": 0, "skipped": 2}
         assert client.post("/api/articles/import").status_code == 200
+
+
+@pytest.mark.parametrize("run_status", ["cancelled", "failed"])
+def test_story_never_blames_the_model_for_a_stopped_step(run_status):
+    # Runs saved before the stop wording existed carry the model-failure text with a
+    # CancelledError; a person stop (cancelled) or a service stop (failed, interrupted) both
+    # read as stopped, without an outcome.
+    stopped = {"name": "classification", "status": "failed", "output": {
+        "explanation": "Stage did not complete: the analysis model failed.", "outcome": "inconclusive",
+        "details": {"error_type": "CancelledError"}}}
+    story = summarize_run({"status": run_status, "verdict": None, "steps": [stopped]})
+    step = story["steps"][0]
+    assert step["line"] == "Stage did not complete: the audit was stopped."
+    assert step["outcome"] is None
+    assert step["status"] == ("stopped" if run_status == "cancelled" else "failed")
+    assert "model" not in step["line"]
+
+
+def test_model_failures_keep_their_wording():
+    from audit.domain import StageName
+    from audit.workflow import pipeline
+
+    assert pipeline._stage_failed(StageName.RELEVANCE).explanation == \
+        "Stage did not complete: the analysis model failed."
+    failed = {"name": "relevance", "status": "failed", "output": {
+        "explanation": "Stage did not complete: the analysis model failed.", "outcome": "inconclusive",
+        "details": {}}}
+    step = summarize_run({"status": "failed", "verdict": None, "steps": [failed]})["steps"][2]
+    assert step["line"] == "Stage did not complete: the analysis model failed."
+    assert step["outcome"] == "inconclusive"

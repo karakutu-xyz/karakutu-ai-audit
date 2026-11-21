@@ -296,6 +296,8 @@ async def test_unexpected_stage_failure_saves_trace_and_returns_failed_audit(mon
     assert result['response']['verdict'] == 'AUDIT_FAILED'
     assert seen[0]['status'] == 'failed'
     assert seen[0]['output']['details'] == {'error_type':'RuntimeError'}
+    # An unexpected error is not a model failure and must not be reported as one.
+    assert seen[0]['output']['explanation'] == 'Stage did not complete: an unexpected error stopped this step.'
     assert seen[0]['model_calls'][0]['raw_completion'] == {'message':'actual raw text','score':None}
     assert seen[0]['evidence'][0]['output']['score'] is None
     assert [step['status'] for step in seen] == ['failed'] + ['skipped'] * 5
@@ -321,6 +323,7 @@ async def test_cancellation_records_failed_step_before_propagation(monkeypatch):
         await engine.close()
     assert seen[0]['status'] == 'failed'
     assert seen[0]['model_calls'][0]['raw_completion']['message'] == 'partial'
+    assert seen[0]['output']['explanation'] == 'Stage did not complete: the audit was stopped.'
 
 @pytest.mark.asyncio
 async def test_external_task_cancellation_records_in_progress_stage(monkeypatch):
@@ -350,6 +353,10 @@ async def test_external_task_cancellation_records_in_progress_stage(monkeypatch)
     story = summarize_run({"status": "cancelled", "steps": seen})
     assert seen[0]["output"]["details"]["error_type"] == "CancelledError"
     assert story["steps"][0]["status"] == "stopped"
+    # A person stopped the run; the stored step and the story must not blame the model.
+    assert seen[0]["output"]["explanation"] == "Stage did not complete: the audit was stopped."
+    assert story["steps"][0]["line"] == "Stage did not complete: the audit was stopped."
+    assert story["steps"][0]["outcome"] is None
     assert story["failed_steps"] == []
     assert all(step["status"] == "pending" for step in story["steps"][1:])
 
