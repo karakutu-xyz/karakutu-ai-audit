@@ -2,7 +2,17 @@
 
 ## Unreleased
 
+- `make dev` stops every process it started on Ctrl-C, including one started an instant before the stop and not yet recorded, which used to keep running (most often seen as a flaky runner test on a busy machine). The runner test is now load-independent too: shell fakes instead of Python, event waits with a hang cap instead of 5-second budgets, its own process group, and an early runner exit fails at once with the runner's output.
+- A step cut off by a stop now reads "Stage did not complete: the audit was stopped." (no outcome) instead of blaming the model, in new step records and in the audit story, including runs saved earlier; an unexpected error says so too. Real model failures keep their wording.
+- `make dev` and `scripts/run-local.sh --check` now check offline that `web/node_modules` and the Python environment match `web/package-lock.json` and `uv.lock` before starting anything. A checkout pulled without reinstalling used to start Vite and fail in the browser on a missing import; now it stops with the command to run (`npm --prefix web ci` or `uv sync --frozen`). Nothing is printed when both are current, and nothing is installed or downloaded.
+- Show search reachability in status and Settings with a bounded cached probe,
+  expose query failures and distinguish web hits from archive/cited leads in run
+  explanations without changing verdicts; the local runner derives an empty
+  search URL from the published port and refuses loopback port mismatches before
+  startup.
+
 - Import archive articles from the Articles page in live mode with archive reads (1 to 90 days), showing imported, updated and skipped counts or the safe error code; the empty page says how to get articles, and an archive article whose details are not loaded yet shows "Not checked yet" instead of an empty removal date (new `removal_checked` field in article summaries).
+- Keep the Articles heading readable with the archive import: the title column has a minimum width, and the import help, result and error text wrap under the import controls instead of widening them, so the heading no longer collapses to one letter per line at 1024px.
 - Display archive HTML as readable paragraphs without changing stored content, API responses or model inputs.
 
 - Polish the review UI: origin `article` reads "Article audit" in the Runs ledger, run detail, article history and the Origin filter alike; article stories and run detail share one disclaimer, "This is not a finding of censorship; a person decides." (the API's `human_review_note` now uses that wording, so the workflow version changes; verdicts, prompts and thresholds do not); the Runs and Benchmarks tables fit a 1024px window without scrolling.

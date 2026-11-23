@@ -129,6 +129,7 @@ async def test_invalid_model_output_keeps_raw_completion():
     ('relevance_failure','AUDIT_FAILED',['skipped','completed','failed','skipped','skipped','skipped']),
     ('live_original','NOT_REMOVED',['skipped','completed','completed','completed','completed','skipped']),
     ('web_failure','AUDIT_FAILED',['skipped','completed','completed','completed','completed','failed']),
+    ('web_failure_search_down','AUDIT_FAILED',['skipped','completed','completed','completed','completed','failed']),
 ])
 async def test_remaining_graph_paths(monkeypatch, mode, verdict, statuses):
     from audit.workflow import source, web_search
@@ -147,7 +148,9 @@ async def test_remaining_graph_paths(monkeypatch, mode, verdict, statuses):
             return source.SourceEvidence(live_at_original_url=True, self_containment=.8, reasoning='live')
         return source.SourceEvidence(reasoning='unavailable')
     async def web(*a, **kw):
-        raise web_search.WebSearchModelFailure('sensitive payload must not appear')
+        evidence = (web_search.WebSearchEvidence(search_queries=3, search_queries_failed=3)
+                    if mode == 'web_failure_search_down' else None)
+        raise web_search.WebSearchModelFailure('sensitive payload must not appear', evidence=evidence)
     for module, function in ((classification,cls),(similarity,sim),(relevance,rel),(related_removals,related),(source,src),(web_search,web)):
         monkeypatch.setattr(module, 'run', function)
     engine = AuditEngine({'model_enabled':True})
@@ -159,6 +162,10 @@ async def test_remaining_graph_paths(monkeypatch, mode, verdict, statuses):
     assert result['response']['verdict'] == verdict
     assert [s['status'] for s in result['steps']] == statuses
     assert 'sensitive payload' not in str(result)
+    # A failed model step still says whether web search ran, in the step and the verdict.
+    down = 'Web search failed: all 3 search queries failed'
+    assert (down in str(result['steps'][-1])) == (mode == 'web_failure_search_down')
+    assert (down in str(result['response'])) == (mode == 'web_failure_search_down')
 
 @pytest.mark.asyncio
 async def test_graph_disables_ambient_tracing(monkeypatch):
@@ -296,6 +303,8 @@ async def test_unexpected_stage_failure_saves_trace_and_returns_failed_audit(mon
     assert result['response']['verdict'] == 'AUDIT_FAILED'
     assert seen[0]['status'] == 'failed'
     assert seen[0]['output']['details'] == {'error_type':'RuntimeError'}
+    # An unexpected error is not a model failure and must not be reported as one.
+    assert seen[0]['output']['explanation'] == 'Stage did not complete: an unexpected error stopped this step.'
     assert seen[0]['model_calls'][0]['raw_completion'] == {'message':'actual raw text','score':None}
     assert seen[0]['evidence'][0]['output']['score'] is None
     assert [step['status'] for step in seen] == ['failed'] + ['skipped'] * 5
@@ -321,6 +330,7 @@ async def test_cancellation_records_failed_step_before_propagation(monkeypatch):
         await engine.close()
     assert seen[0]['status'] == 'failed'
     assert seen[0]['model_calls'][0]['raw_completion']['message'] == 'partial'
+    assert seen[0]['output']['explanation'] == 'Stage did not complete: the audit was stopped.'
 
 @pytest.mark.asyncio
 async def test_external_task_cancellation_records_in_progress_stage(monkeypatch):
@@ -350,6 +360,10 @@ async def test_external_task_cancellation_records_in_progress_stage(monkeypatch)
     story = summarize_run({"status": "cancelled", "steps": seen})
     assert seen[0]["output"]["details"]["error_type"] == "CancelledError"
     assert story["steps"][0]["status"] == "stopped"
+    # A person stopped the run; the stored step and the story must not blame the model.
+    assert seen[0]["output"]["explanation"] == "Stage did not complete: the audit was stopped."
+    assert story["steps"][0]["line"] == "Stage did not complete: the audit was stopped."
+    assert story["steps"][0]["outcome"] is None
     assert story["failed_steps"] == []
     assert all(step["status"] == "pending" for step in story["steps"][1:])
 

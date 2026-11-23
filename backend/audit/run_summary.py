@@ -1,5 +1,6 @@
 """Deterministic, read-time explanations of saved execution records."""
 from audit.provenance import STEPS
+from audit.workflow.pipeline import STOPPED
 
 VERDICT_TEXT = {
     "POSSIBLE_CENSORSHIP": ("Flagged for human review", "The audit found signals that need a person's judgment."),
@@ -37,12 +38,18 @@ def summarize_run(run: dict) -> dict:
         record = recorded.get(spec["name"])
         stage = record.get("output", {}) if record else stages.get(spec["name"], {})
         status = record.get("status", "completed") if record else ("skipped" if stage.get("skipped") else "completed") if stage else "pending"
-        if (cancelled and record and status == "failed"
-                and stage.get("details", {}).get("error_type") == "CancelledError"):
+        interrupted = (record and status == "failed"
+                       and (stage.get("details") or {}).get("error_type") == "CancelledError")
+        if cancelled and interrupted:
             status = "stopped"
         if status == "pending" and next_running:
             status, next_running = "running", False
         line = stage.get("explanation")
+        outcome = stage.get("outcome")
+        if interrupted:
+            # The step was cut off, not judged. Runs saved before this wording existed still
+            # say the model failed; the story must not blame the model for a stop.
+            line, outcome = f"Stage did not complete: {STOPPED}.", None
         if line:
             line = line.strip()
             if status == "skipped" and not line.lower().startswith("skipped"):
@@ -50,7 +57,7 @@ def summarize_run(run: dict) -> dict:
             if len(line) > 500:
                 line = line[:499] + "…"
         steps.append({"name": spec["name"], "title": spec["title"], "status": status,
-                      "outcome": stage.get("outcome"), "line": line or None})
+                      "outcome": outcome, "line": line or None})
     flags = (run.get("output") or {}).get("flags", [])
     return {"verdict": verdict, "verdict_label": label, "headline": headline,
             "sentences": [] if cancelled else [text for flag, text in FLAG_TEXT.items() if flag in flags],

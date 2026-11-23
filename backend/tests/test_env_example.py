@@ -307,16 +307,70 @@ def test_gitignore_covers_runtime_settings_without_creating_them():
                           cwd=ROOT).returncode == 1
 
 
+FAKE_UV_SYNC = """#!/bin/sh
+# Stands in for `uv sync --check`; current unless the test says otherwise.
+exit "${FAKE_UV_SYNC_EXIT:-0}"
+"""
+
+
+def runner_repo(tmp_path):
+    """A copy of the runner scripts with a current fabricated install.
+
+    The dependency check must judge this fixture, not the checkout running the tests.
+    """
+    repo, bin_dir = tmp_path / "repo", tmp_path / "repo-bin"
+    if repo.exists():
+        return repo, bin_dir
+    (repo / "scripts").mkdir(parents=True)
+    for name in ("run-local.sh", "env_requirements.py", "check_local_deps.py"):
+        shutil.copy2(SCRIPTS / name, repo / "scripts" / name)
+    shutil.copy2(ROOT / ".env.example", repo / ".env.example")
+    (repo / "web/node_modules/fictional-dep").mkdir(parents=True)
+    dep = {"node_modules/fictional-dep": {"version": "1.0.0"}}
+    (repo / "web/package-lock.json").write_text(json.dumps({"lockfileVersion": 3, "packages": {
+        "": {"name": "fictional-web"}, **dep}}))
+    (repo / "web/node_modules/.package-lock.json").write_text(
+        json.dumps({"lockfileVersion": 3, "packages": dep}))
+    (repo / "web/node_modules/fictional-dep/package.json").write_text('{"version": "1.0.0"}')
+    bin_dir.mkdir()
+    (bin_dir / "uv").write_text(FAKE_UV_SYNC)
+    (bin_dir / "uv").chmod(0o700)
+    return repo, bin_dir
+
+
 def runner(tmp_path, text=None, *, mode=None, extra_env=None):
     path = tmp_path / ".env"
     if text is not None:
         path.write_text(text)
+    repo, bin_dir = runner_repo(tmp_path)
     env = {key: value for key, value in os.environ.items() if key not in example_blocks()}
     if mode:
         env["RUN_MODE"] = mode
     env.update(extra_env or {})
-    return subprocess.run(["bash", str(SCRIPTS / "run-local.sh"), "--check", "--env-file",
+    env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+    return subprocess.run(["bash", str(repo / "scripts/run-local.sh"), "--check", "--env-file",
                            str(path)], cwd=tmp_path, env=env, text=True, capture_output=True)
+
+
+def test_runner_stops_on_a_stale_web_install_with_the_command(tmp_path):
+    result = runner(tmp_path, "RUN_MODE=test\n")
+    assert result.returncode == 0, result.stderr
+    assert "dependencies" not in result.stdout + result.stderr  # Quiet when current.
+    installed = tmp_path / "repo/web/node_modules/fictional-dep/package.json"
+    installed.write_text(installed.read_text().replace("1.0.0", "0.9.0"))
+    result = runner(tmp_path)
+    assert result.returncode != 0
+    assert "run: npm --prefix web ci" in result.stderr
+    assert "uv sync" not in result.stderr
+    assert "Would start" not in result.stdout
+
+
+def test_runner_stops_on_a_stale_python_install_with_the_command(tmp_path):
+    result = runner(tmp_path, "RUN_MODE=test\n", extra_env={"FAKE_UV_SYNC_EXIT": "1"})
+    assert result.returncode != 0
+    assert "run: uv sync --frozen" in result.stderr
+    assert "npm" not in result.stderr
+    assert "Would start" not in result.stdout
 
 
 def test_runner_missing_file_names_setup(tmp_path):
@@ -414,6 +468,29 @@ def test_invalid_mode_value_is_not_printed(tmp_path):
     assert private_value not in result.stdout + result.stderr
 
 
+# A cap for a hung run, never a pace: every wait below returns as soon as its event happens,
+# so a slow machine only makes the test slower, not red.
+RUNNER_HANG_SECONDS = 120
+# Shell, not Python: a fake must start in milliseconds even when the machine is busy.
+FAKE_CHILD = """#!/bin/sh
+name=${0##*/}
+log() { printf '%s %s\\n' "$name" "$*" >> "$RUNNER_TEST_EVENTS"; }
+if [ "$name" = docker ] || [ "$1" = sync ]; then
+  log "$*"
+  exit 0
+fi
+# "started" is the last event before the wait, and the handler is set before it, so the
+# test has every event it checks once it sees "started", and a stop is never missed.
+# The handler runs once the current short nap ends; the fake leaves nothing behind.
+trap 'log stopped; exit 0' TERM
+[ "$name" = uv ] && log "search_url ${SEARXNG_URL-}"
+log started
+while :; do
+  sleep 0.2
+done
+"""
+
+
 @pytest.mark.parametrize("search", [False, True])
 def test_runner_terminates_children_using_only_fake_commands(tmp_path, search):
     # Never start servers or Docker. PATH substitutes tiny processes that only wait.
@@ -423,59 +500,114 @@ def test_runner_terminates_children_using_only_fake_commands(tmp_path, search):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     events = tmp_path / "events"
-    program = '''#!/usr/bin/env python3
-import os
-from pathlib import Path
-import signal
-import sys
-import time
-name = Path(sys.argv[0]).name
-path = Path(os.environ["RUNNER_TEST_EVENTS"])
-def log(message):
-    with path.open("a") as output:
-        output.write(name + " " + message + "\\n")
-if name == "docker":
-    log(" ".join(sys.argv[1:]))
-    sys.exit(0)
-def stop(*_):
-    log("stopped")
-    sys.exit(0)
-signal.signal(signal.SIGTERM, stop)
-log("started")
-while True:
-    time.sleep(0.02)
-'''
     for name in ("uv", "node", "docker"):
         executable = bin_dir / name
-        executable.write_text(program)
+        executable.write_text(FAKE_CHILD)
         executable.chmod(0o700)
     env_path = tmp_path / ".env"
     env_path.write_text("RUN_MODE=live\nMODEL_ENABLED=true\nSEARXNG_SECRET=fictional\n"
-                        + ("SEARCH_PROVIDER=searxng\n" if search else "SEARCH_PROVIDER=disabled\n"))
+                        + ("SEARCH_PROVIDER=searxng\nSEARXNG_URL=\nKARAKUTU_SEARCH_PORT=2252\n"
+                           if search else "SEARCH_PROVIDER=disabled\n"))
     env = {key: value for key, value in os.environ.items() if key not in example_blocks()}
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
     env["RUNNER_TEST_EVENTS"] = str(events)
-    process = subprocess.Popen(["bash", str(SCRIPTS / "run-local.sh"), "--env-file",
-                                str(env_path)], cwd=tmp_path, env=env,
+    repo, _ = runner_repo(tmp_path)
+    # Its own process group, so the test can always reap the runner and any fake it left.
+    process = subprocess.Popen(["bash", str(repo / "scripts/run-local.sh"), "--env-file",
+                                str(env_path)], cwd=tmp_path, env=env, start_new_session=True,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    def seen():
+        return events.read_text() if events.exists() else ""
+
+    def kill_group():
+        # Only while the group is known to be alive (the runner unreaped, or a member
+        # still holding the pipes), so the group ID cannot belong to another process.
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    def finish(timeout):
+        """Read the runner's output and whether everything exited by itself.
+
+        A timeout means a group member still holds the pipes, so the group is alive.
+        """
+        try:
+            return (*process.communicate(timeout=timeout), True)
+        except subprocess.TimeoutExpired:
+            kill_group()
+            return (*process.communicate(timeout=RUNNER_HANG_SECONDS), False)
+
     try:
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            text = events.read_text() if events.exists() else ""
-            if "uv started" in text and "node started" in text:
-                break
+        deadline = time.monotonic() + RUNNER_HANG_SECONDS
+        while not ("uv started" in seen() and "node started" in seen()):
+            if process.poll() is not None:
+                out, err, _ = finish(5)  # Already failing: do not wait out the cap.
+                pytest.fail(f"Runner exited {process.returncode} before both children "
+                            f"started.\nevents:\n{seen()}\nstdout:\n{out}\nstderr:\n{err}")
+            if time.monotonic() > deadline:
+                pytest.fail(f"Fake API/UI did not start.\nevents:\n{seen()}")
             time.sleep(0.02)
-        else:
-            pytest.fail("Fake API/UI did not start")
         process.send_signal(signal.SIGINT)
-        process.communicate(timeout=5)
-        text = events.read_text()
-        assert "uv stopped" in text and "node stopped" in text
+        _, err, stopped = finish(RUNNER_HANG_SECONDS)
+        text = seen()
+        assert stopped, f"Runner or a fake did not stop.\nevents:\n{text}\nstderr:\n{err}"
+        assert "uv stopped" in text and "node stopped" in text, (text, err)
+        # The offline dependency check runs before anything starts.
+        assert text.index("uv sync --frozen --check --offline") < text.index("uv started")
         assert ("docker " in text) == search
         if search:
+            assert "uv search_url http://127.0.0.1:2252" in text
             assert "up -d --wait" in text
             assert "stop karakutu-audit-search" in text
     finally:
-        if process.poll() is None:
-            process.terminate()
-            process.communicate(timeout=5)
+        if process.returncode is None:
+            kill_group()
+            process.communicate(timeout=RUNNER_HANG_SECONDS)
+
+
+@pytest.mark.parametrize('assignment', ['', 'SEARXNG_URL=\n'])
+def test_runner_derives_search_url_from_published_port(tmp_path, assignment):
+    result = runner(tmp_path, 'RUN_MODE=live\nMODEL_ENABLED=true\nSEARCH_PROVIDER=searxng\n'
+                    'SEARXNG_SECRET=fictional\nKARAKUTU_SEARCH_PORT=2252\n' + assignment)
+    assert result.returncode == 0, result.stderr
+    assert 'Derived SEARXNG_URL=http://127.0.0.1:2252' in result.stderr
+    assert 'Would start SearXNG' in result.stdout
+
+
+@pytest.mark.parametrize('url, port', [
+    ('http://127.0.0.1:2202', '2252'), ('http://localhost:2252', ''),
+    ('http://[::1]:2202', '2252'), ('http://localhost', '2252'),
+    ('http://127.0.0.2:2202', '2252'), ('http://[0:0:0:0:0:0:0:1]:2202', '2252'),
+    ('http://localhost.:2202', '2252'), ('http://app.localhost:2202', '2252'),
+    ('http://127.1:2202', '2252'), ('http://2130706433:2202', '2252'),
+    ('http://0x7f.1:2202', '2252'),
+])
+def test_runner_refuses_loopback_port_mismatch_before_start(tmp_path, url, port):
+    result = runner(tmp_path, 'RUN_MODE=live\nMODEL_ENABLED=true\nSEARCH_PROVIDER=searxng\n'
+                    f'SEARXNG_SECRET=fictional\nSEARXNG_URL={url}\n'
+                    f'KARAKUTU_SEARCH_PORT={port}\n')
+    assert result.returncode != 0
+    assert 'SEARXNG_URL loopback port' in result.stderr
+    assert f'KARAKUTU_SEARCH_PORT={port or "2202"}' in result.stderr
+    assert 'clear it to derive it' in result.stderr
+    assert 'Would start' not in result.stdout
+
+
+@pytest.mark.parametrize('url', ['https://search.example:4452', 'http://127.0.0.1:2252',
+                                'http://localhost:2252', 'http://[::1]:2252'])
+def test_runner_leaves_remote_and_matching_urls_alone(tmp_path, url):
+    result = runner(tmp_path, 'RUN_MODE=live\nMODEL_ENABLED=true\nSEARCH_PROVIDER=searxng\n'
+                    'SEARXNG_SECRET=fictional\nKARAKUTU_SEARCH_PORT=2252\n'
+                    f'SEARXNG_URL={url}\n')
+    assert result.returncode == 0, result.stderr
+    assert 'Derived SEARXNG_URL' not in result.stderr
+
+
+def test_runner_test_mode_ignores_search_port_mismatch(tmp_path):
+    result = runner(tmp_path, 'RUN_MODE=test\nSEARCH_PROVIDER=searxng\n'
+                    'KARAKUTU_SEARCH_PORT=2252\nSEARXNG_URL=http://127.0.0.1:2202\n')
+    assert result.returncode == 0, result.stderr
+    assert 'Derived SEARXNG_URL' not in result.stderr
+    assert 'Would start SearXNG' not in result.stdout

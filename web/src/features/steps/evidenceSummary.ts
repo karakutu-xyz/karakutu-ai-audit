@@ -63,9 +63,17 @@ export function evidenceSummary(step: Step): EvidenceLine[] {
     page(details.dead_source, "Cited source · ");
   }
   if (step.name === "web_search") {
-    for (const match of items(details.matches)) page(match, "Search match · ");
+    for (const match of items(details.matches)) page(match, "Story match · ");
+    if (typeof details.search_queries === "number" && details.search_queries > 0 &&
+        details.search_queries_failed === details.search_queries) {
+      lines.push({ text: "Web search failed; the web was not searched." });
+    }
     for (const [key, label] of [
-      ["hits_searched", "search hits"], ["live_pages_read", "live pages read"],
+      ["search_queries", "search queries attempted"],
+      ["search_queries_failed", "search queries failed"],
+      ["web_hits", "search hits"], ["archive_candidates", "archive candidates"],
+      ["cited_source_leads", "cited-source leads"],
+      ["hits_searched", "total candidates"], ["live_pages_read", "live pages read"],
       ["unreadable_count", "unreadable pages"],
     ]) {
       if (typeof details[key] === "number") {

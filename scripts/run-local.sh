@@ -32,6 +32,11 @@ done < <(python3 "$repo_dir/scripts/env_requirements.py" "$env_file" && printf '
 (( env_parsed )) || exit 1
 # A one-command mode selection takes precedence over the file.
 export RUN_MODE=${mode_override:-${RUN_MODE:-test}}
+if [[ "$RUN_MODE" == live && ${SEARCH_PROVIDER:-disabled} == searxng ]]; then
+  # Resolve/validate before preflight, Docker, or either server; also runs for --check.
+  search_url=$(python3 "$repo_dir/scripts/env_requirements.py" --local-search)
+  export SEARXNG_URL="$search_url"
+fi
 python3 - "$repo_dir/scripts" <<'PY'
 import os
 import sys
@@ -40,6 +45,9 @@ from env_requirements import report
 if not report(os.environ, os.environ["RUN_MODE"]):
     raise SystemExit(1)
 PY
+# A pulled checkout can keep an older install; stop before Vite fails on a missing
+# import. Offline and quiet when current; prints the exact install command otherwise.
+python3 "$repo_dir/scripts/check_local_deps.py" "$repo_dir" || exit 1
 api_port=${KARAKUTU_API_PORT:-2200}
 web_port=${KARAKUTU_WEB_PORT:-2201}
 # An explicit proxy override is useful when the API is reached through a local proxy.
@@ -62,9 +70,15 @@ children=()
 search_started=0
 cleanup() {
   trap - EXIT INT TERM
-  if (( ${#children[@]} )); then
-    kill "${children[@]}" 2>/dev/null || true
-    wait "${children[@]}" 2>/dev/null || true
+  # Every background job, not only `children`: a Ctrl-C can land after a child
+  # starts but before its PID is recorded, and that child must not outlive us.
+  local jobs_left
+  jobs_left=$(jobs -p)
+  if [[ -n "$jobs_left" ]]; then
+    # shellcheck disable=SC2086 # one PID per word
+    kill $jobs_left 2>/dev/null || true
+    # shellcheck disable=SC2086
+    wait $jobs_left 2>/dev/null || true
   fi
   if (( search_started )); then
     docker compose -p karakutu-ai-audit -f compose.search.yaml stop \

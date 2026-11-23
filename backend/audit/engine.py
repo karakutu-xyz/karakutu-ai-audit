@@ -18,7 +18,7 @@ from audit.model import trace
 from audit.jsonsafe import json_safe
 from audit.clients.karakutu import KarakutuClient
 from audit.clients.concepts import ConceptCatalog
-from audit.search.base import SearchResult
+from audit.search.base import BaseSearchProvider, SearchResult, SearchState
 from audit.search._common import results_from_hits
 from audit.workflow import classification, similarity, relevance, related_removals, source, web_search, pipeline
 from audit.workflow.agents import build_stage_agents
@@ -88,28 +88,81 @@ def dump(value):
     return json_safe(value)
 
 
-class Search:
-    def __init__(self, base):
+class Search(BaseSearchProvider):
+    def __init__(self, base, *, transport=None):
         self.base = base.rstrip('/')
+        self.enabled = bool(self.base)
+        self.state: SearchState = "unchecked" if self.enabled else "disabled"
+        self._transport = transport
+        self._probe_at = None
+        self._probe_lock = asyncio.Lock()
+        # A rejection is remembered until a real search succeeds; neither a probe nor a
+        # later transport failure can clear it.
+        self._rejected = False
+        self._search_generation = 0
+
+    async def probe(self) -> SearchState:
+        """Bounded reachability only; HTTP answers cannot clear search rejection.
+
+        Coalesce concurrent status polls and cache for 30 seconds. A real search
+        completed during a probe owns the newer state. No upstream text escapes.
+        """
+        if not self.enabled:
+            return "disabled"
+        async with self._probe_lock:
+            if self._probe_at is not None and time.monotonic() - self._probe_at < 30:
+                return self.state
+            generation = self._search_generation
+            try:
+                async with asyncio.timeout(2):
+                    async with httpx.AsyncClient(timeout=2, transport=self._transport) as client:
+                        async with client.stream('GET', self.base + '/healthz'):
+                            pass  # Headers suffice; never download an upstream body.
+                state = "rejected" if self._rejected else "ok"
+            except Exception:
+                state = "unreachable"
+            if generation == self._search_generation:
+                self.state = state
+            self._probe_at = time.monotonic()
+            return self.state
+
     async def search(self, query, max_results=5, *, language=None):
+        results, _failed = await self.search_checked(query, max_results, language=language)
+        return results
+
+    async def search_checked(self, query, max_results=5, *, language=None):
         event = {'type':'search', 'query':query, 'max_results':max_results, 'language':language, 'results':[], 'error_type':None}
         events = trace.get()
         if events is not None:
             events.append(event)
         if not self.base:
             event['disabled'] = True
-            return []
+            return [], False
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=15, transport=self._transport) as client:
                 response = await client.get(self.base + '/search', params={'q':query,'format':'json','categories':'general','language':language or 'auto'})
                 response.raise_for_status()
-                hits = response.json().get('results') or []
+                payload = response.json()
+                hits = payload.get('results') if isinstance(payload, dict) else None
+                if not isinstance(hits, list):
+                    # A 200 without a results list (an error object, a proxy page) is a failed
+                    # query, not an empty search: it must not clear a rejection or hide an outage.
+                    raise ValueError('search response has no results list')
             results = results_from_hits(hits, lambda h:(h.get('url'), h.get('title') or '', h.get('content') or ''), query=query, provider='SearXNG', max_results=max_results)
             event['results'] = dump(results)
-            return results
+            self.state = 'ok'
+            self._rejected = False
+            self._search_generation += 1
+            return results, False
         except Exception as exc:
             event['error_type'] = type(exc).__name__
-            return []
+            if isinstance(exc, httpx.TransportError):
+                self.state = 'unreachable'
+            else:
+                self.state = 'rejected'
+                self._rejected = True
+            self._search_generation += 1
+            return [], True
 
 
 def capture_fetch(fn, kind):
@@ -234,11 +287,12 @@ class AuditEngine:
                 result, updates = await self._execute(name, state)
             except asyncio.CancelledError as exc:
                 cancelled = exc
-                result = pipeline._stage_failed(StageName(name))
+                # A person stopped the run (or the service shut down); the model did not fail.
+                result = pipeline._stage_failed(StageName(name), pipeline.STOPPED)
                 result.details = {'error_type': 'CancelledError'}
                 updates = {'stopped':'stage was cancelled', 'failure':'The audit was cancelled.'}
             except Exception as exc:
-                result = pipeline._stage_failed(StageName(name))
+                result = pipeline._stage_failed(StageName(name), pipeline.UNEXPECTED_ERROR)
                 result.details = {'error_type':type(exc).__name__}
                 updates = {'stopped':'stage did not complete', 'failure':'An audit stage failed unexpectedly.'}
             finally:
@@ -279,7 +333,20 @@ class AuditEngine:
             result = StageResult(stage=stage, outcome=StageOutcome.PASS if out.relocated_to else StageOutcome.INCONCLUSIVE, explanation=out.reason, details=pipeline._similarity_details(out))
             updates = {'similarity':out}
             if out.relocated_to:
-                updates.update({'stopped':'similarity found a measured relocation', 'web':web_search.WebSearchEvidence(relocated_to=out.relocated_to, relocation_old_in_new=out.relocation_old_in_new, relocation_new_in_old=out.relocation_new_in_old, matches=[out.relocated_to], hits_searched=len(out.hits), live_pages_read=len(out.fetched.live), unreadable_count=len(out.fetched.unreadable), reasoning=out.reason), 'short_circuit':stage})
+                updates.update({
+                    'stopped': 'similarity found a measured relocation',
+                    'web': web_search.WebSearchEvidence(
+                        relocated_to=out.relocated_to,
+                        relocation_old_in_new=out.relocation_old_in_new,
+                        relocation_new_in_old=out.relocation_new_in_old,
+                        matches=[out.relocated_to], hits_searched=len(out.hits),
+                        archive_candidates=len(out.hits),
+                        live_pages_read=len(out.fetched.live),
+                        unreadable_count=len(out.fetched.unreadable),
+                        reasoning=out.reason,
+                    ),
+                    'short_circuit': stage,
+                })
             return result, updates
         if name == 'relevance':
             try:
@@ -323,8 +390,14 @@ class AuditEngine:
         leads.extend(src.extra_hits)
         try:
             out = await web_search.run(article, self.search, s['agents'].web_search, prefetched=prefetched, extra_hits=leads)
-        except web_search.WebSearchModelFailure:
-            return pipeline._stage_failed(stage), {'failure':'The web-search model failed on every attempt.'}
+        except web_search.WebSearchModelFailure as exc:
+            failed = pipeline._stage_failed(stage)
+            note = web_search.search_failure_note(exc.evidence) if exc.evidence else ''
+            if exc.evidence is not None:
+                # The note follows: a failed step is recognised by its leading sentence.
+                failed = failed.model_copy(update={'explanation': (failed.explanation + ' ' + note).strip(),
+                                                   'details': pipeline._web_details(exc.evidence)})
+            return failed, {'failure': note + 'The web-search model failed on every attempt.'}
         if src.dead_source and not any(normalize_url(d.url) == normalize_url(src.dead_source.url) for d in out.dead_same_story):
             out.dead_same_story.insert(0, src.dead_source)
         return StageResult(stage=stage, outcome=StageOutcome.PASS if out.matches else StageOutcome.FAIL, explanation=out.reasoning, details=pipeline._web_details(out)), {'web':out}

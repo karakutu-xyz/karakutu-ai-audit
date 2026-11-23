@@ -213,6 +213,10 @@ make env
 RUN_MODE=test make dev
 ```
 
+After a pull, `make dev` first checks offline that both installs still match
+`web/package-lock.json` and `uv.lock`. If not, it starts nothing and names the command to
+run (`npm --prefix web ci` or `uv sync --frozen`).
+
 Ctrl-C stops the children. For live integrations, load a chat model in LM Studio,
 check the values setup lists, then run `RUN_MODE=live make dev`. API/UI ports use
 KARAKUTU_API_PORT/KARAKUTU_WEB_PORT (2200/2201 by default), and Vite's API proxy
@@ -260,6 +264,12 @@ are required for the offline demo.
    turn on LM Studio's "Serve on Local Network", or set `CONTAINER_MODEL_BASE_URL`
    to an address the container can reach. `/api/status` reports configuration
    capabilities after startup; it does not report model reachability.
+   Settings also reports search reachability, probed within two seconds and
+   cached for 30 seconds. If SearXNG is unreachable, check SEARXNG_URL against
+   KARAKUTU_SEARCH_PORT. The local runner derives an empty URL from the published
+   port and refuses an explicit loopback mismatch, including with --check.
+   For "refused the request", enable JSON output in SearXNG and retry a query;
+   a health response alone cannot establish that JSON search works.
 5. Open **Benchmarks**, choose **New benchmark run**, then **Use a synthetic
    example**. Submit that fictional benchmark and inspect its steps. It uses the
    live model while staying in the benchmark category. No archive writes occur.
@@ -325,6 +335,11 @@ model's raw response, so you can see what went wrong.
 `.env.example` to `.env`.
 
 **`make test` fails on `!reset`.** Your Docker Compose is older than 2.24. Update it.
+
+**`make dev` says "Web dependencies are missing or out of date".** The checkout was updated
+but `web/node_modules` comes from an older install; without the check, Vite would fail with
+"Failed to resolve import". Run `npm --prefix web ci`. For "Python dependencies", run
+`uv sync --frozen`.
 
 **A port is already in use.** Another mode or Tilt is still running. Run `make down` and stop
 Tilt.

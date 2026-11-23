@@ -67,7 +67,13 @@ class WebSearchModelFailure(RuntimeError):
 
     Distinct from "found nothing": the pipeline turns this into AUDIT_FAILED, never into
     INCONCLUSIVE. A crashed audit must be re-run, not filed as a clean result.
+    `evidence` keeps the search diagnostics (query counts, candidate sources) so a failed
+    step still says whether web search ran.
     """
+
+    def __init__(self, message: str, evidence=None):
+        super().__init__(message)
+        self.evidence = evidence
 
 
 # --- models ------------------------------------------------------------------
@@ -121,7 +127,13 @@ class WebSearchEvidence(BaseModel):
     # Dead links the model judged likely to have been the same story — the ONLY basis on
     # which this service ever flags an article for censorship review.
     dead_same_story: List[DeadCandidate] = []
+    # Retained merged, de-duplicated, capped total for historical consumers.
     hits_searched: int = 0
+    search_queries: int = 0
+    search_queries_failed: int = 0
+    web_hits: int = 0
+    archive_candidates: int = 0
+    cited_source_leads: int = 0
     # How many pages were fetched and read (before same-story matching). Lets the pipeline
     # distinguish "read N pages, none was the same story" from "nothing was fetchable".
     live_pages_read: int = 0
@@ -130,6 +142,30 @@ class WebSearchEvidence(BaseModel):
     # from "the fetch failed". (When the search backend degrades it serves PDFs and sitemaps.)
     unreadable_count: int = 0
     reasoning: str = ""
+
+
+def candidate_counts(web: WebSearchEvidence) -> str:
+    """Name discovery sources without relabelling historical merged totals."""
+    if not (web.web_hits or web.archive_candidates or web.cited_source_leads) and web.hits_searched:
+        return f"{web.hits_searched} candidate link(s)"
+    return (
+        f"{web.archive_candidates} archive candidate(s), "
+        f"{web.cited_source_leads} cited-source lead(s) and {web.web_hits} search hit(s)"
+    )
+
+
+def search_failure_note(web: WebSearchEvidence) -> str:
+    """Shared prefix for the step explanation and every evidence verdict."""
+    if not web.search_queries_failed:
+        return ""
+    if web.search_queries_failed == web.search_queries:
+        return (
+            f"Web search failed: all {web.search_queries} search queries failed, "
+            "so the web was not searched. "
+            f"Only archive candidates ({web.archive_candidates}) and cited-source "
+            f"leads ({web.cited_source_leads}) were available. "
+        )
+    return f"{web.search_queries_failed} of {web.search_queries} search queries failed. "
 
 
 # --- agent builder -----------------------------------------------------------
@@ -153,7 +189,25 @@ async def run(removed: Article, search_provider: BaseSearchProvider,
     archive-sourced dead candidates are upgraded to `source="web"` when a web pass here
     independently returns the same URL (their 404 then keeps full evidentiary standing).
     """
-    hits = await _gather_hits(removed, search_provider, leads=list(extra_hits or []))
+    hits, queries, failed = await _gather_hits(
+        removed, search_provider, leads=list(extra_hits or []),
+    )
+    counts = dict(
+        search_queries=queries, search_queries_failed=failed,
+        web_hits=sum(h.source not in {"archive", "cited"} for h in hits),
+        archive_candidates=sum(h.source == "archive" for h in hits),
+        cited_source_leads=sum(h.source == "cited" for h in hits),
+    )
+
+    def explain(evidence: WebSearchEvidence) -> WebSearchEvidence:
+        for key, value in counts.items():
+            setattr(evidence, key, value)
+        evidence.reasoning = (
+            search_failure_note(evidence)
+            + f"Read {evidence.live_pages_read} live page(s) from "
+            + candidate_counts(evidence) + ". " + evidence.reasoning
+        )
+        return evidence
 
     # Search hits are only leads. Drop the removed article's own (still-indexed, dead) URL,
     # fetch the rest, and split them into live / dead / unreadable. See `audit.search.fetch`.
@@ -169,7 +223,7 @@ async def run(removed: Article, search_provider: BaseSearchProvider,
         # _archive_dead_note.) The search may simply have failed — which is exactly why this
         # must not become a censorship flag.
         reasoning = (
-            f"Nothing could be established: {len(hits)} search hit(s), of which "
+            f"Nothing could be established: {len(hits)} candidate link(s), of which "
             f"{len(fetched.unreadable)} were non-article files, blocked, or unreachable — "
             "so no readable news page was returned, and nothing was demonstrably removed. "
             "This is a search-quality problem, not evidence about the removed article."
@@ -177,11 +231,11 @@ async def run(removed: Article, search_provider: BaseSearchProvider,
         archive_dead = len(fetched.dead) - len(web_dead)
         if archive_dead:
             reasoning += " " + _archive_dead_note(archive_dead)
-        return WebSearchEvidence(
+        return explain(WebSearchEvidence(
             hits_searched=len(hits),
             unreadable_count=len(fetched.unreadable),
             reasoning=reasoning,
-        )
+        ))
 
     # The model call is the one thing here that actually breaks: a local model handed the full
     # prompt (removed article + up to 3 fetched pages) returns an EMPTY response and pydantic-ai
@@ -191,7 +245,7 @@ async def run(removed: Article, search_provider: BaseSearchProvider,
         try:
             prompt = _build_prompt(removed, fetched, max_pages=pages, page_chars=page_chars)
             result = await agent.run(prompt, model_settings={"max_tokens": WEB_SEARCH_MAX_TOKENS})
-            return _ground(result.data, fetched, removed, len(hits))
+            return explain(_ground(result.data, fetched, removed, len(hits)))
         except Exception as exc:  # noqa: BLE001 — empty response, protocol error, timeout…
             last_exc = exc
 
@@ -199,7 +253,10 @@ async def run(removed: Article, search_provider: BaseSearchProvider,
     # the pipeline can mark it AUDIT_FAILED rather than file a crash as a clean verdict.
     raise WebSearchModelFailure(
         f"the analysis model failed on all {len(_PROMPT_BUDGETS)} attempts "
-        f"(last: {type(last_exc).__name__})"   # type only: the message can quote the raw model reply
+        f"(last: {type(last_exc).__name__})",   # type only: the message can quote the raw model reply
+        evidence=explain(WebSearchEvidence(hits_searched=len(hits),
+                                           live_pages_read=len(fetched.live),
+                                           unreadable_count=len(fetched.unreadable))),
     ) from last_exc
 
 
@@ -211,7 +268,7 @@ _MAX_HITS = 10
 
 
 async def _gather_hits(removed: Article, search_provider: BaseSearchProvider,
-                       leads: List[SearchResult]) -> List[SearchResult]:
+                       leads: List[SearchResult]) -> tuple[List[SearchResult], int, int]:
     """Search passes, relocation-first, merged and de-duplicated.
 
     Candidate order: the LEADS earlier steps handed over first (the archive's similarity
@@ -229,8 +286,9 @@ async def _gather_hits(removed: Article, search_provider: BaseSearchProvider,
     while the bare-title search never surfaces it — near-identical sibling headlines drown the story, and an
     exact-phrase query cuts through the title collision.
 
-    Every pass degrades to `[]` independently (a provider never raises), so a failed pass
-    just contributes nothing.
+    Every pass degrades to `[]` independently (a provider never raises).
+    search_checked also reports failure, distinguishing an outage from zero hits.
+    Return merged candidates, web queries attempted, and web queries failed.
     """
     passes: List[List[SearchResult]] = []
 
@@ -248,24 +306,26 @@ async def _gather_hits(removed: Article, search_provider: BaseSearchProvider,
     language = guess_language(removed.url)
 
     web_passes: List[List[SearchResult]] = []
+    queries = failed = 0
+
+    async def query(text):
+        nonlocal queries, failed
+        if not search_provider.enabled:
+            return
+        queries += 1
+        results, query_failed = await search_provider.search_checked(
+            text, max_results=_HITS_PER_PASS, language=language,
+        )
+        failed += int(query_failed)
+        web_passes.append(results)
+
     host = host_of(removed.url)
     if host:
-        scoped = await search_provider.search(
-            f"site:{host} {removed.title}", max_results=_HITS_PER_PASS, language=language,
-        )
-        web_passes.append(scoped)
-
-    general = await search_provider.search(removed.title, max_results=_HITS_PER_PASS,
-                                           language=language)
-    web_passes.append(general)
-
-    # Pass 3 — ONE distinctive quoted phrase from the article's prose (see the docstring).
-    # Degrades to nothing on short or empty content.
+        await query(f"site:{host} {removed.title}")
+    await query(removed.title)
     phrase = distinctive_phrase(prose_of(removed.content))
     if phrase:
-        quoted = await search_provider.search(f'"{phrase}"', max_results=_HITS_PER_PASS,
-                                              language=language)
-        web_passes.append(quoted)
+        await query(f'"{phrase}"')
 
     passes.extend(web_passes)
 
@@ -290,7 +350,7 @@ async def _gather_hits(removed: Article, search_provider: BaseSearchProvider,
         merged.append(hit)
         if len(merged) >= _MAX_HITS:
             break
-    return merged
+    return merged, queries, failed
 
 
 async def _fetch_new(hits: List[SearchResult], prefetched: FetchOutcome, exclude_url: str) -> FetchOutcome:
