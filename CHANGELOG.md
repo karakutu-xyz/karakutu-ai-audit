@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Two evidence fixes that can change verdicts. The source step now calls a cited page the same story, and hands it to web search as a lead, only when it holds at least 20% of the archived text (the existing sibling line); a readable cited page below that is reported as not shown to be the same story instead of "live". Related-removal key terms no longer treat all-caps header runs or labels as acronyms or company and legal-form pairs as names, and two-word names match only from a word start. New runs get a new workflow ID.
+- Add invented Turkish verdict benchmarks, offline report comparison by workflow,
+  and page-pair measurements with strict expected failures for planned fixes.
+
 - `make dev` stops every process it started on Ctrl-C, including one started an instant before the stop and not yet recorded, which used to keep running (most often seen as a flaky runner test on a busy machine). The runner test is now load-independent too: shell fakes instead of Python, event waits with a hang cap instead of 5-second budgets, its own process group, and an early runner exit fails at once with the runner's output.
 - A step cut off by a stop now reads "Stage did not complete: the audit was stopped." (no outcome) instead of blaming the model, in new step records and in the audit story, including runs saved earlier; an unexpected error says so too. Real model failures keep their wording.
 - `make dev` and `scripts/run-local.sh --check` now check offline that `web/node_modules` and the Python environment match `web/package-lock.json` and `uv.lock` before starting anything. A checkout pulled without reinstalling used to start Vite and fail in the browser on a missing import; now it stops with the command to run (`npm --prefix web ci` or `uv sync --frozen`). Nothing is printed when both are current, and nothing is installed or downloaded.

@@ -178,12 +178,36 @@ line: `removed_article: {url, title, content}`, plus optional `label` and `expec
 
 ```sh
 uv run python scripts/benchmark.py data/benchmark/cases.jsonl
-uv run python scripts/benchmark.py --demo   # two fictional smoke cases against your real model
+uv run python scripts/benchmark.py --demo   # two fictional smoke cases
+uv run python scripts/benchmark.py --set verdict-quality
 ```
 
 The script submits through the benchmark route only, waits for the results and writes a report
 to `data/reports/`. Set `API_AUTH_TOKEN` in the environment if the API needs a token. Run the
 same cases after a workflow change to compare versions by workflow ID.
+
+The Turkish `verdict-quality` set has 15 invented cases: public affairs without
+wrongdoing allegations, clear accountability or rights issues, private matters
+of influential people, low-interest controls, and archive HTML hiding the prose.
+Use a live-mode API with your model for these measurements; test mode gives
+synthetic answers. The report measures verdict and relevance per pattern.
+Relocation, rewrites, shared footers and unrelated cited sources use offline
+page-pair tests in `backend/tests/test_verdict_patterns.py`; the API cannot
+supply fake live pages.
+
+Compare saved reports without network access (omit workflow options when each
+report contains only one workflow):
+
+```sh
+uv run python scripts/benchmark_compare.py data/reports/before.json \
+  data/reports/after.json --before-workflow OLD --after-workflow NEW \
+  --markdown data/reports/comparison.md
+```
+
+The same report can serve both sides with different workflow IDs. Cases match by
+label, using the latest run per label. `fixed` means the verdict now matches its
+expectation; `broke` means it stopped matching. The table also shows relevance
+outcomes and per-side totals. Markdown is written only when requested.
 
 ## Development with Tilt
 

@@ -65,7 +65,13 @@ The six editable system prompts come from the database, seeded byte-for-byte fro
 2. Run focused regression tests and complete local checks. Update this guide and the changelog when behavior or contracts change.
 3. Activation/rollback immediately saves a new workflow snapshot and replaces the current workflow, without restarting. Activation reuses the source, dependencies and settings captured at startup; source edits need a restart. Format 3 fingerprints include the effective per-step model mapping and exact active prompt texts, source, locked dependencies, search configuration and behavior settings. Version IDs, authors, activation notes and timestamps do not affect the fingerprint. Returning to the same texts returns the same workflow ID when the rest of the definition is unchanged.
 4. Each submission captures the workflow, prompts and models before queueing. Queued and running runs keep that set throughout execution; later submissions use the newly active set. Stage agents are private to each run. Historical inputs and workflow snapshots never change.
-5. Run the same ignored benchmark corpus against the new revision. Compare actual/expected verdicts, per-step evidence, model responses and reviewer reactions by workflow ID. Retain previous runs; reactions do not silently tune prompts or outputs.
+5. Run the same benchmark cases against the new revision, including
+   `scripts/benchmark.py --set verdict-quality` for the invented Turkish relevance
+   boundaries. Use `scripts/benchmark_compare.py` on the before/after reports,
+   selecting workflow IDs when needed, to inspect fixed/broke verdicts and
+   relevance outcomes. Compare per-step evidence, model responses and reviewer
+   reactions too. Retain previous runs; reactions do not silently tune prompts
+   or outputs.
 
 At startup, a changed source default creates a new default-origin version only if that exact default text has never been stored. It activates automatically only while a default-origin version is active. An active API version stays selected across source-default changes and restarts; operators must activate a new default explicitly if desired. Identical source defaults do nothing on restart. Backend source/rule changes still require restart and also change the fingerprint. Historical format 1 snapshots remain readable without a `prompts` field; format 1/2 snapshots remain readable without a `models` block.
 
