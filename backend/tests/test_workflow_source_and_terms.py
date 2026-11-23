@@ -55,7 +55,7 @@ async def test_a_cited_page_carrying_the_story_is_the_same_story_and_a_lead(monk
     assert "LIVE and the same story" in ev.reasoning
 
 
-@pytest.mark.parametrize("page_text", [OTHER, "kısa"], ids=["other-story", "unmeasurable"])
+@pytest.mark.parametrize("page_text", [OTHER, "— · —"], ids=["other-story", "unmeasurable"])
 async def test_a_cited_page_below_the_bar_is_not_the_same_story(monkeypatch, page_text):
     # A different story from the same outlet, or a page too short to measure.
     ev = await audit_with_cited_page(monkeypatch, page_text)
@@ -63,6 +63,11 @@ async def test_a_cited_page_below_the_bar_is_not_the_same_story(monkeypatch, pag
     assert ev.live_source is None            # never handed to web search as a lead
     assert ev.dead_source is None
     assert "not shown to be the same story" in ev.reasoning
+    if page_text == OTHER:
+        assert ev.source_containment is not None and ev.source_containment < 0.2
+    else:
+        assert ev.source_containment is None
+        assert "the overlap could not be measured" in ev.reasoning
     assert f"{source.CITED_SAME_STORY_MIN:.0%} same-story bar" in ev.reasoning
     assert "LIVE" not in ev.reasoning.split("The text credits")[1]
 
@@ -85,17 +90,18 @@ def test_an_isolated_acronym_is_a_strong_term():
     "SON DAKİKA: KZB LİMAN İŞÇİLERİ GREVDE",  # an all-caps headline run
     "ÖZEL HABER Kuzeyhan limanında yeni karar",
     "FLAŞ Kuzeyhan limanında yeni karar",       # a lone header label
+    "Kuzeyhan KZB'DE KRİZ yaşanıyor",           # a suffixed neighbour still makes a run
 ])
 def test_header_runs_and_labels_are_not_acronyms(title):
     assert "acronym" not in kinds_of(title).values()
 
 
 @pytest.mark.parametrize("pair", ["Anonim Şirketi", "Yatırım Holding", "Liman Holding",
-                                  "Deniz Sanayi", "Kuzey Group"])
+                                  "Deniz Sanayi", "Kuzey Group", "Kuzey Holdingleri",
+                                  "Liman Şirketleri", "Deniz Grubu"])
 def test_company_and_legal_form_pairs_are_not_strong_bigrams(pair):
     kinds = kinds_of(f"Dava açıldı: Kuzeyhan {pair} yöneticisi ifade verdi")
-    assert not [k for k, v in kinds.items() if v == "bigram" and k.split()[-1] in
-                rr.LEGAL_FORM_PARTS | {rr.fold(pair.split()[-1])}]
+    assert not [k for k, v in kinds.items() if v == "bigram" and rr.fold(pair) in k]
 
 
 def test_a_named_pair_is_still_a_strong_bigram():

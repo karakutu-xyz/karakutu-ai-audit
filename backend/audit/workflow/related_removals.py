@@ -83,11 +83,16 @@ GENERIC_BIGRAM_PARTS = {"haberleri", "gazete", "gazetesi", "resmi", "spor", "eko
 # Company and legal-form words (folded). A capitalised pair with one of these names a company
 # form ("Anonim Şirketi", "Yatırım Holding"), which many unrelated companies share, so it is
 # never a strong term; the distinctive part can still count as a recurring single word.
-LEGAL_FORM_PARTS = {
-    "anonim", "sirketi", "sirket", "sirketler", "limited", "ltd", "sti", "as", "holding",
-    "holdingi", "sanayi", "ticaret", "tic", "san", "insaat", "yatirim", "yatirimlari", "grubu",
-    "grup", "group", "kooperatifi", "inc", "corp", "corporation", "company", "gmbh", "llc", "plc",
-}
+# Stems cover Turkish inflection ("Holdingleri", "Şirketlerin"); short forms match exactly.
+LEGAL_FORM_STEMS = ("anonim", "sirket", "limited", "holding", "sanayi", "ticaret", "insaat",
+                    "yatirim", "grub", "grup", "group", "kooperatif", "corporat", "compan")
+LEGAL_FORM_EXACT = {"ltd", "sti", "as", "tic", "san", "inc", "corp", "gmbh", "llc", "plc"}
+
+
+def is_legal_form(word: str) -> bool:
+    """Whether a folded word is a company or legal-form word, inflected or not."""
+    return word in LEGAL_FORM_EXACT or word.startswith(LEGAL_FORM_STEMS)
+
 # All-caps labels that mark a header or a page section, not a named body.
 HEADER_LABELS = {"flas", "ozel", "video", "guncel", "guncelleme", "foto", "galeri", "canli",
                  "yorum", "analiz", "roportaj", "manset", "duyuru", "reklam", "ilan"}
@@ -152,10 +157,11 @@ def key_terms(title: str, text: str) -> Tuple[Dict[str, str], Set[str], Dict[str
                 is_acr = len(w_clean) >= 2 and w_clean.isupper() and w_clean.isalpha()
                 # An acronym stands alone; a run of capitals is a header or shouting ("SON
                 # DAKİKA", "ÖZEL HABER"), and a header label is never a named body.
+                # Neighbours are judged without their suffix ("KZB'DE KRİZ" is a shouted run).
                 shouted = any(
                     len(n) >= 2 and n.isupper() and n.isalpha()
-                    for n in (toks[i - 1].strip("“”\"'’‘(),.:;!?") if i > 0 else "",
-                              toks[i + 1].strip("“”\"'’‘(),.:;!?") if i + 1 < len(toks) else ""))
+                    for n in (re.sub(r"[’'‘].*$", "", toks[j].strip("“”\"'’‘(),.:;!?"))
+                              for j in (i - 1, i + 1) if 0 <= j < len(toks)))
                 if is_acr and (shouted or fold(base) in HEADER_LABELS):
                     is_acr = False
                 is_cap = w_clean[:1].isupper() and not w_clean.isupper() and len(w_clean) >= 3
@@ -173,7 +179,7 @@ def key_terms(title: str, text: str) -> Tuple[Dict[str, str], Set[str], Dict[str
                     if is_cap and nxt_base[:1].isupper() and not nxt_base.isupper() and len(nxt_base) >= 3:
                         a, b = fold(base), fold(nxt_base)
                         if (a not in GENERIC_BIGRAM_PARTS and b not in GENERIC_BIGRAM_PARTS
-                                and a not in LEGAL_FORM_PARTS and b not in LEGAL_FORM_PARTS
+                                and not is_legal_form(a) and not is_legal_form(b)
                                 and not (a in GENERIC_ENTITIES and b in GENERIC_ENTITIES)):
                             ents.setdefault(a + " " + b, f"{base} {nxt_base}")
                             kinds[a + " " + b] = "bigram"
