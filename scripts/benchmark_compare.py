@@ -83,28 +83,27 @@ def select_runs(report, workflow, side):
         )
     selected = workflow or (ids[0] if ids else None)
     latest = {}
+    metadata = {}
+    cases = report.get("cases", [])
     # Dict insertion order preserves the first occurrence of each label.
-    for run in report["runs"]:
+    for index, run in enumerate(report["runs"]):
         if run["workflow_id"] != selected:
             continue
         label = run["label"]
         stamp = created_at(run)
         if label not in latest or stamp >= created_at(latest[label]):
             latest[label] = run
-    if not latest:
-        raise ReportError(f"No runs left in {side} after workflow selection")
-    metadata = {case.get("label"): case for case in report.get("cases", [])}
-    return (
-        selected,
-        latest,
-        {
-            label: {
-                key: metadata.get(label, {}).get(key, run.get(key))
+            # Reports append case metadata alongside each run, including repeats.
+            case = cases[index] if index < len(cases) else {}
+            if case.get("label") != label:
+                case = {}
+            metadata[label] = {
+                key: case.get(key, run.get(key))
                 for key in ("pattern", "expected_verdict", "expected_relevance")
             }
-            for label, run in latest.items()
-        },
-    )
+    if not latest:
+        raise ReportError(f"No runs left in {side} after workflow selection")
+    return selected, latest, metadata
 
 
 def change_marker(before, after, expected):
@@ -168,38 +167,50 @@ def compare(before, after):
         "change",
     ]
     rows = []
+    metadata = {**new_meta, **old_meta}
+    conflicts = [
+        label for label in old if label in new and old_meta[label] != new_meta[label]
+    ]
     for label in dict.fromkeys([*old, *new]):
-        metadata = {
-            key: old_meta.get(label, {}).get(key)
-            for key in ("pattern", "expected_verdict", "expected_relevance")
-        }
-        for key, value in metadata.items():
-            if value is None:
-                metadata[key] = new_meta.get(label, {}).get(key)
+        expected = metadata[label]
         old_verdict = old.get(label, {}).get("verdict")
         new_verdict = new.get(label, {}).get("verdict")
+        if label not in old:
+            marker = "added"
+        elif label not in new:
+            marker = "missing"
+        else:
+            marker = change_marker(
+                old_verdict, new_verdict, expected["expected_verdict"]
+            )
         rows.append(
             [
                 label,
-                metadata["pattern"],
-                metadata["expected_verdict"],
+                expected["pattern"],
+                expected["expected_verdict"],
                 old_verdict,
                 new_verdict,
-                metadata["expected_relevance"],
+                expected["expected_relevance"],
                 run_relevance(old.get(label)),
                 run_relevance(new.get(label)),
-                change_marker(
-                    old_verdict, new_verdict, metadata["expected_verdict"]
-                ),
+                marker,
             ]
         )
     fixed = sum(row[-1] == "fixed" for row in rows)
     broke = sum(row[-1] == "broke" for row in rows)
+    added = sum(row[-1] == "added" for row in rows)
+    missing = sum(row[-1] == "missing" for row in rows)
     header = f"Before workflow: {before_id} | After workflow: {after_id}"
     summary = [
-        "Before: " + side_summary(old, old_meta),
-        "After: " + side_summary(new, new_meta),
-        f"Changes: fixed={fixed}, broke={broke}",
+        *(
+            f"Warning: metadata conflict for label {display(label)}; "
+            "using BEFORE metadata"
+            for label in conflicts
+        ),
+        "Before: " + side_summary(old, metadata),
+        "After: " + side_summary(new, metadata),
+        f"Changes: fixed={fixed}, broke={broke}, added={added}, "
+        f"missing={missing}, metadata_conflicts={len(conflicts)}",
     ]
     return header, columns, [[display(v) for v in row] for row in rows], summary
 

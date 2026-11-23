@@ -160,7 +160,8 @@ def run_offline_audit(monkeypatch):
     """Real graph and fetch parsing; all external boundaries are in-process fakes."""
 
     async def run(
-        article, *, similar=(), pages=None, relevant=True, source_result=None
+        article, *, similar=(), pages=None, relevant=True, source_result=None,
+        web_result=None,
     ):
         pages = pages or {}
         assert all(is_public_web_url(url) for url in [article.url, *pages])
@@ -198,7 +199,7 @@ def run_offline_audit(monkeypatch):
             related_removals=FakeAgent("NONE"),
             source=FakeAgent(source_result or source.SourceResult()),
             web_search=FakeAgent(
-                web_search.WebSearchResult(
+                web_result or web_search.WebSearchResult(
                     reasoning="No invented match selected",
                 )
             ),
@@ -276,11 +277,6 @@ async def test_measured_copy_outlives_low_interest(run_offline_audit):
     assert result["response"]["verdict"] == "LIKELY_MOVED"
 
 
-def _recognised_as_rewrite(old_url, old_text, new_url, new_text):
-    """Stage B replaces this placeholder with the real rewrite signal."""
-    return False
-
-
 def test_next_id_rewrite_is_below_sibling_bar(record_property):
     values = measure(
         record_property,
@@ -293,14 +289,34 @@ def test_next_id_rewrite_is_below_sibling_bar(record_property):
     assert NEW_URL.split("/")[4] == "71001"
 
 
-@pytest.mark.xfail(strict=True, reason="stage B: same-publisher rewrite signal")
-def test_next_id_rewrite_is_recognised():
-    assert _recognised_as_rewrite(
-        OLD_URL,
-        html_to_text(page(BUDGET)),
-        NEW_URL,
-        html_to_text(page(REWRITE)),
+async def next_id_rewrite(run_offline_audit):
+    return await run_offline_audit(
+        budget_article(),
+        similar=[candidate()],
+        pages={NEW_URL: page(REWRITE)},
+        relevant=True,
+        web_result=web_search.WebSearchResult(
+            matches=[web_search.PageMatch(url=NEW_URL, covers_key_facts=True)],
+            reasoning="Same invented water decision and dates, rewritten wording",
+        ),
     )
+
+
+async def test_next_id_rewrite_is_set_aside_today(run_offline_audit):
+    result = await next_id_rewrite(run_offline_audit)
+    measured = details(result, "similarity")["candidates"][0]
+    assert max(measured["old_in_new"], measured["new_in_old"]) < SIBLING_MAX
+    web = details(result, "web_search")
+    assert web["related_same_publisher"] == [NEW_URL]
+    assert web["relocated_to"] is None
+    assert result["response"]["verdict"] == "INCONCLUSIVE"
+
+
+@pytest.mark.xfail(strict=True, reason="stage B: same-publisher rewrite signal")
+async def test_next_id_rewrite_is_recognised(run_offline_audit):
+    result = await next_id_rewrite(run_offline_audit)
+    assert result["response"]["verdict"] == "LIKELY_MOVED"
+    assert details(result, "web_search")["relocated_to"] == NEW_URL
 
 
 def footer_orchard():
@@ -340,6 +356,44 @@ def test_unrelated_articles_overlap_only_through_footer(record_property):
 )
 def test_shared_footer_is_dropped():
     assert max(footer_containments()) < 0.02
+
+
+async def shared_footer_match(run_offline_audit):
+    article = budget_article()
+    article.content = page(BUDGET + FOOTER)
+    return await run_offline_audit(
+        article,
+        similar=[SimilarArticle(
+            id=71001, link=NEW_URL, title="Invented plateau orchard survey"
+        )],
+        pages={NEW_URL: page(footer_orchard() + FOOTER)},
+        relevant=True,
+        web_result=web_search.WebSearchResult(
+            matches=[web_search.PageMatch(url=NEW_URL, covers_key_facts=True)],
+            reasoning="Invented model mistakes shared footer for the same story",
+        ),
+    )
+
+
+async def test_shared_footer_is_relocation_today(run_offline_audit):
+    result = await shared_footer_match(run_offline_audit)
+    web = details(result, "web_search")
+    assert max(web["old_in_new"], web["new_in_old"]) > SIBLING_MAX
+    assert web["related_same_publisher"] == []
+    assert web["relocated_to"] == NEW_URL
+    assert result["response"]["verdict"] == "LIKELY_MOVED"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="stage B: shared boilerplate is dropped before scoring",
+)
+async def test_shared_footer_page_is_set_aside(run_offline_audit):
+    result = await shared_footer_match(run_offline_audit)
+    web = details(result, "web_search")
+    assert web["relocated_to"] is None
+    assert web["related_same_publisher"] == [NEW_URL]
+    assert result["response"]["verdict"] == "INCONCLUSIVE"
 
 
 async def cited_different_story(run_offline_audit):

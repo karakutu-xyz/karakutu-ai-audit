@@ -206,8 +206,12 @@ uv run python scripts/benchmark_compare.py data/reports/before.json \
 
 The same report can serve both sides with different workflow IDs. Cases match by
 label, using the latest run per label. `fixed` means the verdict now matches its
-expectation; `broke` means it stopped matching. The table also shows relevance
-outcomes and per-side totals. Markdown is written only when requested.
+expectation; `broke` means it stopped matching. Cases present on only one side
+are counted separately as `added` or `missing`. Metadata comes from the entry
+paired with the selected run. If both sides disagree on metadata, the comparison
+uses the before side's expectations for the table and totals, warns with the
+label, and counts `metadata_conflicts`. The table also shows relevance outcomes
+and per-side totals. Markdown is written only when requested.
 
 ## Development with Tilt
 

@@ -223,12 +223,110 @@ def test_compare_matches_labels_latest_and_change_markers(
     assert markers["broke"] == "broke"
     assert markers["changed"] == "changed"
     assert markers["unchanged"] == ""
+    assert markers["only before"] == "missing"
+    assert markers["only after"] == "added"
+    assert "fixed=1, broke=1, added=1, missing=1" in output
     assert rows[1][3].strip() == "AUDIT_FAILED"
     assert rows[5][4].strip() == "-"
     assert rows[6][3].strip() == "-"
     assert "Before: total=5, matching expected verdict=3" in output
     assert "After: total=5, matching expected verdict=3" in output
     assert "matching expected relevance=4, failed runs=1" in output
+
+
+@pytest.mark.parametrize("partial_side", ["before", "after"])
+@pytest.mark.parametrize("verdict", ["INCONCLUSIVE", "MOVED", None])
+def test_partial_report_has_presence_markers(scripts, partial_side, verdict):
+    module = scripts["benchmark_compare"]
+    complete = report([
+        run("shared", "INCONCLUSIVE"),
+        run("one side only", verdict),
+    ])
+    partial = report([run("shared", "INCONCLUSIVE")])
+    before, after = (
+        (partial, complete) if partial_side == "before" else (complete, partial)
+    )
+    comparison = module.compare(
+        module.select_runs(before, None, "before"),
+        module.select_runs(after, None, "after"),
+    )
+    row = next(row for row in comparison[2] if row[0] == "one side only")
+    assert row[-1] == ("added" if partial_side == "before" else "missing")
+    assert "fixed=0, broke=0" in comparison[3][-1]
+    assert (
+        "added=1, missing=0" if partial_side == "before"
+        else "added=0, missing=1"
+    ) in comparison[3][-1]
+
+
+@pytest.mark.parametrize("excluded", ["workflow", "older run"])
+def test_metadata_belongs_to_selected_run(scripts, excluded):
+    module = scripts["benchmark_compare"]
+    selected = run("case", "INCONCLUSIVE", workflow="chosen")
+    ignored = run(
+        "case", "MOVED", expected="MOVED",
+        workflow="excluded" if excluded == "workflow" else "chosen",
+        date="2031-03-11T10:00:00Z",
+    )
+    value = report([selected, ignored])
+    value["cases"][1].update(
+        pattern="excluded-pattern", expected_relevance=False,
+    )
+    _, runs, metadata = module.select_runs(value, "chosen", "before")
+    assert runs == {"case": selected}
+    assert metadata["case"] == {
+        "pattern": "invented-pattern",
+        "expected_verdict": "INCONCLUSIVE",
+        "expected_relevance": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "key, before_value, after_value",
+    [
+        ("pattern", "before-pattern", "after-pattern"),
+        ("expected_verdict", "INCONCLUSIVE", "MOVED"),
+        ("expected_relevance", True, False),
+        ("expected_relevance", None, True),
+    ],
+)
+def test_metadata_conflict_uses_before_and_warns(
+    scripts, tmp_path, capsys, key, before_value, after_value,
+):
+    module = scripts["benchmark_compare"]
+    before = report([run("conflicting case", "MOVED")])
+    after = report([run("conflicting case", "INCONCLUSIVE", workflow="after")])
+    before["cases"][0][key] = before_value
+    after["cases"][0][key] = after_value
+    old_path = write_report(tmp_path, "old.json", before)
+    new_path = write_report(tmp_path, "new.json", after)
+    markdown = tmp_path / "comparison.md"
+    assert module.main([
+        str(old_path), str(new_path), "--markdown", str(markdown),
+    ]) == 0
+    output = capsys.readouterr().out
+    for text in (output, markdown.read_text()):
+        assert (
+            "Warning: metadata conflict for label conflicting case; "
+            "using BEFORE metadata"
+        ) in text
+        assert "metadata_conflicts=1" in text
+        assert "fixed=1, broke=0" in text
+        assert MARKER not in text
+    comparison = module.compare(
+        module.select_runs(before, None, "before"),
+        module.select_runs(after, None, "after"),
+    )
+    row = comparison[2][0]
+    assert row[1] == before["cases"][0]["pattern"]
+    assert row[2] == before["cases"][0]["expected_verdict"]
+    assert row[5] == module.display(before["cases"][0]["expected_relevance"])
+    # Summary expectations use the same BEFORE metadata as the table.
+    assert "After: total=1, matching expected verdict=1" in output
+    relevance_matches = int(before["cases"][0]["expected_relevance"] is True)
+    assert (
+        f"matching expected relevance={relevance_matches}, failed runs=0"
+    ) in output
 
 
 def test_compare_falls_back_to_run_metadata(scripts, tmp_path, capsys):
