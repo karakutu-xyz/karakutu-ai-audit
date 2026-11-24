@@ -10,12 +10,13 @@ below: models → agent builder → run orchestration → prompt/grounding helpe
 
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from audit.model import Agent
 from audit.model import Model
 
 from audit.domain import Article
 from audit.search.base import BaseSearchProvider, SearchResult
+from audit.search.boilerplate import Measurement, build_boilerplate, measure
 from audit.search.fetch import (
     MAX_PAGE_CHARS,
     MAX_PAGES_IN_PROMPT,
@@ -30,7 +31,7 @@ from audit.search.fetch import (
     prose_of,
     same_publisher,
 )
-from audit.search.textmatch import SIBLING_MAX, directional_containments, distinctive_phrase
+from audit.search.textmatch import SIBLING_MAX, distinctive_phrase
 from audit.workflow import prompts
 
 
@@ -118,6 +119,12 @@ class WebSearchEvidence(BaseModel):
     # and says so in the findings.
     relocation_old_in_new: Optional[float] = None
     relocation_new_in_old: Optional[float] = None
+    raw_old_in_new: Optional[float] = None
+    raw_new_in_old: Optional[float] = None
+    # Stripped paragraph counts: removed article, relocation.
+    boilerplate_paragraphs: Optional[tuple[int, int]] = None
+    # Includes demoted pages, whose relocation fields remain empty.
+    same_publisher_measurements: dict[str, Measurement] = Field(default_factory=dict)
     # Same-publisher live pages the model CALLED a match but whose text MEASURES as a
     # different article (both containments < SIBLING_MAX): siblings from the same news
     # cycle, not relocations. Reviewer context only — never matches, never a relocation.
@@ -142,6 +149,14 @@ class WebSearchEvidence(BaseModel):
     # from "the fetch failed". (When the search backend degrades it serves PDFs and sitemaps.)
     unreadable_count: int = 0
     reasoning: str = ""
+
+
+def overlap_details(web: WebSearchEvidence) -> dict:
+    """Additional numeric review details, including set-aside candidates."""
+    return web.model_dump(mode="json", include={
+        "raw_old_in_new", "raw_new_in_old", "boilerplate_paragraphs",
+        "same_publisher_measurements",
+    })
 
 
 def candidate_counts(web: WebSearchEvidence) -> str:
@@ -444,6 +459,13 @@ def _ground(raw: WebSearchResult, fetched: FetchOutcome, removed: Article,
     related_same_publisher: List[SearchResult] = []
     invented: List[str] = []
     removed_prose = prose_of(removed.content)  # the archive hands content as raw HTML
+    boilerplate = build_boilerplate(removed_prose, (
+        p.text for p in live_by_url.values()
+        if same_publisher(p.url, removed.url)
+        and normalize_url(p.url) != normalize_url(removed.url)
+    ))
+    measurements: dict[str, Measurement] = {}
+    relocation_measurement: Optional[Measurement] = None
 
     for m in raw.matches:
         page: Optional[LivePage] = live_by_url.get(normalize_url(m.url))
@@ -462,11 +484,14 @@ def _ground(raw: WebSearchResult, fetched: FetchOutcome, removed: Article,
         # UNMEASURABLE fit (no usable text on a side) never demotes — no evidence, no call.
         # Cross-publisher matches are never measured: different outlets legitimately rewrite.
         if relocated_to is None and same_publisher(page.url, removed.url):
-            o, n = directional_containments(removed_prose, page.text)
+            measured = measure(removed_prose, page.text, boilerplate)
+            measurements[page.url] = measured
+            o, n = measured.cleaned
             if o is not None and max(o, n) < SIBLING_MAX:
                 related_same_publisher.append(hit)
                 continue   # not a same-story match, not a relocation
             relocated_to = hit
+            relocation_measurement = measured
             relocation_old_in_new = o
             relocation_new_in_old = n
             relocation_covers_key_facts = m.covers_key_facts
@@ -498,6 +523,13 @@ def _ground(raw: WebSearchResult, fetched: FetchOutcome, removed: Article,
         omissions=omissions,
         relocation_old_in_new=relocation_old_in_new,
         relocation_new_in_old=relocation_new_in_old,
+        raw_old_in_new=(relocation_measurement.raw_old_in_new
+                        if relocation_measurement else None),
+        raw_new_in_old=(relocation_measurement.raw_new_in_old
+                        if relocation_measurement else None),
+        boilerplate_paragraphs=(relocation_measurement.boilerplate_paragraphs
+                               if relocation_measurement else None),
+        same_publisher_measurements=measurements,
         related_same_publisher=related_same_publisher,
         matches=matches,
         dead_same_story=dead_same_story,

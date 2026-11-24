@@ -16,6 +16,8 @@ markup+CTA boilerplate against extracted prose depresses even a verbatim republi
 old_in_new far below the MOVED bar.
 
 Calibration: compare prose-extracted text on BOTH sides (the repo's own `html_to_text`).
+Same-publisher scores are measured after same-site boilerplate is dropped (see
+`boilerplate.py`).
 The shapes the thresholds separate:
 
     verbatim republication   old_in_new at (or a hair below) 1.0; new_in_old high but
@@ -48,6 +50,10 @@ SHINGLE_K = 5
 #   PARTIAL_MIN. Only a fit measurably BELOW this may demote a candidate.
 # PARTIAL_MIN = 0.30 — the floor above which a partial fit is called "substantial" in
 #   findings. A rewritten same-event story sits well inside the band.
+#
+# Rechecked on boilerplate-cleaned invented page families (test_boilerplate.py): copies,
+# including one whose site furniture changed, measure 1.0; a shortened copy and a rewrite
+# about 0.48; a sibling and a footer-only page 0.0 (0.23 raw). The bars are unchanged.
 MOVED_THRESHOLD = 0.99
 PARTIAL_MIN = 0.30
 SIBLING_MAX = 0.20

@@ -395,12 +395,20 @@ class AuditEngine:
             note = web_search.search_failure_note(exc.evidence) if exc.evidence else ''
             if exc.evidence is not None:
                 # The note follows: a failed step is recognised by its leading sentence.
-                failed = failed.model_copy(update={'explanation': (failed.explanation + ' ' + note).strip(),
-                                                   'details': pipeline._web_details(exc.evidence)})
+                failed = failed.model_copy(update={
+                    'explanation': (failed.explanation + ' ' + note).strip(),
+                    'details': (pipeline._web_details(exc.evidence)
+                                | web_search.overlap_details(exc.evidence)),
+                })
             return failed, {'failure': note + 'The web-search model failed on every attempt.'}
         if src.dead_source and not any(normalize_url(d.url) == normalize_url(src.dead_source.url) for d in out.dead_same_story):
             out.dead_same_story.insert(0, src.dead_source)
-        return StageResult(stage=stage, outcome=StageOutcome.PASS if out.matches else StageOutcome.FAIL, explanation=out.reasoning, details=pipeline._web_details(out)), {'web':out}
+        return StageResult(
+            stage=stage,
+            outcome=StageOutcome.PASS if out.matches else StageOutcome.FAIL,
+            explanation=out.reasoning,
+            details=pipeline._web_details(out) | web_search.overlap_details(out),
+        ), {'web':out}
 
     async def run(self, request: AuditRequest, on_step=None, prompts: dict[str, str] | None = None, models: dict | None = None) -> dict:
         agents = getattr(self, 'agents', None)

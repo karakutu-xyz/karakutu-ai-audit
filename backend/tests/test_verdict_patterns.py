@@ -1,4 +1,4 @@
-"""Invented page pairs covering relocation rules and pending rewrite/footer targets."""
+"""Invented page families covering relocation, boilerplate and pending rewrites."""
 
 from html import escape
 from types import SimpleNamespace
@@ -10,15 +10,17 @@ from audit.clients.models import SimilarArticle
 from audit.domain import Article, AuditRequest
 from audit.engine import AuditEngine
 from audit.search import fetch as fetch_module
-from audit.search.base import BaseSearchProvider
-from audit.search.fetch import html_to_text
-from audit.search.textmatch import SIBLING_MAX, directional_containments
+from audit.search.base import BaseSearchProvider, SearchResult
+from audit.search.boilerplate import build_boilerplate, measure as measure_cleaned
+from audit.search.fetch import FetchOutcome, LivePage, html_to_text
+from audit.search.textmatch import MOVED_THRESHOLD, SIBLING_MAX, directional_containments
 from audit.search.urls import is_public_web_url
 from audit.workflow import classification, pipeline, relevance, source, web_search
 
 
 OLD_URL = "https://dusulke.example/haber/71000/water-budget"
 NEW_URL = "https://dusulke.example/haber/71001/water-budget-revised"
+SECOND_URL = "https://dusulke.example/haber/71002/pottery-exhibition"
 CITED_URL = "https://bulut-defteri.example/haber/82000/orchard-survey"
 
 BUDGET = [
@@ -90,6 +92,18 @@ FOOTER = [
     "Use the help menu to manage saved pages, update display settings or "
     "learn how the reading list works across devices. Thank you for "
     "supporting independent storytelling and returning to explore tomorrow.",
+]
+
+POTTERY = [
+    "This invented exhibition presents ceramic bowls beside colourful woven "
+    "baskets. Students paint small clay towers while instructors demonstrate "
+    "glaze mixing techniques. Visitors compare textures under soft lamps and "
+    "arrange decorated tiles around miniature sculptures before the workshop "
+    "closes. A printed catalogue describes kiln temperatures and drying times.",
+    "The fictional studio will open again next month with a second exhibition "
+    "of painted vases and carved wooden frames. Teachers plan an evening class on "
+    "simple wheel throwing, and children may bring their own sketches to turn "
+    "into small glazed plates that the studio fires during the following week.",
 ]
 
 
@@ -362,11 +376,13 @@ def footer_orchard():
 
 
 def footer_containments():
-    orchard = footer_orchard()
-    return directional_containments(
-        html_to_text(page(BUDGET + FOOTER)),
-        html_to_text(page(orchard + FOOTER)),
-    )
+    removed = html_to_text(page(BUDGET + FOOTER))
+    orchard = html_to_text(page(footer_orchard() + FOOTER))
+    pottery = html_to_text(page(POTTERY + FOOTER))
+    boilerplate = build_boilerplate(removed, [orchard, pottery])
+    return measure_cleaned(
+        removed, orchard, boilerplate,
+    ).cleaned
 
 
 def test_unrelated_articles_overlap_only_through_footer(record_property):
@@ -387,23 +403,26 @@ def test_unrelated_articles_overlap_only_through_footer(record_property):
     assert max(full_page) > 0.05
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="stage B: shared boilerplate is dropped before scoring",
-)
 def test_shared_footer_is_dropped():
     assert max(footer_containments()) < 0.02
 
 
-async def shared_footer_match(run_offline_audit):
+async def shared_footer_match(run_offline_audit, *, second_page=True):
     article = budget_article()
     article.content = page(BUDGET + FOOTER)
+    similar = [SimilarArticle(
+        id=71001, link=NEW_URL, title="Invented plateau orchard survey",
+    )]
+    pages = {NEW_URL: page(footer_orchard() + FOOTER)}
+    if second_page:
+        similar.append(SimilarArticle(
+            id=71002, link=SECOND_URL, title="Invented pottery exhibition",
+        ))
+        pages[SECOND_URL] = page(POTTERY + FOOTER)
     return await run_offline_audit(
         article,
-        similar=[SimilarArticle(
-            id=71001, link=NEW_URL, title="Invented plateau orchard survey"
-        )],
-        pages={NEW_URL: page(footer_orchard() + FOOTER)},
+        similar=similar,
+        pages=pages,
         relevant=True,
         web_result=web_search.WebSearchResult(
             matches=[web_search.PageMatch(url=NEW_URL, covers_key_facts=True)],
@@ -412,25 +431,149 @@ async def shared_footer_match(run_offline_audit):
     )
 
 
-async def test_shared_footer_is_relocation_today(run_offline_audit):
+async def test_shared_footer_is_set_aside_before_verdict(run_offline_audit):
     result = await shared_footer_match(run_offline_audit)
+    candidates = details(result, "similarity")["candidates"]
+    assert len(candidates) == 2
+    for measured in candidates:
+        assert measured["fit"] == "sibling"
+        assert max(measured["old_in_new"], measured["new_in_old"]) < 0.02
+        assert measured["boilerplate_paragraphs"] == [2, 2]
+        assert max(measured["raw_old_in_new"], measured["raw_new_in_old"]) > SIBLING_MAX
+    web = details(result, "web_search")
+    assert web["related_same_publisher"] == [NEW_URL]
+    assert web["relocated_to"] is None
+    assert result["response"]["verdict"] == "INCONCLUSIVE"
+
+
+async def test_lone_footer_page_still_counts_as_relocation(run_offline_audit):
+    # With only one other live article there is no independent furniture vote.
+    result = await shared_footer_match(run_offline_audit, second_page=False)
+    measured = details(result, "similarity")["candidates"][0]
+    assert measured["old_in_new"] == measured["raw_old_in_new"]
+    assert measured["new_in_old"] == measured["raw_new_in_old"]
+    assert measured["boilerplate_paragraphs"] == [0, 0]
     web = details(result, "web_search")
     assert max(web["old_in_new"], web["new_in_old"]) > SIBLING_MAX
+    assert web["old_in_new"] == web["raw_old_in_new"]
+    assert web["new_in_old"] == web["raw_new_in_old"]
+    assert web["boilerplate_paragraphs"] == [0, 0]
     assert web["related_same_publisher"] == []
     assert web["relocated_to"] == NEW_URL
     assert result["response"]["verdict"] == "LIKELY_MOVED"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="stage B: shared boilerplate is dropped before scoring",
-)
 async def test_shared_footer_page_is_set_aside(run_offline_audit):
     result = await shared_footer_match(run_offline_audit)
     web = details(result, "web_search")
     assert web["relocated_to"] is None
     assert web["related_same_publisher"] == [NEW_URL]
+    measured = web["same_publisher_measurements"][NEW_URL]
+    assert max(measured["old_in_new"], measured["new_in_old"]) < 0.02
+    assert max(measured["raw_old_in_new"], measured["raw_new_in_old"]) > SIBLING_MAX
+    assert measured["boilerplate_paragraphs"] == [2, 2]
     assert result["response"]["verdict"] == "INCONCLUSIVE"
+
+
+async def test_copy_with_changed_furniture_uses_cleaned_move_bar(run_offline_audit):
+    article = budget_article()
+    article.content = page(BUDGET + FOOTER)
+    orchard_url = "https://dusulke.example/haber/71003/orchard-survey"
+    result = await run_offline_audit(
+        article,
+        similar=[candidate(), SimilarArticle(id=71002, link=SECOND_URL),
+                 SimilarArticle(id=71003, link=orchard_url)],
+        pages={
+            NEW_URL: page(BUDGET),
+            SECOND_URL: page(POTTERY + FOOTER),
+            orchard_url: page(footer_orchard() + FOOTER),
+        },
+    )
+    measured = details(result, "similarity")["candidates"][0]
+    assert measured["raw_old_in_new"] < MOVED_THRESHOLD
+    assert measured["old_in_new"] >= MOVED_THRESHOLD
+    assert measured["fit"] == "verbatim"
+    assert measured["boilerplate_paragraphs"] == [2, 0]
+    assert result["response"]["verdict"] == "MOVED"
+    assert result["response"]["short_circuited_at"] == "similarity"
+
+
+def live_page(url, paragraphs):
+    return LivePage(
+        url=url, final_url=url, status=200, title="Invented live page",
+        text=html_to_text(page(paragraphs)),
+    )
+
+
+@pytest.mark.parametrize("excluded_vote_url", [OLD_URL, CITED_URL])
+def test_web_boilerplate_ignores_own_url_and_other_publishers(excluded_vote_url):
+    article = budget_article()
+    article.content = page(BUDGET + FOOTER)
+    fetched = FetchOutcome(live=[
+        live_page(NEW_URL, footer_orchard() + FOOTER),
+        live_page(excluded_vote_url, POTTERY + FOOTER),
+    ])
+    evidence = web_search._ground(web_search.WebSearchResult(
+        matches=[web_search.PageMatch(url=NEW_URL)], reasoning="Invented match",
+    ), fetched, article, 2)
+    assert evidence.relocated_to.url == NEW_URL
+    assert evidence.relocation_old_in_new == evidence.raw_old_in_new
+    assert evidence.relocation_new_in_old == evidence.raw_new_in_old
+    assert evidence.boilerplate_paragraphs == (0, 0)
+
+
+def test_web_relocation_records_cleaned_and_raw_copy_scores():
+    article = budget_article()
+    article.content = page(BUDGET + FOOTER)
+    fetched = FetchOutcome(live=[
+        live_page(NEW_URL, BUDGET),
+        live_page(SECOND_URL, footer_orchard() + FOOTER),
+        live_page("https://dusulke.example/haber/71003/pottery", POTTERY + FOOTER),
+    ])
+    evidence = web_search._ground(web_search.WebSearchResult(
+        matches=[web_search.PageMatch(url=NEW_URL)], reasoning="Invented copy",
+    ), fetched, article, 3)
+    assert evidence.relocation_old_in_new >= MOVED_THRESHOLD
+    assert evidence.raw_old_in_new < MOVED_THRESHOLD
+    assert evidence.boilerplate_paragraphs == (2, 0)
+    assert evidence.same_publisher_measurements[NEW_URL].old_in_new >= MOVED_THRESHOLD
+    assert pipeline._decide(evidence)[0].value == "MOVED"
+    recorded = web_search.overlap_details(evidence)
+    assert recorded["boilerplate_paragraphs"] == [2, 0]
+    assert recorded["same_publisher_measurements"][NEW_URL]["raw_old_in_new"] == (
+        evidence.raw_old_in_new
+    )
+
+
+async def test_web_boilerplate_combines_prefetched_pages_and_new_hits(monkeypatch):
+    article = budget_article()
+    article.content = page(BUDGET + FOOTER)
+    prefetched = FetchOutcome(live=[live_page(NEW_URL, footer_orchard() + FOOTER)])
+
+    class SecondPageSearch(BaseSearchProvider):
+        async def search(self, query, max_results=5, *, language=None):
+            return [SearchResult(
+                url=SECOND_URL, title="Invented pottery exhibit", snippet="",
+            )]
+
+    async def fetch(hits, *, exclude_url):
+        assert [hit.url for hit in hits] == [SECOND_URL]
+        assert exclude_url == OLD_URL
+        return FetchOutcome(live=[live_page(SECOND_URL, POTTERY + FOOTER)])
+
+    monkeypatch.setattr(web_search, "fetch_candidates", fetch)
+    evidence = await web_search.run(
+        article, SecondPageSearch(), FakeAgent(web_search.WebSearchResult(
+            matches=[web_search.PageMatch(url=NEW_URL)], reasoning="Invented match",
+        )), prefetched=prefetched,
+    )
+    assert evidence.live_pages_read == 2
+    assert evidence.relocated_to is None
+    assert [hit.url for hit in evidence.related_same_publisher] == [NEW_URL]
+    measured = evidence.same_publisher_measurements[NEW_URL]
+    assert measured.boilerplate_paragraphs == (2, 2)
+    assert max(measured.cleaned) < 0.02
+    assert max(measured.raw) > SIBLING_MAX
 
 
 async def cited_different_story(run_offline_audit):
