@@ -16,6 +16,7 @@
 
 `_decide` chooses evidence verdicts in plain code, including measured low-interest relocations.
 """
+import math
 from typing import List, Optional
 
 from audit.domain import (
@@ -24,6 +25,7 @@ from audit.domain import (
 )
 from audit.search.textmatch import MOVED_THRESHOLD, PARTIAL_MIN
 from audit.search.base import SearchResult
+from audit.search.urls import same_publisher
 from audit.workflow import related_removals, web_search
 from audit.workflow.relevance import RelevanceResult
 from audit.workflow.similarity import SimilarCandidate, SimilarityEvidence
@@ -39,14 +41,24 @@ LOW_INTEREST_RELOCATION_FLOOR = 0.50
 
 
 def _best_partial_relocation(sim: SimilarityEvidence) -> Optional[SimilarCandidate]:
-    """Pick the live, measured same-publisher partial holding most of the removed text."""
+    """Pick the live, measured same-publisher partial holding most of the removed text.
+
+    `same_publisher` is judged on the requested URL, but the text was measured on the page
+    the request ended at, so a redirect off the publisher's host never counts.
+    """
     return max(
         (c for c in sim.candidates
          if c.status == "live" and c.same_publisher and c.fit == "partial"
+         and same_publisher(c.final_url or c.url, c.url)
          and c.old_in_new is not None and c.new_in_old is not None),
         key=lambda c: c.old_in_new,
         default=None,
     )
+
+
+def _percent_down(share: float) -> str:
+    """Whole percent rounded down, so a share below the floor never reads as the floor."""
+    return f"{math.floor(share * 100)}%"
 
 
 def _low_interest_response(
@@ -82,7 +94,7 @@ def _low_interest_response(
         else:
             findings += (
                 f"Relocation note: a same-publisher page at {candidate.url} holds "
-                f"{o:.0%} of the original's text (and {n:.0%} of that page comes from "
+                f"{_percent_down(o)} of the original's text (and {n:.0%} of that page comes from "
                 f"the original), below the {LOW_INTEREST_RELOCATION_FLOOR:.0%} floor "
                 "for a likely move; a person may want to compare the two. "
             )

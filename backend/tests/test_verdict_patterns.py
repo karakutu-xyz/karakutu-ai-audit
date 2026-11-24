@@ -277,7 +277,7 @@ async def test_low_interest_copy_below_floor_gets_relocation_note(
     findings = result["response"]["findings"]
     assert "Relocation note:" in findings
     assert NEW_URL in findings
-    assert f"{measured['old_in_new']:.0%}" in findings
+    assert f"holds {int(measured['old_in_new'] * 100)}% of" in findings
     assert f"{measured['new_in_old']:.0%}" in findings
     assert f"below the {pipeline.LOW_INTEREST_RELOCATION_FLOOR:.0%} floor" in findings
 

@@ -408,6 +408,7 @@ def low_interest_response(sim):
     {"status": "unreadable", "old_in_new": 0.98},
     {"old_in_new": None},
     {"new_in_old": None},
+    {"final_url": "https://elsewhere.example/copy", "old_in_new": 0.98},
 ])
 def test_low_interest_ignores_candidates_without_live_measured_partial_fit(changes):
     sim = SimilarityEvidence(candidates=[partial_candidate(**changes)])
@@ -454,6 +455,21 @@ def test_low_interest_floor_and_best_partial(old_in_new, verdict):
     else:
         assert "Relocation note:" in response.findings
         assert f"below the {LOW_INTEREST_RELOCATION_FLOOR:.0%} floor" in response.findings
+        assert "holds 49% of the original's text" in response.findings
+
+
+def test_a_same_host_redirect_still_counts_for_the_low_interest_exit():
+    best = partial_candidate(final_url="https://paper.example/copy-renamed")
+    sim = SimilarityEvidence(candidates=[best])
+    assert _best_partial_relocation(sim) == best
+    assert low_interest_response(sim).verdict is Verdict.LIKELY_MOVED
+
+
+def test_a_share_just_below_the_floor_never_reads_as_the_floor():
+    sim = SimilarityEvidence(candidates=[partial_candidate(old_in_new=0.4996)])
+    findings = low_interest_response(sim).findings
+    assert "holds 49% of the original's text" in findings
+    assert "holds 50%" not in findings
 
 
 def test_low_interest_reuses_existing_decision_with_archive_evidence(monkeypatch):
