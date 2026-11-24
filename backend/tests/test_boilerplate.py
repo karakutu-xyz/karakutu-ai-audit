@@ -414,8 +414,10 @@ def test_majority_boilerplate_is_capped_to_both_raw_scores():
     assert measured.boilerplate_paragraphs == (2, 2)
 
 
-@pytest.mark.parametrize("kept_tokens,capped", [(19, True), (20, False), (21, False)])
-def test_cap_uses_token_volume_and_allows_exactly_half(kept_tokens, capped):
+# 20 furniture tokens + N article tokens make 16 + N shingles; the 20 windows that start
+# inside the furniture touch it and are dropped. Capped while 20 > (16 + N) / 2, i.e. N <= 23.
+@pytest.mark.parametrize("kept_tokens,capped", [(23, True), (24, False), (25, False)])
+def test_cap_uses_shingle_volume_and_allows_exactly_half(kept_tokens, capped):
     shared = " ".join(f"furniture{n}" for n in range(20))
     kept = " ".join(f"article{n}" for n in range(kept_tokens))
     assert MAX_REMOVED_SHARE == 0.5
@@ -442,3 +444,27 @@ def test_repeated_shared_paragraphs_do_not_make_page_order_matter():
     assert [measure(removed, p, forward) for p in pages] == [
         measure(removed, p, reverse) for p in pages
     ]
+
+
+SMALL_FOOTER = ("Invented reader desk answers subscription and delivery questions every "
+                "weekday morning through the help form")
+
+
+def test_different_paragraph_breaks_keep_an_exact_copy_exact():
+    # The archive runs a small footer (about 8% of the page) into the last body paragraph;
+    # the live copy sets it apart. Both token streams are identical, so the copy must keep
+    # its full score: boilerplate is matched as a token sequence, not as a whole line.
+    removed = prose(BODY[:-1] + [BODY[-1] + " " + SMALL_FOOTER])
+    copy = prose(BODY + [SMALL_FOOTER])
+    assert tokens(removed) == tokens(copy)
+    voters = [prose(OTHER_A + [SMALL_FOOTER]), prose(OTHER_B + [SMALL_FOOTER])]
+    boilerplate = build_boilerplate(removed, voters)
+    assert boilerplate == paragraph_keys([SMALL_FOOTER])
+    for one, other in ((removed, copy), (copy, removed)):
+        measured = measure(one, other, boilerplate)
+        assert measured.raw == (1.0, 1.0)
+        assert measured.cleaned == (1.0, 1.0)
+        assert not measured.boilerplate_capped
+    # The footer-only overlap with an unrelated page is gone on both layouts.
+    for layout in (removed, copy):
+        assert max(measure(layout, voters[0], boilerplate).cleaned) == 0.0

@@ -7,8 +7,9 @@ removed article and the other voter, so reflowed copies cannot vote each other's
 body out. Both voters need 30 own shingles and half the distinct shingles within
 their shared paragraph keys; shared volume is symmetric, including repeated lines.
 
-If learned keys cover more than 50% of the removed article's tokens, measurement
-keeps BOTH raw scores and records the cap. This also protects against copies with
+Scoring drops every shingle that touches a learned paragraph's tokens, matched as a
+token sequence anywhere in the text, so a different paragraph break cannot make
+identical text differ. If that drops more than 50% of the removed article's shingles, measurement keeps BOTH raw scores and records the cap. This also protects against copies with
 arbitrarily long distinct teasers voting a majority of the body into furniture.
 Residual limitation: unrelated articles quoting a lede below the cap can still
 vote it into furniture. In the invented regression a genuine partial copy falls
@@ -18,10 +19,11 @@ protect every partial copy or prevent every score increase below its limit.
 """
 
 from dataclasses import dataclass
+from functools import lru_cache
 from itertools import combinations
 from typing import Iterable
 
-from audit.search.textmatch import directional_containments, shingles, tokens
+from audit.search.textmatch import SHINGLE_K, containment, directional_containments, shingles, tokens
 
 
 # Historical name: this now counts own SHINGLES, rather than paragraph tokens.
@@ -96,40 +98,85 @@ def build_boilerplate(
     return frozenset(boilerplate)
 
 
-def _strip(text: str, boilerplate: frozenset[str]) -> tuple[str, int, int]:
-    kept = []
-    count = 0
-    removed_tokens = 0
-    for line, key, token_count in _paragraphs(text):
-        if key and key in boilerplate:
-            count += 1
-            removed_tokens += token_count
+def _matched(text: str, boilerplate: frozenset[str]) -> int:
+    """How many lines of `text` are learned boilerplate (for review details only)."""
+    return sum(1 for _, key, _ in _paragraphs(text) if key and key in boilerplate)
+
+
+@lru_cache(maxsize=64)
+def _key_index(boilerplate: frozenset[str]) -> dict[tuple[str, ...], list[tuple[str, ...]]]:
+    """Boilerplate token sequences indexed by their first (up to SHINGLE_K) tokens."""
+    index: dict[tuple[str, ...], list[tuple[str, ...]]] = {}
+    for key in boilerplate:
+        seq = tuple(key.split(" "))
+        index.setdefault(seq[:SHINGLE_K], []).append(seq)
+    return index
+
+
+def _clean_shingles(text: str, boilerplate: frozenset[str]) -> tuple[frozenset, int]:
+    """Shingles of `text` that touch no token of a boilerplate paragraph, and the share
+    of the text's shingles removed.
+
+    Boilerplate is found as a token sequence anywhere in the token stream, not as whole
+    lines, so identical text loses identical shingles whatever its paragraph breaks (a
+    footer run into the last body paragraph on one page and set apart on another). Each
+    position is checked against the few sequences that start with its tokens, so the scan
+    stays linear in practice and uses no regular expression.
+    """
+    toks = tokens(text)
+    index = _key_index(boilerplate)
+    marked = [False] * len(toks)
+    heads = {len(head) for head in index}
+    i = 0
+    while i < len(toks):
+        matched = 0
+        for size in heads:
+            for seq in index.get(tuple(toks[i:i + size]), ()):
+                if len(seq) > matched and tuple(toks[i:i + len(seq)]) == seq:
+                    matched = len(seq)
+        if matched:
+            for j in range(i, i + matched):
+                marked[j] = True
+            i += matched
         else:
-            kept.append(line)
-    return "\n".join(kept), count, removed_tokens
+            i += 1
+    if not toks:
+        return frozenset(), 0
+    k = SHINGLE_K
+    if len(toks) < k:
+        windows = [(0, len(toks))]
+    else:
+        windows = [(i, i + k) for i in range(len(toks) - k + 1)]
+    kept = frozenset(tuple(toks[a:b]) for a, b in windows if not any(marked[a:b]))
+    return kept, len(shingles(text)) - len(kept)
 
 
 def measure(
     removed_prose: str, page_text: str, boilerplate: frozenset[str],
 ) -> Measurement:
-    """Strip only when learned keys cover at most half the removed tokens.
+    """Score both sides on the shingles that touch no boilerplate token.
 
-    An empty cleaned candidate measures zero when the removed article still
-    has tokens. An empty boilerplate set preserves raw no-evidence behaviour.
+    Boilerplate is matched as token sequences, not whole lines, so identical text stays
+    identical even when the two pages break paragraphs differently. Strips nothing when the boilerplate would
+    remove more than MAX_REMOVED_SHARE of the removed article's shingles (the cap). An
+    unmeasurable side stays unmeasurable; an empty cleaned candidate measures zero while
+    the removed article keeps text; an empty cleaned removed article falls back to raw.
     """
     raw = directional_containments(removed_prose, page_text)
     if not boilerplate:
         return Measurement(*raw, *raw, (0, 0))
-    old, old_count, removed_tokens = _strip(removed_prose, boilerplate)
-    new, new_count, _ = _strip(page_text, boilerplate)
-    total_tokens = removed_tokens + len(tokens(old))
-    if removed_tokens > MAX_REMOVED_SHARE * total_tokens:
-        return Measurement(*raw, *raw, (old_count, new_count), boilerplate_capped=True)
+    counts = (_matched(removed_prose, boilerplate), _matched(page_text, boilerplate))
+    old_clean, old_removed = _clean_shingles(removed_prose, boilerplate)
+    if old_removed > MAX_REMOVED_SHARE * len(shingles(removed_prose)):
+        return Measurement(*raw, *raw, counts, boilerplate_capped=True)
     if raw[0] is None:
-        # An unmeasurable side stays unmeasurable: no evidence, no call.
-        return Measurement(*raw, *raw, (0, 0))
-    if not tokens(new):
+        # A side unmeasurable to begin with stays unmeasurable: no evidence, no call.
+        return Measurement(*raw, *raw, counts)
+    new_clean, _ = _clean_shingles(page_text, boilerplate)
+    if not old_clean:
+        cleaned = raw
+    elif not new_clean:
         cleaned = (0.0, 0.0)
     else:
-        cleaned = directional_containments(old, new)
-    return Measurement(*cleaned, *raw, (old_count, new_count))
+        cleaned = (containment(old_clean, new_clean), containment(new_clean, old_clean))
+    return Measurement(*cleaned, *raw, counts)
