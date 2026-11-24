@@ -415,21 +415,11 @@ async def cited_different_story(run_offline_audit):
     return details(result, "source")
 
 
-async def test_cited_page_is_live_despite_different_story(
+async def test_cited_page_with_other_story_is_not_a_live_copy(
     run_offline_audit,
     record_property,
 ):
     measured = await cited_different_story(run_offline_audit)
     record_property("cited", measured["source_containment"])
-    assert measured["source_status"] == "live"
     assert 0.01 < measured["source_containment"] < 0.1
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="stage A: a cited page is the same story only above a measured overlap",
-)
-async def test_cited_page_is_not_reported_as_live_copy(run_offline_audit):
-    measured = await cited_different_story(run_offline_audit)
-    # Stage A should set source_status to a not-same-story status here.
-    assert measured["source_status"] != "live"
+    assert measured["source_status"] == "live_other"
