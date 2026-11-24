@@ -468,3 +468,24 @@ def test_different_paragraph_breaks_keep_an_exact_copy_exact():
     # The footer-only overlap with an unrelated page is gone on both layouts.
     for layout in (removed, copy):
         assert max(measure(layout, voters[0], boilerplate).cleaned) == 0.0
+
+
+def test_overlapping_footer_variants_are_all_marked():
+    # Three learned footer variants overlap: A, B, and C (A followed by B's tail). The
+    # archive joins A and B; the live copy has C plus one more word. Matching A must not
+    # hide the B occurrence that starts inside it, or a few footer shingles survive on
+    # one side only and an exact copy drops below the move bar.
+    a = "Explore our publication archives and contact the reader desk"
+    b = ("Contact the reader desk for general subscription assistance delivery "
+         "questions and account settings")
+    c = a + " for general subscription assistance delivery questions and account settings online"
+    voters = [prose(OTHER_A + [footer]) for footer in (a, b, c)] + [
+        prose(OTHER_B + [footer]) for footer in (a, b, c)]
+    removed = prose(BODY + [a + " for general subscription assistance delivery questions and account settings"])
+    copy = prose(BODY + [c])
+    boilerplate = build_boilerplate(removed, voters)
+    assert paragraph_keys([a, b, c]) <= boilerplate
+    assert not boilerplate & paragraph_keys(BODY)
+    measured = measure(removed, copy, boilerplate)
+    assert measured.cleaned == (1.0, 1.0)
+    assert not measured.boilerplate_capped

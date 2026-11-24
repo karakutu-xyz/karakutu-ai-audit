@@ -120,26 +120,31 @@ def _clean_shingles(text: str, boilerplate: frozenset[str]) -> tuple[frozenset, 
     Boilerplate is found as a token sequence anywhere in the token stream, not as whole
     lines, so identical text loses identical shingles whatever its paragraph breaks (a
     footer run into the last body paragraph on one page and set apart on another). Each
-    position is checked against the few sequences that start with its tokens, so the scan
-    stays linear in practice and uses no regular expression.
+    position is checked against the few sequences that start with its tokens, and every
+    occurrence is marked, overlapping ones included. No regular expression; the cost is
+    bounded by the page size times the length of the keys that match there.
     """
     toks = tokens(text)
     index = _key_index(boilerplate)
-    marked = [False] * len(toks)
     heads = {len(head) for head in index}
-    i = 0
-    while i < len(toks):
-        matched = 0
+    # Every occurrence is marked, overlapping ones included (a match that starts inside
+    # the previous one may extend past it). A difference array keeps marking linear;
+    # matching costs at most the length of the few keys sharing a position's head.
+    depth = [0] * (len(toks) + 1)
+    for i in range(len(toks)):
+        longest = 0
         for size in heads:
             for seq in index.get(tuple(toks[i:i + size]), ()):
-                if len(seq) > matched and tuple(toks[i:i + len(seq)]) == seq:
-                    matched = len(seq)
-        if matched:
-            for j in range(i, i + matched):
-                marked[j] = True
-            i += matched
-        else:
-            i += 1
+                if len(seq) > longest and tuple(toks[i:i + len(seq)]) == seq:
+                    longest = len(seq)
+        if longest:
+            depth[i] += 1
+            depth[i + longest] -= 1
+    marked = []
+    running = 0
+    for i in range(len(toks)):
+        running += depth[i]
+        marked.append(running > 0)
     if not toks:
         return frozenset(), 0
     k = SHINGLE_K
