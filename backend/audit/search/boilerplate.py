@@ -7,9 +7,11 @@ removed article and the other voter, so reflowed copies cannot vote each other's
 body out. Both voters need 30 own shingles and half the distinct shingles within
 their shared paragraph keys; shared volume is symmetric, including repeated lines.
 
-Scoring drops every shingle that touches a learned paragraph's tokens, matched as a
-token sequence anywhere in the text, so a different paragraph break cannot make
-identical text differ. If that drops more than 50% of the removed article's shingles, measurement keeps BOTH raw scores and records the cap. This also protects against copies with
+Learned paragraphs are matched as token sequences anywhere in a page (overlapping
+occurrences included). Each side's own shingles, those touching no learned token, are
+looked for in the WHOLE other side, so a different paragraph break or a revised site
+footer cannot hide evidence of a copy. If more than 50% of the removed article's
+shingles touch learned text, measurement keeps BOTH raw scores and records the cap. This also protects against copies with
 arbitrarily long distinct teasers voting a majority of the body into furniture.
 Residual limitation: unrelated articles quoting a lede below the cap can still
 vote it into furniture. In the invented regression a genuine partial copy falls
@@ -159,7 +161,8 @@ def _clean_shingles(text: str, boilerplate: frozenset[str]) -> tuple[frozenset, 
 def measure(
     removed_prose: str, page_text: str, boilerplate: frozenset[str],
 ) -> Measurement:
-    """Score both sides on the shingles that touch no boilerplate token.
+    """Score each side's own shingles (touching no boilerplate token) against the whole
+    other side.
 
     Boilerplate is matched as token sequences, not whole lines, so identical text stays
     identical even when the two pages break paragraphs differently. Strips nothing when the boilerplate would
@@ -178,10 +181,15 @@ def measure(
         # A side unmeasurable to begin with stays unmeasurable: no evidence, no call.
         return Measurement(*raw, *raw, counts)
     new_clean, _ = _clean_shingles(page_text, boilerplate)
+    # Each side's OWN text (boilerplate dropped) is looked for in the WHOLE other side. A
+    # footer then cannot inflate either score, and cleaning can never hide evidence: text of
+    # the removed article that the candidate carries counts even if the candidate's copy of
+    # it was matched as boilerplate (for example after the site revised its footer).
     if not old_clean:
         cleaned = raw
     elif not new_clean:
         cleaned = (0.0, 0.0)
     else:
-        cleaned = (containment(old_clean, new_clean), containment(new_clean, old_clean))
+        cleaned = (containment(old_clean, shingles(page_text)),
+                   containment(new_clean, shingles(removed_prose)))
     return Measurement(*cleaned, *raw, counts)

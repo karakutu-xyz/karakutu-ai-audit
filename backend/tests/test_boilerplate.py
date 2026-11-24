@@ -489,3 +489,22 @@ def test_overlapping_footer_variants_are_all_marked():
     measured = measure(removed, copy, boilerplate)
     assert measured.cleaned == (1.0, 1.0)
     assert not measured.boilerplate_capped
+
+
+def test_a_revised_site_footer_does_not_demote_an_exact_copy():
+    # The live site appended a word to its footer since the article was archived. Voters
+    # only show the revised footer, so the archived footer is not matched as boilerplate
+    # while the candidate's is. The removed article's text is still all in the candidate.
+    archived = ("Explore our publication archives and contact the reader desk for general "
+                "subscription assistance delivery questions and account settings")
+    revised = archived + " online"
+    removed = prose(BODY + [archived])
+    copy = prose(BODY + [revised])
+    voters = [prose(OTHER_A + [revised]), prose(OTHER_B + [revised])]
+    boilerplate = build_boilerplate(removed, voters)
+    assert boilerplate == paragraph_keys([revised])
+    measured = measure(removed, copy, boilerplate)
+    assert measured.old_in_new == 1.0
+    assert not measured.boilerplate_capped
+    # An unrelated page carrying the revised footer still gains nothing from it.
+    assert measure(removed, voters[0], boilerplate).new_in_old == 0.0

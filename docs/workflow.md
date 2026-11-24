@@ -21,9 +21,14 @@ shingles absent from both the removed article and the other voter, and at least 
 as many as the distinct shingles within their shared paragraph keys. Shared volume
 is symmetric; repeated paragraphs and page order cannot inflate it. The removed
 article never votes, and reflowed copies cannot vote each other's body out.
-Scoring removes the learned paragraphs' shingles from both sides, so identical text
-stays identical when the two pages break paragraphs differently. If those shingles
-cover more than 50% of the removed article's shingles, neither side is stripped: both scores stay raw and `boilerplate_capped` is true. This cap also
+Learned paragraphs are found as token sequences anywhere in a page (every occurrence,
+overlapping ones included), and each side's own text, the shingles touching none of them,
+is looked for in the whole other side. A footer then cannot inflate either score, a
+different paragraph break cannot make identical text differ, and cleaning cannot hide
+the removed article's text that a candidate carries (for example after the site revised
+its footer; an archived footer that no longer matches today's is simply not dropped).
+If the learned text covers more than 50% of the removed article's shingles, neither
+side is stripped: both scores stay raw and `boilerplate_capped` is true. This cap also
 protects against copies with long distinct teasers voting most of the body into
 boilerplate. With fewer than two other pages, scores stay raw
 (see `search/boilerplate.py`). The bars
