@@ -76,8 +76,7 @@ async def test_unresponsive_engines_without_usable_results_fail(hits):
 @pytest.mark.parametrize('engines', [
     None, [], 'fabricated private reason', {'brave': 'fabricated private reason'},
     [1, None, {}, '', '  ', 'fabricated private reason', [], ['brave'],
-     ['brave', 'reason', 'extra'], [None, 'fabricated private reason'], ['', 'reason'],
-     ['  ', 'reason']],
+     ['brave', 'reason', 'extra']],
 ])
 async def test_empty_search_ignores_absent_or_malformed_unresponsive_engines(engines):
     payload = {'results': []}
@@ -122,13 +121,13 @@ async def test_usable_results_record_only_bounded_engine_names():
     assert 'fabricated private' not in str(events)
 
 
-async def test_unrecognised_engine_names_still_fail_but_are_not_kept():
+@pytest.mark.parametrize('name', [
+    'Fabricated private reason: blocked!', 'fabricated private reason text here', '', '  ', None,
+])
+async def test_unrecognised_engine_names_still_fail_but_are_not_kept(name):
     search = Search('https://search.example', transport=httpx.MockTransport(
         lambda request: httpx.Response(200, json={
-            'results': [], 'unresponsive_engines': [
-                ['Fabricated private reason: blocked!', 'fabricated private reason'],
-                ['fabricated private reason text here', 'fabricated private reason'],
-            ],
+            'results': [], 'unresponsive_engines': [[name, 'fabricated private reason']],
         })))
     events = []
     context = trace.set(events)

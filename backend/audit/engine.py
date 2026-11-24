@@ -160,11 +160,11 @@ class Search(BaseSearchProvider):
                 # the reason is upstream text and is never kept, and a name is kept only when it
                 # looks like an engine name, so no upstream sentence can reach the trace.
                 unresponsive = payload.get('unresponsive_engines')
-                pairs = [entry[0].strip() for entry in
+                pairs = [entry for entry in
                          (unresponsive if isinstance(unresponsive, list) else [])
-                         if isinstance(entry, (list, tuple)) and len(entry) == 2
-                         and isinstance(entry[0], str) and entry[0].strip()]
-                names = [name for name in pairs if ENGINE_NAME.fullmatch(name)][:20]
+                         if isinstance(entry, (list, tuple)) and len(entry) == 2]
+                names = [name.strip() for name, _reason in pairs if isinstance(name, str)
+                         and ENGINE_NAME.fullmatch(name.strip())][:20]
                 if names:
                     event['unresponsive_engines'] = names
             results = results_from_hits(hits, lambda h:(h.get('url'), h.get('title') or '', h.get('content') or ''), query=query, provider='SearXNG', max_results=max_results)
