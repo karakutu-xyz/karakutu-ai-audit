@@ -7,6 +7,7 @@ import pytest
 
 from audit.search.boilerplate import (
     BOILERPLATE_MIN_OWN_TOKENS,
+    MAX_REMOVED_SHARE,
     OWN_PER_SHARED_MIN,
     build_boilerplate,
     measure,
@@ -16,6 +17,7 @@ from audit.search.textmatch import (
     PARTIAL_MIN,
     SIBLING_MAX,
     directional_containments,
+    shingles,
     tokens,
 )
 
@@ -175,8 +177,13 @@ def test_removed_entirely_boilerplate_uses_raw_fallback():
     assert measured.cleaned == measured.raw
     assert measured.raw_old_in_new == 1.0
     assert measured.boilerplate_paragraphs == (2, 2)
+    assert measured.boilerplate_capped
     both_empty = measure(removed, removed, boilerplate)
     assert both_empty.cleaned == both_empty.raw == (1.0, 1.0)
+    assert both_empty.boilerplate_capped
+    unmeasurable = measure(removed, "", boilerplate)
+    assert unmeasurable.cleaned == unmeasurable.raw == (None, None)
+    assert unmeasurable.boilerplate_capped
 
 
 def test_candidate_entirely_boilerplate_measures_zero():
@@ -190,18 +197,19 @@ def test_candidate_entirely_boilerplate_measures_zero():
     assert measure(removed, "", boilerplate).cleaned == (None, None)
 
 
-def test_measurement_returns_numbers_only():
+def test_measurement_returns_numbers_and_cap_flag_only():
     removed = prose(BODY + FOOTER)
     boilerplate = build_boilerplate(removed, family(removed).values())
     payload = asdict(measure(removed, removed, boilerplate))
     assert set(payload) == {
         "old_in_new", "new_in_old", "raw_old_in_new", "raw_new_in_old",
-        "boilerplate_paragraphs",
+        "boilerplate_paragraphs", "boilerplate_capped",
     }
     assert all(isinstance(value, float) for key, value in payload.items()
-               if key != "boilerplate_paragraphs")
+               if key not in {"boilerplate_paragraphs", "boilerplate_capped"})
     assert all(isinstance(count, int)
                for count in payload["boilerplate_paragraphs"])
+    assert payload["boilerplate_capped"] is False
 
 
 def test_normalized_keys_and_short_lines():
@@ -220,6 +228,8 @@ SHORT_FOOTER = "Invented reader desk answers subscription questions every weekda
 
 @pytest.mark.parametrize("own_tokens", [29, 30])
 def test_distinct_articles_need_minimum_own_tokens_on_each_side(own_tokens):
+    # With k=5, the own paragraph contributes N-4 internal shingles and the
+    # transition to the footer adds four more: N own shingles on this fixture.
     a = " ".join(f"orchard{n}" for n in range(own_tokens))
     b = " ".join(f"pottery{n}" for n in range(30))
     boilerplate = build_boilerplate(
@@ -227,10 +237,10 @@ def test_distinct_articles_need_minimum_own_tokens_on_each_side(own_tokens):
     assert bool(boilerplate) == (own_tokens >= BOILERPLATE_MIN_OWN_TOKENS)
 
 
-@pytest.mark.parametrize("shared_tokens,expected", [(80, True), (81, False)])
+@pytest.mark.parametrize("shared_tokens,expected", [(84, True), (85, False)])
 def test_distinct_articles_need_own_text_relative_to_what_they_share(shared_tokens, expected):
-    # Each page carries 40 tokens of its own; at OWN_PER_SHARED_MIN = 0.5 they may share
-    # at most 80 tokens and still count as two different articles.
+    # Each page has 40 own shingles (36 internal + 4 at the boundary). At 0.5
+    # they may share 80 shingles: a unique 84-token paragraph, versus 85 failing.
     assert OWN_PER_SHARED_MIN == 0.5
     shared = " ".join(f"furniture{n}" for n in range(shared_tokens))
     a = " ".join(f"orchard{n}" for n in range(40))
@@ -323,3 +333,112 @@ def test_an_unmeasurable_page_stays_unmeasured():
     assert boilerplate
     measured = measure(removed, "", boilerplate)
     assert measured.cleaned == (None, None)
+
+
+def test_reflowed_copies_cannot_vote_the_body_out():
+    byline = "Invented author desk reports from the amber district."
+    removed = prose(BODY + [byline])
+    copies = [prose(
+        BODY[:start] + [" ".join(BODY[start:start + 2])]
+        + BODY[start + 2:] + [byline],
+    ) for start in (0, 2, 4)]
+    # Reflow changes paragraph keys but leaves the whole token stream unchanged.
+    assert all(shingles(copy) == shingles(removed) for copy in copies)
+    boilerplate = build_boilerplate(removed, copies)
+    assert not boilerplate & paragraph_keys(BODY)
+    for copy in copies:
+        assert measure(removed, copy, boilerplate).old_in_new >= 0.99
+
+
+def test_long_distinct_teasers_cannot_strip_body_or_amplify_stock_sentence():
+    stock = "Invented reader notices follow the customary local publication schedule."
+    removed = prose(BODY + FOOTER + [stock])
+    # Each teaser exceeds half of the 307-token article. The stock sentence is
+    # reflowed into each teaser, so it is absent from their shared paragraph keys.
+    teaser_size = len(tokens(removed)) // 2 + 40
+    assert len(tokens(removed)) == 307
+    copies = [prose(BODY + FOOTER + [stock + " " + " ".join(
+        f"{prefix}teaser{n}" for n in range(teaser_size)
+    )]) for prefix in ("orchard", "pottery")]
+    for copy in copies:
+        assert directional_containments(removed, copy)[0] == 1.0
+    boilerplate = build_boilerplate(
+        removed, copies + [prose(OTHER_A + FOOTER), prose(OTHER_B + FOOTER)],
+    )
+    for copy in copies:
+        assert measure(removed, copy, boilerplate).old_in_new >= 0.99
+    unrelated = stock
+    measured = measure(removed, unrelated, boilerplate)
+    assert measured.old_in_new <= measured.raw_old_in_new
+    assert measured.cleaned == measured.raw
+    assert measured.boilerplate_capped
+
+
+@pytest.mark.parametrize("rewritten_tokens", [0, 220])
+def test_related_reading_quotes_and_genuine_partial_copy(rewritten_tokens):
+    removed = prose(BODY)
+    partial = prose(BODY[:2] + [" ".join(
+        f"partialrewrite{n}" for n in range(rewritten_tokens)
+    )])
+    quoted_pages = [prose(body + BODY[:1]) for body in (OTHER_A, OTHER_B)]
+    # The lede is 38/227 tokens (< 50%); the genuine copy holds 71/223
+    # original shingles (> PARTIAL_MIN). Two unrelated articles quote the lede.
+    assert directional_containments(removed, partial)[0] >= PARTIAL_MIN
+    boilerplate = build_boilerplate(removed, quoted_pages + [partial])
+    measured = measure(removed, partial, boilerplate)
+    # Residual limitation: a quoted lede is indistinguishable from furniture
+    # under this rule. Removing 38/227 tokens is below the cap, but takes away
+    # enough evidence to cross PARTIAL_MIN. With rewritten material both scores
+    # fall below SIBLING_MAX, so grounding would demote this genuine partial copy.
+    assert boilerplate == paragraph_keys(BODY[:1])
+    assert measured.raw_old_in_new == 71 / 223
+    assert measured.cleaned == (33 / 185, 33 / (33 + rewritten_tokens))
+    assert measured.old_in_new < SIBLING_MAX
+    assert not measured.boilerplate_capped
+    if rewritten_tokens:
+        assert max(measured.cleaned) < SIBLING_MAX
+    else:
+        assert max(measured.cleaned) >= SIBLING_MAX
+
+
+def test_majority_boilerplate_is_capped_to_both_raw_scores():
+    # The two 35/36-token footer paragraphs cover 71 of these 79 tokens.
+    removed = prose(FOOTER + [SHORT_FOOTER])
+    assert len(tokens(removed)) == 79
+    candidate = prose(OTHER_A + FOOTER)
+    boilerplate = build_boilerplate(removed, family(candidate).values())
+    assert boilerplate == paragraph_keys(FOOTER)
+    measured = measure(removed, candidate, boilerplate)
+    assert measured.cleaned == measured.raw
+    assert measured.boilerplate_capped
+    assert measured.boilerplate_paragraphs == (2, 2)
+
+
+@pytest.mark.parametrize("kept_tokens,capped", [(19, True), (20, False), (21, False)])
+def test_cap_uses_token_volume_and_allows_exactly_half(kept_tokens, capped):
+    shared = " ".join(f"furniture{n}" for n in range(20))
+    kept = " ".join(f"article{n}" for n in range(kept_tokens))
+    assert MAX_REMOVED_SHARE == 0.5
+    measured = measure(prose([shared, kept]), kept, frozenset(paragraph_keys([shared])))
+    assert measured.boilerplate_capped is capped
+    assert measured.boilerplate_paragraphs == (1, 0)
+    if capped:
+        assert measured.cleaned == measured.raw
+    else:
+        assert measured.cleaned == (1.0, 1.0)
+
+
+def test_repeated_shared_paragraphs_do_not_make_page_order_matter():
+    shared = " ".join(f"furniture{n}" for n in range(20))
+    own_a = " ".join(f"orchard{n}" for n in range(40))
+    own_b = " ".join(f"pottery{n}" for n in range(40))
+    pages = [prose([own_a] + [shared] * 5), prose([own_b, shared])]
+    removed = prose(BODY + [shared])
+    # Shared volume is 16 distinct within-paragraph shingles in either order,
+    # rather than 100 tokens from one page and 20 from the other.
+    forward = build_boilerplate(removed, pages)
+    reverse = build_boilerplate(removed, reversed(pages))
+    assert forward == reverse == paragraph_keys([shared])
+    assert [measure(removed, p, forward) for p in pages] == [
+        measure(removed, p, reverse) for p in pages
+    ]

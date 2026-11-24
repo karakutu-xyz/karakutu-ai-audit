@@ -15,7 +15,7 @@ from audit.search.boilerplate import build_boilerplate, measure as measure_clean
 from audit.search.fetch import FetchOutcome, LivePage, html_to_text
 from audit.search.textmatch import MOVED_THRESHOLD, SIBLING_MAX, directional_containments
 from audit.search.urls import is_public_web_url
-from audit.workflow import classification, pipeline, relevance, source, web_search
+from audit.workflow import classification, pipeline, relevance, similarity, source, web_search
 
 
 OLD_URL = "https://dusulke.example/haber/71000/water-budget"
@@ -503,6 +503,91 @@ def live_page(url, paragraphs):
         url=url, final_url=url, status=200, title="Invented live page",
         text=html_to_text(page(paragraphs)),
     )
+
+
+def redirected_quote_pages():
+    pages = [
+        live_page(SECOND_URL, ORCHARD + BUDGET[:1]),
+        live_page("https://dusulke.example/quoted-reading", POTTERY + BUDGET[:1]),
+    ]
+    for index, fetched in enumerate(pages):
+        fetched.final_url = f"https://other.example/quoted-reading-{index}"
+    return pages
+
+
+@pytest.mark.parametrize("include_redirected_matches", [False, True])
+def test_redirected_quotes_cannot_strip_local_partial_copy(include_redirected_matches):
+    partial = live_page(NEW_URL, BUDGET[:1] + [" ".join(
+        f"rewrittenlocal{n}" for n in range(90)
+    )])
+    redirected = redirected_quote_pages()
+    # The lede supplies > 30% raw containment; stripping it leaves no overlap.
+    assert directional_containments(html_to_text(page(BUDGET)), partial.text)[0] > 0.30
+    matches = ([web_search.PageMatch(url=p.url) for p in redirected]
+               if include_redirected_matches else [])
+    matches.append(web_search.PageMatch(url=NEW_URL))
+    evidence = web_search._ground(web_search.WebSearchResult(
+        matches=matches, reasoning="Invented partial copy and external quotes",
+    ), FetchOutcome(live=[partial, *redirected]), budget_article(), 3)
+    assert evidence.relocated_to is not None
+    assert evidence.relocated_to.url == NEW_URL
+    assert evidence.relocation_old_in_new == evidence.raw_old_in_new
+    assert evidence.boilerplate_paragraphs == (0, 0)
+    assert set(evidence.same_publisher_measurements) == {NEW_URL}
+    assert pipeline._decide(evidence)[0].value == "LIKELY_MOVED"
+
+
+async def test_similarity_redirected_quotes_cannot_vote_or_be_measured(monkeypatch):
+    partial = live_page(NEW_URL, BUDGET[:1] + [" ".join(
+        f"rewrittenlocal{n}" for n in range(90)
+    )])
+    pages = [partial, *redirected_quote_pages()]
+
+    async def fetched(*args, **kwargs):
+        return FetchOutcome(live=pages)
+
+    monkeypatch.setattr(similarity, "fetch_candidates", fetched)
+    evidence = await similarity.run(budget_article(), client=FakeArchive([
+        SimilarArticle(id=73000 + n, link=p.url) for n, p in enumerate(pages)
+    ]))
+    local, *redirected = evidence.candidates
+    assert local.old_in_new == local.raw_old_in_new
+    assert local.old_in_new > 0.30
+    assert local.boilerplate_paragraphs == (0, 0)
+    for cand in redirected:
+        assert not cand.same_publisher
+        assert cand.old_in_new is None
+        assert cand.boilerplate_paragraphs is None
+
+
+async def test_majority_boilerplate_cap_reaches_similarity_and_web_details(run_offline_audit):
+    article = budget_article()
+    article.content = page(BUDGET[:1] + FOOTER)
+    # The two footer paragraphs exceed half this shortened original. The
+    # orchard/pottery pages may learn them, but neither scoring side is stripped.
+    result = await run_offline_audit(
+        article,
+        similar=[candidate(), SimilarArticle(id=71002, link=SECOND_URL)],
+        pages={
+            NEW_URL: page(footer_orchard() + FOOTER),
+            SECOND_URL: page(POTTERY + FOOTER),
+        },
+        web_result=web_search.WebSearchResult(
+            matches=[web_search.PageMatch(url=NEW_URL)],
+            reasoning="Invented majority furniture cap",
+        ),
+    )
+    for measured in details(result, "similarity")["candidates"]:
+        assert measured["boilerplate_capped"] is True
+        assert measured["boilerplate_paragraphs"] == [2, 2]
+        assert measured["old_in_new"] == measured["raw_old_in_new"]
+        assert measured["new_in_old"] == measured["raw_new_in_old"]
+    web = details(result, "web_search")
+    assert web["boilerplate_capped"] is True
+    assert web["boilerplate_paragraphs"] == [2, 2]
+    assert web["old_in_new"] == web["raw_old_in_new"]
+    assert web["new_in_old"] == web["raw_new_in_old"]
+    assert web["same_publisher_measurements"][NEW_URL]["boilerplate_capped"] is True
 
 
 @pytest.mark.parametrize("excluded_vote_url", [OLD_URL, CITED_URL])

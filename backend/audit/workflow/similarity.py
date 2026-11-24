@@ -45,8 +45,9 @@ class SimilarCandidate(BaseModel):
     new_in_old: Optional[float] = None
     raw_old_in_new: Optional[float] = None
     raw_new_in_old: Optional[float] = None
-    # Stripped paragraph counts: removed article, candidate.
+    # Matched paragraph counts (proposed removals when capped): removed, candidate.
     boilerplate_paragraphs: Optional[Tuple[int, int]] = None
+    boilerplate_capped: Optional[bool] = None
     fit: Optional[str] = None           # verbatim | partial | sibling | unmeasured
 
 
@@ -93,6 +94,7 @@ async def run(removed: Article, *, client: Optional[KarakutuClient] = None) -> S
     boilerplate = build_boilerplate(removed_prose, (
         p.text for p in live.values()
         if same_publisher(p.url, removed.url)
+        and (not p.final_url or same_publisher(p.final_url, removed.url))
         and normalize_url(p.url) != normalize_url(removed.url)
     ))
 
@@ -105,12 +107,16 @@ async def run(removed: Article, *, client: Optional[KarakutuClient] = None) -> S
         if key in live:
             page = live[key]
             cand.status, cand.final_url = "live", page.final_url
+            cand.same_publisher = cand.same_publisher and (
+                not page.final_url or same_publisher(page.final_url, removed.url)
+            )
             if cand.same_publisher:
                 measured = measure(removed_prose, page.text, boilerplate)
                 o, n = measured.cleaned
                 cand.old_in_new, cand.new_in_old, cand.fit = o, n, _fit(o, n)
                 cand.raw_old_in_new, cand.raw_new_in_old = measured.raw
                 cand.boilerplate_paragraphs = measured.boilerplate_paragraphs
+                cand.boilerplate_capped = measured.boilerplate_capped
                 if o is not None and o >= MOVED_THRESHOLD and (best is None or o > best[1]):
                     best = (page, o, n)
         elif key in dead:

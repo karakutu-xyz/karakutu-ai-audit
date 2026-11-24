@@ -1,33 +1,44 @@
 """Same-site paragraph furniture, learned only from other live articles.
 
 Callers select live pages on the removed article's publisher and exclude its
-own URL. The removed prose never supplies a vote for boilerplate: a relocated
-copy sharing that prose is evidence, not furniture.
+own URL; requested and final URLs must both stay on that publisher. The removed
+article never votes. Independence uses whole-page shingles absent from both the
+removed article and the other voter, so reflowed copies cannot vote each other's
+body out. Both voters need 30 own shingles and half the distinct shingles within
+their shared paragraph keys; shared volume is symmetric, including repeated lines.
+
+If learned keys cover more than 50% of the removed article's tokens, measurement
+keeps BOTH raw scores and records the cap. This also protects against copies with
+arbitrarily long distinct teasers voting a majority of the body into furniture.
+Residual limitation: unrelated articles quoting a lede below the cap can still
+vote it into furniture. In the invented regression a genuine partial copy falls
+from 71/223 (31.84%) to 33/185 (17.84%) old-in-new; with rewritten material its
+reverse score is 13.04%, so it is demoted below the 20% sibling bar. The cap cannot
+protect every partial copy or prevent every score increase below its limit.
 """
 
 from dataclasses import dataclass
 from itertools import combinations
 from typing import Iterable
 
-from audit.search.textmatch import directional_containments, tokens
+from audit.search.textmatch import directional_containments, shingles, tokens
 
 
+# Historical name: this now counts own SHINGLES, rather than paragraph tokens.
 BOILERPLATE_MIN_OWN_TOKENS = 30
 MIN_PARAGRAPH_TOKENS = 4
-# Each page of a distinct pair must also carry at least this many own tokens per shared
-# token. Two copies of one article that each add a teaser line share far more than they
-# add, so they never count as distinct and cannot vote the article body into
-# boilerplate. Unrelated articles share only furniture (about 7-9% of a real page).
+# Each voter must also have half as many own shingles as shared paragraph shingles.
 OWN_PER_SHARED_MIN = 0.5
+MAX_REMOVED_SHARE = 0.5
 Containments = tuple[float | None, float | None]
 
 
 @dataclass(frozen=True)
 class Measurement:
-    """Scores and stripped line counts only; never paragraph text or keys.
+    """Scores, matched line counts and cap status; never paragraph text or keys.
 
     Counts are ordered (removed article, candidate), including repeated lines.
-    Raw scores remain available even when stripping makes a side unmeasurable.
+    When capped, counts describe proposed removals; neither side is stripped.
     """
 
     old_in_new: float | None
@@ -35,6 +46,7 @@ class Measurement:
     raw_old_in_new: float | None
     raw_new_in_old: float | None
     boilerplate_paragraphs: tuple[int, int]
+    boilerplate_capped: bool = False
 
     @property
     def cleaned(self) -> Containments:
@@ -57,62 +69,66 @@ def build_boilerplate(
 ) -> frozenset[str]:
     """Union shared keys only across pairs with enough independent body text.
 
-    Tokenization is linear in text size. Each page's keys and token counts are
-    built once; pairwise set operations cost O(n²) over the small page family.
-    Short lines cannot define furniture or contribute independent body tokens.
+    Text handling is linear per page/pair; the small page family has O(n²) pairs.
+    Whole-page shingles ignore paragraph reflow. Only lines of at least four
+    tokens define furniture; repeated lines do not inflate shared volume.
     """
-    removed_keys = {key for _, key, _ in _paragraphs(removed_prose) if key}
+    removed_shingles = shingles(removed_prose)
     pages = []
     for text in other_page_texts:
-        counts: dict[str, int] = {}
-        for _, key, count in _paragraphs(text):
-            if key:
-                counts[key] = counts.get(key, 0) + count
-        pages.append((set(counts), counts))
+        keys = {key for _, key, _ in _paragraphs(text) if key}
+        page_shingles = shingles(text)
+        pages.append((keys, page_shingles, page_shingles - removed_shingles))
 
     boilerplate: set[str] = set()
-    for (a, a_counts), (b, b_counts) in combinations(pages, 2):
+    for (a, a_shingles, a_independent), (b, b_shingles, b_independent) in combinations(pages, 2):
         shared = a & b
         if not shared:
             continue
-        a_own = sum(a_counts[key] for key in a - removed_keys - b)
-        b_own = sum(b_counts[key] for key in b - removed_keys - a)
-        shared_tokens = sum(a_counts[key] for key in shared)
-        own = min(a_own, b_own)
-        if own >= BOILERPLATE_MIN_OWN_TOKENS and own >= OWN_PER_SHARED_MIN * shared_tokens:
+        own = min(len(a_independent - b_shingles), len(b_independent - a_shingles))
+        if own < BOILERPLATE_MIN_OWN_TOKENS:
+            continue
+        shared_shingles = set()
+        for key in shared:
+            shared_shingles.update(shingles(key))
+        if own >= OWN_PER_SHARED_MIN * len(shared_shingles):
             boilerplate.update(shared)
     return frozenset(boilerplate)
 
 
-def _strip(text: str, boilerplate: frozenset[str]) -> tuple[str, int]:
+def _strip(text: str, boilerplate: frozenset[str]) -> tuple[str, int, int]:
     kept = []
     count = 0
-    for line, key, _ in _paragraphs(text):
+    removed_tokens = 0
+    for line, key, token_count in _paragraphs(text):
         if key and key in boilerplate:
             count += 1
+            removed_tokens += token_count
         else:
             kept.append(line)
-    return "\n".join(kept), count
+    return "\n".join(kept), count, removed_tokens
 
 
 def measure(
     removed_prose: str, page_text: str, boilerplate: frozenset[str],
 ) -> Measurement:
-    """Measure after stripping; fall back only when the removed text is empty.
+    """Strip only when learned keys cover at most half the removed tokens.
 
     An empty cleaned candidate measures zero when the removed article still
     has tokens. An empty boilerplate set preserves raw no-evidence behaviour.
     """
     raw = directional_containments(removed_prose, page_text)
-    if not boilerplate or raw[0] is None:
-        # No boilerplate learned, or a side was unmeasurable to begin with: no evidence,
-        # no call.
+    if not boilerplate:
         return Measurement(*raw, *raw, (0, 0))
-    old, old_count = _strip(removed_prose, boilerplate)
-    new, new_count = _strip(page_text, boilerplate)
-    if not tokens(old):
-        cleaned = raw
-    elif not tokens(new):
+    old, old_count, removed_tokens = _strip(removed_prose, boilerplate)
+    new, new_count, _ = _strip(page_text, boilerplate)
+    total_tokens = removed_tokens + len(tokens(old))
+    if removed_tokens > MAX_REMOVED_SHARE * total_tokens:
+        return Measurement(*raw, *raw, (old_count, new_count), boilerplate_capped=True)
+    if raw[0] is None:
+        # An unmeasurable side stays unmeasurable: no evidence, no call.
+        return Measurement(*raw, *raw, (0, 0))
+    if not tokens(new):
         cleaned = (0.0, 0.0)
     else:
         cleaned = directional_containments(old, new)

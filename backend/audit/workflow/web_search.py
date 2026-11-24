@@ -121,8 +121,9 @@ class WebSearchEvidence(BaseModel):
     relocation_new_in_old: Optional[float] = None
     raw_old_in_new: Optional[float] = None
     raw_new_in_old: Optional[float] = None
-    # Stripped paragraph counts: removed article, relocation.
+    # Matched paragraph counts (proposed removals when capped): removed, relocation.
     boilerplate_paragraphs: Optional[tuple[int, int]] = None
+    boilerplate_capped: Optional[bool] = None
     # Includes demoted pages, whose relocation fields remain empty.
     same_publisher_measurements: dict[str, Measurement] = Field(default_factory=dict)
     # Same-publisher live pages the model CALLED a match but whose text MEASURES as a
@@ -154,7 +155,7 @@ class WebSearchEvidence(BaseModel):
 def overlap_details(web: WebSearchEvidence) -> dict:
     """Additional numeric review details, including set-aside candidates."""
     return web.model_dump(mode="json", include={
-        "raw_old_in_new", "raw_new_in_old", "boilerplate_paragraphs",
+        "raw_old_in_new", "raw_new_in_old", "boilerplate_paragraphs", "boilerplate_capped",
         "same_publisher_measurements",
     })
 
@@ -462,6 +463,7 @@ def _ground(raw: WebSearchResult, fetched: FetchOutcome, removed: Article,
     boilerplate = build_boilerplate(removed_prose, (
         p.text for p in live_by_url.values()
         if same_publisher(p.url, removed.url)
+        and (not p.final_url or same_publisher(p.final_url, removed.url))
         and normalize_url(p.url) != normalize_url(removed.url)
     ))
     measurements: dict[str, Measurement] = {}
@@ -483,7 +485,8 @@ def _ground(raw: WebSearchResult, fetched: FetchOutcome, removed: Article,
         # reviewer context, and the next same-publisher candidate gets its chance. An
         # UNMEASURABLE fit (no usable text on a side) never demotes — no evidence, no call.
         # Cross-publisher matches are never measured: different outlets legitimately rewrite.
-        if relocated_to is None and same_publisher(page.url, removed.url):
+        if (relocated_to is None and same_publisher(page.url, removed.url)
+                and (not page.final_url or same_publisher(page.final_url, removed.url))):
             measured = measure(removed_prose, page.text, boilerplate)
             measurements[page.url] = measured
             o, n = measured.cleaned
@@ -529,6 +532,8 @@ def _ground(raw: WebSearchResult, fetched: FetchOutcome, removed: Article,
                         if relocation_measurement else None),
         boilerplate_paragraphs=(relocation_measurement.boilerplate_paragraphs
                                if relocation_measurement else None),
+        boilerplate_capped=(relocation_measurement.boilerplate_capped
+                            if relocation_measurement else None),
         same_publisher_measurements=measurements,
         related_same_publisher=related_same_publisher,
         matches=matches,
