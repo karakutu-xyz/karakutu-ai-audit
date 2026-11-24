@@ -1,4 +1,5 @@
 """Six-node LangGraph audit, with explicit evidence and model-call provenance."""
+import re
 import time
 import asyncio
 import logging
@@ -88,6 +89,11 @@ def dump(value):
     return json_safe(value)
 
 
+# A SearXNG engine name ("brave", "google cse", "mymemory translated"): at most three
+# lowercase words and 32 characters. Anything else is not kept.
+ENGINE_NAME = re.compile(r'(?=.{1,32}$)[a-z0-9][a-z0-9_.-]*(?: [a-z0-9_.-]+){0,2}')
+
+
 class Search(BaseSearchProvider):
     def __init__(self, base, *, transport=None):
         self.base = base.rstrip('/')
@@ -150,21 +156,20 @@ class Search(BaseSearchProvider):
                     # A 200 without a results list (an error object, a proxy page) is a failed
                     # query, not an empty search: it must not clear a rejection or hide an outage.
                     raise ValueError('search response has no results list')
-                names = []
+                # SearXNG lists blocked engines as [name, reason] pairs. Only that shape counts;
+                # the reason is upstream text and is never kept, and a name is kept only when it
+                # looks like an engine name, so no upstream sentence can reach the trace.
                 unresponsive = payload.get('unresponsive_engines')
-                if isinstance(unresponsive, list):
-                    for entry in unresponsive:
-                        name = (entry[0] if isinstance(entry, (list, tuple))
-                                and len(entry) == 2 else entry)
-                        if isinstance(name, str) and name.strip():
-                            names.append(name.strip()[:64])
-                            if len(names) >= 20:
-                                break
+                pairs = [entry[0].strip() for entry in
+                         (unresponsive if isinstance(unresponsive, list) else [])
+                         if isinstance(entry, (list, tuple)) and len(entry) == 2
+                         and isinstance(entry[0], str) and entry[0].strip()]
+                names = [name for name in pairs if ENGINE_NAME.fullmatch(name)][:20]
                 if names:
                     event['unresponsive_engines'] = names
             results = results_from_hits(hits, lambda h:(h.get('url'), h.get('title') or '', h.get('content') or ''), query=query, provider='SearXNG', max_results=max_results)
             event['results'] = dump(results)
-            if not results and names:
+            if not results and pairs:
                 event['error_type'] = 'EnginesUnresponsive'
                 self.state = 'degraded'
                 self._degraded = True

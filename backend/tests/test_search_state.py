@@ -75,8 +75,9 @@ async def test_unresponsive_engines_without_usable_results_fail(hits):
 
 @pytest.mark.parametrize('engines', [
     None, [], 'fabricated private reason', {'brave': 'fabricated private reason'},
-    [1, None, {}, '', '  ', [], ['brave'], ['brave', 'reason', 'extra'],
-     [None, 'fabricated private reason'], ['', 'reason'], ['  ', 'reason']],
+    [1, None, {}, '', '  ', 'fabricated private reason', [], ['brave'],
+     ['brave', 'reason', 'extra'], [None, 'fabricated private reason'], ['', 'reason'],
+     ['  ', 'reason']],
 ])
 async def test_empty_search_ignores_absent_or_malformed_unresponsive_engines(engines):
     payload = {'results': []}
@@ -97,7 +98,10 @@ async def test_empty_search_ignores_absent_or_malformed_unresponsive_engines(eng
 
 
 async def test_usable_results_record_only_bounded_engine_names():
-    engines = [' brave ', ('duckduckgo', 'fabricated private reason'), 'x' * 80]
+    engines = [[' brave ', 'fabricated private reason'], ('duckduckgo', 'fabricated private reason'),
+               'fabricated private bare string', ['x' * 40, 'fabricated private reason'],
+               ['Fabricated private reason: blocked!', 'r'],
+               ['fabricated private reason text here', 'r']]
     engines.extend([f'engine{i}', 'fabricated private reason'] for i in range(25))
     search = Search('https://search.example', transport=httpx.MockTransport(
         lambda request: httpx.Response(200, json={
@@ -114,8 +118,28 @@ async def test_usable_results_record_only_bounded_engine_names():
     assert [hit.url for hit in results] == ['https://paper.example/fictional']
     assert events[0]['error_type'] is None
     assert events[0]['unresponsive_engines'] == (
-        ['brave', 'duckduckgo', 'x' * 64] + [f'engine{i}' for i in range(17)])
-    assert 'fabricated private reason' not in str(events)
+        ['brave', 'duckduckgo'] + [f'engine{i}' for i in range(18)])
+    assert 'fabricated private' not in str(events)
+
+
+async def test_unrecognised_engine_names_still_fail_but_are_not_kept():
+    search = Search('https://search.example', transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={
+            'results': [], 'unresponsive_engines': [
+                ['Fabricated private reason: blocked!', 'fabricated private reason'],
+                ['fabricated private reason text here', 'fabricated private reason'],
+            ],
+        })))
+    events = []
+    context = trace.set(events)
+    try:
+        assert await search.search_checked('fictional') == ([], True)
+    finally:
+        trace.reset(context)
+    assert search.state == 'degraded'
+    assert events[0]['error_type'] == 'EnginesUnresponsive'
+    assert 'unresponsive_engines' not in events[0]
+    assert 'fabricated private' not in str(events)
 
 
 @pytest.mark.parametrize('hits', [[], [{'url': 'https://paper.example/fictional'}]])
