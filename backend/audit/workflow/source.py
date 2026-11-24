@@ -18,7 +18,10 @@ Two halves, always both:
     is `unknown`. A wrong source sends a human to the wrong page; no source is better.
 
 Liveness of a cited URL goes through the same fetch gate as every lead: live => containment
-measured and the page handed to step 5 as prefetched evidence; dead (404/410, article-shaped)
+measured; the page counts as the same story, and is handed to step 5 as prefetched evidence,
+only when at least `CITED_SAME_STORY_MIN` of the archived text is on it. A cited page that
+answers with less (a section front, a different story, an unmeasurable page) is reported as
+`live_other` and is not a lead: an outlet being cited does not make its page this story; dead (404/410, article-shaped)
 => `dead_source` (the flag) — the article's own attribution establishes same-story, so the
 pipeline files it under `dead_same_story`; unreadable (403, JS shell, PDF) => NOT a flag, the
 existing rule. A cited outlet NAMED without a URL becomes ONE site-scoped search whose hits are
@@ -39,7 +42,7 @@ from audit.search.fetch import (
     DeadCandidate, LivePage, fetch_candidates, guess_language, host_of, looks_like_an_article_url,
     normalize_url, probe_removed_url, prose_of, same_publisher,
 )
-from audit.search.textmatch import directional_containments
+from audit.search.textmatch import SIBLING_MAX, directional_containments
 from audit.workflow import prompts
 
 
@@ -47,6 +50,9 @@ from audit.workflow import prompts
 # least this share of the archived text measurably appears on the page (guards against soft-404s
 # and parked domains, which answer 200 with readable-but-unrelated prose).
 LIVE_SELF_MIN_CONTAINMENT = 0.5
+# A live cited page counts as the same story only from the line below which the calibration
+# calls a page a mere sibling (shared quotes or stock phrases): no new threshold.
+CITED_SAME_STORY_MIN = SIBLING_MAX
 HEAD_CHARS = 2000
 TAIL_CHARS = 600
 MAX_LINKS_IN_PROMPT = 8
@@ -113,7 +119,9 @@ class SourceEvidence(BaseModel):
     source_name: str = ""
     source_url: str = ""
     source_host: str = ""
-    source_status: str = "n/a"             # live | dead | unreadable | leads_only | not_located | n/a
+    # live (the same story) | live_other (answers, below the same-story bar) | dead | unreadable
+    # | leads_only | not_located | n/a
+    source_status: str = "n/a"
     source_containment: Optional[float] = None
     attribution_quote: str = ""
     extracted_links: List[str] = Field(default_factory=list)
@@ -171,9 +179,13 @@ async def run(removed: Article, agent, search_provider: BaseSearchProvider) -> S
             exclude_url=removed.url,
         )
         if fetched.live:
-            ev.live_source = fetched.live[0]
-            ev.source_status = "live"
-            ev.source_containment, _ = directional_containments(prose, ev.live_source.text)
+            page = fetched.live[0]
+            ev.source_containment, _ = directional_containments(prose, page.text)
+            if ev.source_containment is not None and ev.source_containment >= CITED_SAME_STORY_MIN:
+                ev.live_source = page
+                ev.source_status = "live"
+            else:
+                ev.source_status = "live_other"
         elif fetched.dead:
             d = fetched.dead[0]
             ev.dead_source = d.model_copy(update={"reason": f"cited source — {d.reason}"})
@@ -328,9 +340,14 @@ def describe(ev: SourceEvidence) -> str:
     else:
         who = f"{ev.source_kind.replace('_', ' ')} {ev.source_name}".strip()
         status = {
-            "live": f"its copy at {ev.source_url} is LIVE"
-                    + (f" ({ev.source_containment:.0%} of the archived text present)"
-                       if ev.source_containment is not None else ""),
+            "live": f"its copy at {ev.source_url} is LIVE and the same story "
+                    f"({(ev.source_containment or 0):.0%} of the archived text present)",
+            "live_other": f"the cited page {ev.source_url} answers but is not shown to be the same "
+                          f"story ("
+                          + (f"{ev.source_containment:.0%} of the archived text present"
+                             if ev.source_containment is not None else "the overlap could not be measured")
+                          + f", below the {CITED_SAME_STORY_MIN:.0%} same-story bar), so it is not "
+                          "used as evidence",
             "dead": f"its copy at {ev.source_url} is GONE ({ev.dead_source.reason if ev.dead_source else 'dead'}) — RED FLAG",
             "unreadable": f"its copy at {ev.source_url} could not be read (blocked or non-article) — not evidence",
             "leads_only": f"no URL was cited; {len(ev.extra_hits)} lead(s) from site:{ev.source_host} were passed to the web-search step",
