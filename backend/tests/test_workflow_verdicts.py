@@ -8,10 +8,18 @@ particular the two rules that keep the service inside its authority:
   * silence (nothing live, nothing dead) must never raise anything at all.
 """
 
-from audit.domain import Verdict
+import pytest
+
+from audit.domain import StageName, Verdict
 from audit.search.base import SearchResult
-from audit.search.fetch import DeadCandidate
-from audit.workflow.pipeline import _decide
+from audit.search.fetch import DeadCandidate, FetchOutcome, LivePage, UnreadableCandidate
+from audit.workflow import pipeline, related_removals
+from audit.workflow.pipeline import (
+    LOW_INTEREST_RELOCATION_FLOOR, _best_partial_relocation, _decide,
+    _low_interest_response,
+)
+from audit.workflow.relevance import RelevanceResult
+from audit.workflow.similarity import SimilarCandidate, SimilarityEvidence
 from audit.workflow.web_search import WebSearchEvidence
 
 RELOCATED = SearchResult(url="https://news.example.org/yazi/12346/x", title="t", snippet="s")
@@ -371,3 +379,115 @@ def test_a_dead_cited_source_is_named_as_such_in_the_flag_findings():
     verdict, findings = _decide(evidence)
     assert verdict is Verdict.POSSIBLE_CENSORSHIP
     assert "cited source — HTTP 404" in findings and "not a finding of censorship" in findings
+
+
+def partial_candidate(**changes):
+    return SimilarCandidate(**{
+        "url": "https://paper.example/copy", "title": "Invented copy",
+        "status": "live", "same_publisher": True, "fit": "partial",
+        "old_in_new": LOW_INTEREST_RELOCATION_FLOOR, "new_in_old": 0.41,
+        **changes,
+    })
+
+
+def low_interest_response(sim):
+    return _low_interest_response(
+        sim,
+        RelevanceResult(is_relevant=False, confidence=0.9, reasoning="Invented scope reason"),
+        related_removals.RelatedRemovalsEvidence(reason="invented archive unavailable"),
+        stages=[], classification=None,
+    )
+
+
+@pytest.mark.parametrize("changes", [
+    {"same_publisher": False, "old_in_new": 0.98},
+    {"fit": "unmeasured", "old_in_new": 0.98},
+    {"fit": "sibling", "old_in_new": 0.01, "new_in_old": 0.01},
+    {"fit": "verbatim", "old_in_new": 1.0},
+    {"status": "dead", "old_in_new": 0.98},
+    {"status": "unreadable", "old_in_new": 0.98},
+    {"old_in_new": None},
+    {"new_in_old": None},
+])
+def test_low_interest_ignores_candidates_without_live_measured_partial_fit(changes):
+    sim = SimilarityEvidence(candidates=[partial_candidate(**changes)])
+    assert _best_partial_relocation(sim) is None
+    response = low_interest_response(sim)
+    assert response.verdict is Verdict.LIKELY_LOW_PUBLIC_INTEREST
+    assert response.findings == (
+        "Removed article judged not of public interest: Invented scope reason "
+        "Related removals: not checked (invented archive unavailable)."
+    )
+
+
+@pytest.mark.parametrize("old_in_new, verdict", [
+    (LOW_INTEREST_RELOCATION_FLOOR, Verdict.LIKELY_MOVED),
+    (LOW_INTEREST_RELOCATION_FLOOR - 0.001, Verdict.LIKELY_LOW_PUBLIC_INTEREST),
+])
+def test_low_interest_floor_and_best_partial(old_in_new, verdict):
+    best = partial_candidate(old_in_new=old_in_new)
+    sim = SimilarityEvidence(candidates=[
+        partial_candidate(url="https://paper.example/less", old_in_new=0.34, new_in_old=0.99),
+        partial_candidate(url="https://other.example/copy", same_publisher=False, old_in_new=0.98),
+        partial_candidate(url="https://paper.example/unmeasured", fit="unmeasured", old_in_new=0.98),
+        best,
+    ])
+    assert _best_partial_relocation(sim) == best
+    response = low_interest_response(sim)
+    assert response.verdict is verdict
+    assert response.short_circuited_at is StageName.RELEVANCE
+    assert response.flags == []
+    assert best.url in response.findings
+    assert "https://paper.example/less" not in response.findings
+    assert "https://other.example/copy" not in response.findings
+    assert "https://paper.example/unmeasured" not in response.findings
+    assert "41%" in response.findings
+    assert "Invented scope reason" in response.findings
+    assert response.findings.endswith(
+        "Related removals: not checked (invented archive unavailable)."
+    )
+    if verdict is Verdict.LIKELY_MOVED:
+        assert "substantial but partial" in response.findings
+        assert "out of scope" in response.findings
+        assert "key-facts comparison of web search was not run" in response.findings
+        assert "floor" not in response.findings
+    else:
+        assert "Relocation note:" in response.findings
+        assert f"below the {LOW_INTEREST_RELOCATION_FLOOR:.0%} floor" in response.findings
+
+
+def test_low_interest_reuses_existing_decision_with_archive_evidence(monkeypatch):
+    candidate = partial_candidate()
+    hit = SearchResult(url=candidate.url, title=candidate.title, snippet="", source="archive")
+    sim = SimilarityEvidence(
+        candidates=[candidate], hits=[hit], reason="Invented similarity reason",
+        fetched=FetchOutcome(
+            live=[LivePage(
+                url=hit.url, final_url=hit.url, status=200,
+                title=hit.title, text="Invented text",
+            )],
+            unreadable=[UnreadableCandidate(
+                url="https://paper.example/blocked", title="Invented blocked page", reason="blocked",
+            )],
+        ),
+    )
+    decide = pipeline._decide
+    seen = []
+
+    def capture(web):
+        seen.append(web)
+        return decide(web)
+
+    monkeypatch.setattr(pipeline, "_decide", capture)
+    response = low_interest_response(sim)
+    assert response.verdict is Verdict.LIKELY_MOVED
+    assert len(seen) == 1
+    web = seen[0]
+    assert web.relocated_to == hit
+    assert web.matches == [hit]
+    assert web.relocation_old_in_new == candidate.old_in_new
+    assert web.relocation_new_in_old == candidate.new_in_old
+    assert web.relocation_covers_key_facts is True
+    assert web.hits_searched == web.archive_candidates == 1
+    assert web.live_pages_read == web.unreadable_count == 1
+    assert web.reasoning == sim.reason

@@ -1,4 +1,4 @@
-"""Invented page pairs recording current gaps and future stage A/B targets."""
+"""Invented page pairs covering relocation rules and pending rewrite/footer targets."""
 
 from html import escape
 from types import SimpleNamespace
@@ -14,7 +14,7 @@ from audit.search.base import BaseSearchProvider
 from audit.search.fetch import html_to_text
 from audit.search.textmatch import SIBLING_MAX, directional_containments
 from audit.search.urls import is_public_web_url
-from audit.workflow import classification, relevance, source, web_search
+from audit.workflow import classification, pipeline, relevance, source, web_search
 
 
 OLD_URL = "https://dusulke.example/haber/71000/water-budget"
@@ -260,21 +260,58 @@ async def low_interest_copy(run_offline_audit):
     return result, measured
 
 
-async def test_low_interest_hides_copy_today(
+async def test_low_interest_copy_below_floor_gets_relocation_note(
     run_offline_audit, record_property
 ):
+    result = await run_offline_audit(
+        budget_article(),
+        similar=[candidate()],
+        pages={NEW_URL: page(BUDGET[:1] + ORCHARD)},
+        relevant=False,
+    )
+    measured = details(result, "similarity")["candidates"][0]
+    record_property("below_floor", (measured["old_in_new"], measured["new_in_old"]))
+    assert SIBLING_MAX < measured["old_in_new"] < pipeline.LOW_INTEREST_RELOCATION_FLOOR
+    assert measured["fit"] == "partial"
+    assert result["response"]["verdict"] == "LIKELY_LOW_PUBLIC_INTEREST"
+    findings = result["response"]["findings"]
+    assert "Relocation note:" in findings
+    assert NEW_URL in findings
+    assert f"{measured['old_in_new']:.0%}" in findings
+    assert f"{measured['new_in_old']:.0%}" in findings
+    assert f"below the {pipeline.LOW_INTEREST_RELOCATION_FLOOR:.0%} floor" in findings
+
+
+async def test_measured_copy_outlives_low_interest(run_offline_audit, record_property):
     result, measured = await low_interest_copy(run_offline_audit)
     record_property("partial", (measured["old_in_new"], measured["new_in_old"]))
-    assert result["response"]["verdict"] == "LIKELY_LOW_PUBLIC_INTEREST"
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="stage A: a measured same-publisher copy outlives the low-interest exit",
-)
-async def test_measured_copy_outlives_low_interest(run_offline_audit):
-    result, _ = await low_interest_copy(run_offline_audit)
     assert result["response"]["verdict"] == "LIKELY_MOVED"
+    assert result["response"]["short_circuited_at"] == "relevance"
+    assert result["response"]["flags"] == []
+    findings = result["response"]["findings"]
+    assert "substantial but partial" in findings
+    assert "floor" not in findings
+    assert "public-interest screen judged the article out of scope" in findings
+    assert "Invented boundary" in findings
+    assert "key-facts comparison of web search was not run" in findings
+    assert "POSSIBLE_CENSORSHIP" not in findings
+    assert [s["status"] for s in result["steps"][4:]] == ["skipped", "skipped"]
+
+
+async def test_low_interest_sibling_keeps_original_response(
+    run_offline_audit, record_property,
+):
+    result = await run_offline_audit(
+        budget_article(), similar=[candidate()],
+        pages={NEW_URL: page(ORCHARD)}, relevant=False,
+    )
+    measured = details(result, "similarity")["candidates"][0]
+    record_property("sibling", (measured["old_in_new"], measured["new_in_old"]))
+    assert measured["fit"] == "sibling"
+    baseline = await run_offline_audit(budget_article(), relevant=False)
+    assert result["response"]["verdict"] == "LIKELY_LOW_PUBLIC_INTEREST"
+    assert result["response"]["findings"] == baseline["response"]["findings"]
+    assert "Relocation note:" not in result["response"]["findings"]
 
 
 def test_next_id_rewrite_is_below_sibling_bar(record_property):

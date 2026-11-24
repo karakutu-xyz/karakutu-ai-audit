@@ -8,10 +8,12 @@ exclusion; live / dead / unreadable), and measures every live SAME-PUBLISHER can
 the removed article's prose (directional 5-token-shingle containment, `audit.search.textmatch`).
 
 No model is involved. A candidate with `old_in_new >= MOVED_THRESHOLD` is a measured
-republication and is recorded as the relocation. A partial fit is recorded but NOT decided —
-step 5's model and the calibrated tiers handle it exactly as before. Everything fetched here is
-handed to step 5 (`fetched`, `hits`) so no URL is fetched twice and the archive-dead suppression
-rule still applies there (archive candidates keep `source="archive"`).
+republication and is recorded as the relocation. A measured partial same-publisher fit can
+decide a low-interest exit as LIKELY_MOVED when it holds at least 50% of the removed text;
+smaller partial fits add a relocation note. In-scope audits leave partial fits to web search's
+model and calibrated tiers. Everything fetched here is handed to step 6 (`fetched`, `hits`)
+so no URL is fetched twice and the archive-dead suppression rule still applies there
+(archive candidates keep `source="archive"`).
 
 Degrades: no wallet / unarchived URL / archive down => `available=False`, no candidates.
 """

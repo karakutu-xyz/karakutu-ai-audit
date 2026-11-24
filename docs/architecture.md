@@ -82,7 +82,8 @@ flowchart LR
     RR -->|in scope or related pattern| O[5. Source]
     O -->|original not live| W[6. Web search]
     S -->|measured move| D[Deterministic verdict]
-    RR -->|low interest, no pattern| D
+    RR -->|low interest, no pattern, partial copy holds at least 50%| LM[LIKELY_MOVED]
+    RR -->|low interest, no pattern, no qualifying copy| LI[LIKELY_LOW_PUBLIC_INTEREST]
     O -->|original live| D
     W --> D
 ```
@@ -90,9 +91,9 @@ flowchart LR
 | # | Step | Code | Uses | Can end the audit early |
 | --- | --- | --- | --- | --- |
 | 1 | Classification | [`classification.py`](../backend/audit/workflow/classification.py) | model, topic catalog | Only when the model is disabled (`AUDIT_FAILED`); other failures are recorded and the audit goes on |
-| 2 | Similarity | [`similarity.py`](../backend/audit/workflow/similarity.py) | archive, page fetch, text matching | Yes: a measured move to the same publisher gives `MOVED` |
+| 2 | Similarity | [`similarity.py`](../backend/audit/workflow/similarity.py) | archive, page fetch, text matching | Yes: a measured move to the same publisher gives `MOVED`; partial fits are retained for later decisions |
 | 3 | Relevance | [`relevance.py`](../backend/audit/workflow/relevance.py) | model | Only on model failure (`AUDIT_FAILED`) |
-| 4 | Related removals | [`related_removals.py`](../backend/audit/workflow/related_removals.py) | archive, model | Yes: low public interest and no related pattern gives `LIKELY_LOW_PUBLIC_INTEREST` |
+| 4 | Related removals | [`related_removals.py`](../backend/audit/workflow/related_removals.py) | archive, model | Yes: low public interest and no related pattern gives `LIKELY_MOVED` if a measured same-publisher partial copy holds at least 50% of the removed text; otherwise `LIKELY_LOW_PUBLIC_INTEREST`, with a relocation note for a partial copy below the floor |
 | 5 | Source | [`source.py`](../backend/audit/workflow/source.py) | page fetch, model, search | Yes: the original page is live with its text gives `NOT_REMOVED` |
 | 6 | Web search | [`web_search.py`](../backend/audit/workflow/web_search.py) | search, page fetch, model | Ends the graph; model failure gives `AUDIT_FAILED` |
 
@@ -104,12 +105,16 @@ the thresholds, are in [the workflow guide](workflow.md).
 
 Models find and describe evidence. They never pick the verdict. Code does:
 
-- `_decide_verdict` in [`pipeline.py`](../backend/audit/workflow/pipeline.py#L149) turns measured
+- `_decide_verdict` in [`pipeline.py`](../backend/audit/workflow/pipeline.py) turns measured
   evidence into `NOT_REMOVED`, `MOVED`, `LIKELY_MOVED`, `FOUND_ONLINE`, `POSSIBLE_CENSORSHIP`
   or `INCONCLUSIVE`. A live original wins first, then a relocation, then independent copies,
   then dead copies of the same story; anything else is `INCONCLUSIVE`.
-- `AuditEngine.run` in [`engine.py`](../backend/audit/engine.py#L332) handles the two exits that
-  are not about evidence: low public interest and failed execution (`AUDIT_FAILED`).
+- `_low_interest_response` in [`pipeline.py`](../backend/audit/workflow/pipeline.py) retains
+  measured same-publisher partial copies at the low-interest exit, reusing `_decide` at or above a
+  50% containment floor and adding a relocation note below it. Key facts are not compared by
+  a model on this path; a person should compare the pages.
+- `AuditEngine.run` in [`engine.py`](../backend/audit/engine.py) delegates the low-interest
+  response to the pipeline and handles failed execution (`AUDIT_FAILED`).
 - Text overlap is measured, not judged. The thresholds are constants in
   [`textmatch.py`](../backend/audit/search/textmatch.py#L51): 0.99 containment for a move, 0.30
   for a partial match.
@@ -191,11 +196,11 @@ results are demo output, not audits. How to start each mode is in
 | --- | --- |
 | `NOT_REMOVED` | At audit time the original URL answered with the article text measurably intact. It may have been restored or the removal may be intermittent; never exculpatory. |
 | `MOVED` | A live page at the same publisher contains at least 99% of the original text. Says nothing about why the original URL went away. |
-| `LIKELY_MOVED` | A live same-publisher page with a partial measured fit, or a fit that could not be measured. A person should check whether the differences matter. |
+| `LIKELY_MOVED` | A live same-publisher page with a partial measured fit, or a fit that could not be measured. At a low-interest exit with no related-removal pattern, only a measured partial copy holding at least 50% of the removed text qualifies; key facts have not been compared by a model. A person should compare the pages and check whether the differences matter. |
 | `FOUND_ONLINE` | Independent copies of the article exist elsewhere. Says nothing about why it disappeared. |
 | `POSSIBLE_CENSORSHIP` | Copies of the story existed and are now gone with nothing live left, or a same-publisher copy drops key facts. A flag for human review, never a finding of censorship. |
 | `INCONCLUSIVE` | The evidence does not support any other verdict. |
-| `LIKELY_LOW_PUBLIC_INTEREST` | The model judged the article of low public interest and no related-removal pattern kept it in scope. |
+| `LIKELY_LOW_PUBLIC_INTEREST` | The model judged the article of low public interest, no related-removal pattern kept it in scope, and no live measured same-publisher partial copy held at least 50% of the removed text. A partial copy below that floor is reported in a relocation note for human comparison. |
 | `AUDIT_FAILED` | The audit could not be completed (model disabled or failing, invalid model output). The article was not audited and must be run again. Not a finding. |
 
 **Flags:** `SOURCE_DEAD` (a cited source is gone with 404 or 410) and `RELATED_REMOVALS`

@@ -4,7 +4,8 @@
                           never fails the audit
     2. similarity         find similar link: the archive's similarity index, fetched and measured —
                           a measured republication ends the audit as MOVED (steps 3–6 skipped)
-    3. relevance          out of scope? — may short-circuit (LIKELY_LOW_PUBLIC_INTEREST) …
+    3. relevance          out of scope? — may exit as LIKELY_LOW_PUBLIC_INTEREST or,
+                          with a measured same-publisher partial copy holding ≥50%, LIKELY_MOVED …
     4. related_removals   … unless other articles on the SAME subject vanished from the archive
                           within ±14 days: the RELATED_REMOVALS flag keeps the audit in scope
                           (operator's rule). Never fails the audit.
@@ -13,7 +14,7 @@
     6. web_search         is the story reachable elsewhere or on the publisher's site? Skipped
                           when step 5 found the article live at its own URL.
 
-`_decide` chooses evidence verdicts in plain code. The engine owns low-interest/failure exits.
+`_decide` chooses evidence verdicts in plain code, including measured low-interest relocations.
 """
 from typing import List, Optional
 
@@ -22,11 +23,75 @@ from audit.domain import (
     Verdict,
 )
 from audit.search.textmatch import MOVED_THRESHOLD, PARTIAL_MIN
+from audit.search.base import SearchResult
+from audit.workflow import related_removals, web_search
+from audit.workflow.relevance import RelevanceResult
+from audit.workflow.similarity import SimilarCandidate, SimilarityEvidence
 from audit.workflow.web_search import candidate_counts, search_failure_note
 
 
 ORDER = [StageName.CLASSIFICATION, StageName.SIMILARITY, StageName.RELEVANCE,
          StageName.RELATED_REMOVALS, StageName.SOURCE, StageName.WEB_SEARCH]
+
+# Share of the removed text (old_in_new) a measured same-publisher copy must hold
+# for LIKELY_MOVED at the low-interest exit; starting value, to be set from the benchmark.
+LOW_INTEREST_RELOCATION_FLOOR = 0.50
+
+
+def _best_partial_relocation(sim: SimilarityEvidence) -> Optional[SimilarCandidate]:
+    """Pick the live, measured same-publisher partial holding most of the removed text."""
+    return max(
+        (c for c in sim.candidates
+         if c.status == "live" and c.same_publisher and c.fit == "partial"
+         and c.old_in_new is not None and c.new_in_old is not None),
+        key=lambda c: c.old_in_new,
+        default=None,
+    )
+
+
+def _low_interest_response(
+    sim: SimilarityEvidence, relevance: RelevanceResult,
+    related: related_removals.RelatedRemovalsEvidence, *,
+    stages: List[StageResult], classification: Optional[Classification],
+) -> AuditResponse:
+    """End an out-of-scope audit without losing a measured partial relocation."""
+    candidate = _best_partial_relocation(sim)
+    verdict = Verdict.LIKELY_LOW_PUBLIC_INTEREST
+    findings = f"Removed article judged not of public interest: {relevance.reasoning} "
+    if candidate is not None:
+        o, n = candidate.old_in_new, candidate.new_in_old
+        if o >= LOW_INTEREST_RELOCATION_FLOOR:
+            relocated = SearchResult(
+                url=candidate.url, title=candidate.title, snippet="", source="archive",
+            )
+            web = web_search.WebSearchEvidence(
+                relocated_to=relocated,
+                relocation_old_in_new=o, relocation_new_in_old=n,
+                matches=[relocated], hits_searched=len(sim.hits),
+                archive_candidates=len(sim.hits),
+                live_pages_read=len(sim.fetched.live),
+                unreadable_count=len(sim.fetched.unreadable), reasoning=sim.reason,
+            )
+            verdict, findings = _decide(web)
+            findings += (
+                " The public-interest screen judged the article out of scope "
+                f"({relevance.reasoning}); the measured same-publisher copy from the "
+                "similarity step decides the verdict instead. The key-facts comparison "
+                "of web search was not run, so a person should compare the two pages. "
+            )
+        else:
+            findings += (
+                f"Relocation note: a same-publisher page at {candidate.url} holds "
+                f"{o:.0%} of the original's text (and {n:.0%} of that page comes from "
+                f"the original), below the {LOW_INTEREST_RELOCATION_FLOOR:.0%} floor "
+                "for a likely move; a person may want to compare the two. "
+            )
+    findings += related_removals.describe(related)
+    return AuditResponse(
+        verdict=verdict, stages=stages, short_circuited_at=StageName.RELEVANCE,
+        findings=_with_classification(findings, classification),
+        classification=classification, flags=[],
+    )
 
 
 def _skipped(stage: StageName, reason: str) -> StageResult:

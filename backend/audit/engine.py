@@ -13,7 +13,7 @@ from langsmith import tracing_context
 from openai import AsyncOpenAI
 
 from audit.config import MODEL_STEPS
-from audit.domain import AuditRequest, AuditResponse, StageResult, StageName, StageOutcome, Verdict, AuditFlag
+from audit.domain import AuditRequest, AuditResponse, StageResult, StageName, StageOutcome, AuditFlag
 from audit.model import trace
 from audit.jsonsafe import json_safe
 from audit.clients.karakutu import KarakutuClient
@@ -424,8 +424,10 @@ class AuditEngine:
         if state.get('failure'):
             response = pipeline._audit_failed(state['failure'], stages=stages, classification=cls)
         elif state.get('low_interest'):
-            findings = f"Removed article judged not of public interest: {state['relevance'].reasoning} " + related_removals.describe(state['related'])
-            response = AuditResponse(verdict=Verdict.LIKELY_LOW_PUBLIC_INTEREST, stages=stages, short_circuited_at=StageName.RELEVANCE, findings=pipeline._with_classification(findings, cls), classification=cls, flags=[])
+            response = pipeline._low_interest_response(
+                state['similarity'], state['relevance'], state['related'],
+                stages=stages, classification=cls,
+            )
         else:
             web = state['web']
             src = state.get('source')

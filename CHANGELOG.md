@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A low-interest exit now keeps a measured same-publisher partial copy: holding at least 50% of the removed article's text gives `LIKELY_MOVED`; a smaller partial copy adds a relocation note to `LIKELY_LOW_PUBLIC_INTEREST`. Key facts are left for a person to compare. Verdicts can change, and new runs get a new workflow ID.
 - Two evidence fixes that can change verdicts. The source step now calls a cited page the same story, and hands it to web search as a lead, only when it holds at least 20% of the archived text (the existing sibling line); a readable cited page below that is reported as not shown to be the same story instead of "live". Related-removal key terms no longer treat all-caps header runs or labels as acronyms or company and legal-form pairs as names, and two-word names match only from a word start. New runs get a new workflow ID.
 - Add a fabricated verdict benchmark set (15 invented Turkish cases, `--set verdict-quality`),
   `scripts/benchmark_compare.py` to line up two reports by workflow ID (fixed, broke, added and
