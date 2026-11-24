@@ -298,6 +298,7 @@ are required for the offline demo.
    port and refuses an explicit loopback mismatch, including with --check.
    For "refused the request", enable JSON output in SearXNG and retry a query;
    a health response alone cannot establish that JSON search works.
+   `degraded` means SearXNG is reachable but a query had no usable hits and reported blocked or rate-limited engines; retry a query after they recover.
 5. Open **Benchmarks**, choose **New benchmark run**, then **Use a synthetic
    example**. Submit that fictional benchmark and inspect its steps. It uses the
    live model while staying in the benchmark category. No archive writes occur.

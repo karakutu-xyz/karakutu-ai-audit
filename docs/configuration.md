@@ -285,11 +285,13 @@ of `disabled`, retaining HTTP 409 and the `archive_unavailable` code.
 ### Search reachability
 
 `GET /api/status` keeps `search_provider` and adds `search`: `disabled`,
-`unchecked`, `ok`, `unreachable`, or `rejected`. Settings renders these as plain
-words. Test mode and disabled search make no network calls. Live status uses a
+`unchecked`, `ok`, `degraded`, `unreachable`, or `rejected`. Settings renders these
+as plain words. Test mode and disabled search make no network calls. Live status uses a
 GET to the configured search base plus `/healthz`, bounded to two seconds and
 cached for 30 seconds; concurrent polls share the probe. Any HTTP answer proves
 reachability, even when `/healthz` is unavailable. A health answer never clears
-`rejected` learned from an actual query; a successful query does. Connect,
+`degraded` or `rejected` learned from an actual query. A valid search answer clears
+rejection; a successful query clears degradation. Connect,
 timeout and transport failures mean `unreachable`; HTTP search errors or invalid
 search responses mean `rejected`. Status includes no upstream text or URLs.
+`degraded` means SearXNG answered but a query had no usable hits and reported blocked or unresponsive engines.

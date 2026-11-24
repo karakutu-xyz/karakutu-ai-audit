@@ -131,7 +131,7 @@ export type ArchiveState =
   | "auth_unavailable" | "unreachable" | "rejected";
 
 export type SearchState =
-  | "disabled" | "unchecked" | "ok" | "unreachable" | "rejected";
+  | "disabled" | "unchecked" | "ok" | "unreachable" | "rejected" | "degraded";
 
 export interface ServiceStatus {
   service: string;

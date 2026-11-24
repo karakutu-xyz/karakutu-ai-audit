@@ -2186,7 +2186,8 @@
               "unchecked",
               "ok",
               "unreachable",
-              "rejected"
+              "rejected",
+              "degraded"
             ],
             "title": "Search",
             "type": "string"

@@ -25,6 +25,7 @@ const searchLabels: Record<SearchState, string> = {
   ok: "SearXNG · reachable",
   unreachable: "SearXNG · unreachable at the configured SEARXNG_URL",
   rejected: "SearXNG · refused the request (is JSON output enabled?)",
+  degraded: "SearXNG · reachable, but its search engines are not answering (blocked or rate-limited)",
 };
 
 export function SettingsPage() {

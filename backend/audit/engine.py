@@ -96,13 +96,14 @@ class Search(BaseSearchProvider):
         self._transport = transport
         self._probe_at = None
         self._probe_lock = asyncio.Lock()
-        # A rejection is remembered until a real search succeeds; neither a probe nor a
-        # later transport failure can clear it.
+        # Probes and transport failures cannot clear remembered query failures.
+        # Valid search answers clear rejection; successful queries clear degradation.
         self._rejected = False
+        self._degraded = False
         self._search_generation = 0
 
     async def probe(self) -> SearchState:
-        """Bounded reachability only; HTTP answers cannot clear search rejection.
+        """Bounded reachability only; HTTP answers cannot clear search failures.
 
         Coalesce concurrent status polls and cache for 30 seconds. A real search
         completed during a probe owns the newer state. No upstream text escapes.
@@ -118,7 +119,8 @@ class Search(BaseSearchProvider):
                     async with httpx.AsyncClient(timeout=2, transport=self._transport) as client:
                         async with client.stream('GET', self.base + '/healthz'):
                             pass  # Headers suffice; never download an upstream body.
-                state = "rejected" if self._rejected else "ok"
+                state = ("rejected" if self._rejected else
+                         "degraded" if self._degraded else "ok")
             except Exception:
                 state = "unreachable"
             if generation == self._search_generation:
@@ -148,10 +150,30 @@ class Search(BaseSearchProvider):
                     # A 200 without a results list (an error object, a proxy page) is a failed
                     # query, not an empty search: it must not clear a rejection or hide an outage.
                     raise ValueError('search response has no results list')
+                names = []
+                unresponsive = payload.get('unresponsive_engines')
+                if isinstance(unresponsive, list):
+                    for entry in unresponsive:
+                        name = (entry[0] if isinstance(entry, (list, tuple))
+                                and len(entry) == 2 else entry)
+                        if isinstance(name, str) and name.strip():
+                            names.append(name.strip()[:64])
+                            if len(names) >= 20:
+                                break
+                if names:
+                    event['unresponsive_engines'] = names
             results = results_from_hits(hits, lambda h:(h.get('url'), h.get('title') or '', h.get('content') or ''), query=query, provider='SearXNG', max_results=max_results)
             event['results'] = dump(results)
+            if not results and names:
+                event['error_type'] = 'EnginesUnresponsive'
+                self.state = 'degraded'
+                self._degraded = True
+                self._rejected = False
+                self._search_generation += 1
+                return [], True
             self.state = 'ok'
             self._rejected = False
+            self._degraded = False
             self._search_generation += 1
             return results, False
         except Exception as exc:

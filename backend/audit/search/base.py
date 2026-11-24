@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, Literal, Optional
 from pydantic import BaseModel
 
-SearchState = Literal["disabled", "unchecked", "ok", "unreachable", "rejected"]
+SearchState = Literal["disabled", "unchecked", "ok", "unreachable", "rejected", "degraded"]
 
 
 class SearchResult(BaseModel):

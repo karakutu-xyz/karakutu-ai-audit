@@ -49,6 +49,127 @@ async def test_search_checked_outcomes_and_recovery(outcome, expected):
         trace.reset(context)
 
 
+@pytest.mark.parametrize('hits', [[], [
+    {'url': '/fictional/relative'}, {'url': 'ftp://files.example/fictional'},
+]])
+async def test_unresponsive_engines_without_usable_results_fail(hits):
+    search = Search('https://search.example', transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={
+            'results': hits, 'unresponsive_engines': [
+                [' brave ', 'fabricated private rate-limit reason'],
+                ['duckduckgo', 'fabricated private CAPTCHA reason'],
+            ],
+        })))
+    events = []
+    context = trace.set(events)
+    try:
+        assert await search.search_checked('fictional') == ([], True)
+    finally:
+        trace.reset(context)
+    assert search.state == 'degraded'
+    assert events[0]['error_type'] == 'EnginesUnresponsive'
+    assert events[0]['unresponsive_engines'] == ['brave', 'duckduckgo']
+    assert events[0]['results'] == []
+    assert 'fabricated private' not in str(events)
+
+
+@pytest.mark.parametrize('engines', [
+    None, [], 'fabricated private reason', {'brave': 'fabricated private reason'},
+    [1, None, {}, '', '  ', [], ['brave'], ['brave', 'reason', 'extra'],
+     [None, 'fabricated private reason'], ['', 'reason'], ['  ', 'reason']],
+])
+async def test_empty_search_ignores_absent_or_malformed_unresponsive_engines(engines):
+    payload = {'results': []}
+    if engines is not None:
+        payload['unresponsive_engines'] = engines
+    search = Search('https://search.example', transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json=payload)))
+    events = []
+    context = trace.set(events)
+    try:
+        assert await search.search_checked('fictional') == ([], False)
+    finally:
+        trace.reset(context)
+    assert search.state == 'ok'
+    assert events[0]['error_type'] is None
+    assert 'unresponsive_engines' not in events[0]
+    assert 'fabricated private' not in str(events)
+
+
+async def test_usable_results_record_only_bounded_engine_names():
+    engines = [' brave ', ('duckduckgo', 'fabricated private reason'), 'x' * 80]
+    engines.extend([f'engine{i}', 'fabricated private reason'] for i in range(25))
+    search = Search('https://search.example', transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={
+            'results': [{'url': 'https://paper.example/fictional'}],
+            'unresponsive_engines': engines,
+        })))
+    events = []
+    context = trace.set(events)
+    try:
+        results, failed = await search.search_checked('fictional')
+    finally:
+        trace.reset(context)
+    assert not failed and search.state == 'ok'
+    assert [hit.url for hit in results] == ['https://paper.example/fictional']
+    assert events[0]['error_type'] is None
+    assert events[0]['unresponsive_engines'] == (
+        ['brave', 'duckduckgo', 'x' * 64] + [f'engine{i}' for i in range(17)])
+    assert 'fabricated private reason' not in str(events)
+
+
+@pytest.mark.parametrize('hits', [[], [{'url': 'https://paper.example/fictional'}]])
+async def test_degraded_search_recovers_on_a_successful_query(hits):
+    payload = {'results': [], 'unresponsive_engines': [['brave', 'fabricated reason']]}
+    search = Search('https://search.example', transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json=payload)))
+    assert await search.search_checked('fictional') == ([], True)
+    assert search.state == 'degraded'
+    payload = {'results': hits}
+    assert not (await search.search_checked('fictional'))[1]
+    assert search.state == 'ok'
+    assert await search.probe() == 'ok'
+
+
+async def test_probe_and_transport_failure_preserve_degraded_search():
+    available = True
+
+    def route(request):
+        if not available:
+            raise httpx.ConnectError('fabricated private reason', request=request)
+        return httpx.Response(200, json={
+            'results': [], 'unresponsive_engines': [['brave', 'fabricated private reason']],
+        })
+
+    search = Search('https://search.example', transport=httpx.MockTransport(route))
+    assert await search.probe() == 'ok'
+    assert await search.search_checked('fictional') == ([], True)
+    search._probe_at -= 31
+    assert await search.probe() == 'degraded'
+    available = False
+    assert await search.search_checked('fictional') == ([], True)
+    assert search.state == 'unreachable'
+    search._probe_at -= 31
+    assert await search.probe() == 'unreachable'
+    available = True
+    search._probe_at -= 31
+    assert await search.probe() == 'degraded'
+
+
+async def test_degraded_answer_clears_remembered_rejection():
+    status = 403
+    search = Search('https://search.example', transport=httpx.MockTransport(
+        lambda request: httpx.Response(status, json={
+            'results': [], 'unresponsive_engines': [['brave', 'fabricated private reason']],
+        })))
+    assert await search.search_checked('fictional') == ([], True)
+    assert search.state == 'rejected'
+    status = 200
+    assert await search.search_checked('fictional') == ([], True)
+    assert search.state == 'degraded'
+    assert await search.probe() == 'degraded'
+
+
 @pytest.mark.parametrize('answer, expected', [(200, 'ok'), (403, 'ok'), (404, 'ok'),
                                              (503, 'ok'), (None, 'unreachable'),
                                              ('timeout', 'unreachable')])
@@ -114,7 +235,8 @@ async def test_probe_keeps_rejection_until_a_real_search_succeeds():
     assert await search.probe() == 'ok'
 
 
-async def test_concurrent_probes_coalesce_and_new_search_owns_state():
+@pytest.mark.parametrize('degraded', [False, True])
+async def test_concurrent_probes_coalesce_and_new_search_owns_state(degraded):
     started, release = asyncio.Event(), asyncio.Event()
     calls = []
 
@@ -124,7 +246,10 @@ async def test_concurrent_probes_coalesce_and_new_search_owns_state():
             started.set()
             await release.wait()
             raise httpx.ConnectError('fabricated upstream text', request=request)
-        return httpx.Response(200, json={'results': []})
+        return httpx.Response(200, json={
+            'results': [],
+            'unresponsive_engines': [['brave', 'fabricated reason']] if degraded else [],
+        })
 
     search = Search('https://search.example', transport=httpx.MockTransport(route))
     first = asyncio.create_task(search.probe())
@@ -132,7 +257,8 @@ async def test_concurrent_probes_coalesce_and_new_search_owns_state():
     second = asyncio.create_task(search.probe())
     await search.search_checked('fictional')
     release.set()
-    assert await asyncio.gather(first, second) == ['ok', 'ok']
+    expected = 'degraded' if degraded else 'ok'
+    assert await asyncio.gather(first, second) == [expected, expected]
     assert calls.count('/healthz') == 1
 
 
@@ -162,3 +288,18 @@ async def test_status_preserves_real_search_rejection(tmp_path):
         assert response.json()['search'] == 'rejected'
         assert 'search.example' not in response.text
         assert 'fabricated private upstream text' not in response.text
+
+
+async def test_status_preserves_real_search_degradation(tmp_path):
+    engine = FakeEngine()
+    engine.search = Search('https://search.example', transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={
+            'results': [], 'unresponsive_engines': [['brave', 'fabricated private reason']],
+        })))
+    assert await engine.search.search_checked('fictional') == ([], True)
+    with TestClient(create_app(settings(tmp_path, search_provider='searxng'), engine)) as client:
+        response = client.get('/api/status')
+        assert response.status_code == 200
+        assert response.json()['search'] == 'degraded'
+        assert 'search.example' not in response.text
+        assert 'fabricated private reason' not in response.text
