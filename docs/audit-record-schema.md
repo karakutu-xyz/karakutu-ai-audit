@@ -27,9 +27,9 @@ fields are required; nullable fields explicitly carry JSON null when unavailable
 | `run` | `id`, `origin`, `category`, `status`, `created_at`, nullable `finished_at`, and `workflow_id`. Times are RFC 3339 with an explicit offset. |
 | `verdict` | Stored verdict, or null until an output is stored. |
 | `flags` | Stored `AuditFlag` values, or an empty list. |
-| `findings` | Stored findings, capped at 2,000 characters, or null. |
-| `classification` | Stored `subject_tags` (notation and label), `genre`, `geographic_scope`, and `gist` capped at 300 characters; null when absent. |
-| `stages` | Six summaries in pipeline order: `stage`, `outcome`, `summary`. Each summary is the stored explanation with whitespace collapsed, capped at 300 characters. Empty without output. |
+| `findings` | Stored findings, capped at 2,000 UTF-8 bytes, or null. |
+| `classification` | Stored `subject_tags` (notation and label), `genre`, `geographic_scope`, and `gist` capped at 300 UTF-8 bytes; null when absent. |
+| `stages` | Six summaries in pipeline order: `stage`, `outcome`, `summary`. Each summary is the stored explanation with whitespace collapsed, capped at 300 UTF-8 bytes. Empty without output. |
 | `evidence` | Typed facts from stored output stage `details`, described below; null without output. |
 | `error` | Stored fixed `audit_failed` message, or null. Cancellation and interruption are lifecycle states, not audit errors in this contract. |
 | `notice` | The fixed machine-triage notice, unchanged. No verdict, including `POSSIBLE_CENSORSHIP`, is a finding of censorship; a person decides on independent evidence. |
@@ -55,16 +55,21 @@ Missing `details` and missing keys in older rows become null or empty lists.
 | `related_same_publisher` | Web-search `related_same_publisher`. |
 | `search_queries`, `search_queries_failed` | Stored web-search counts, or null. |
 
-Each evidence list keeps at most five eligible items. Evidence URLs longer than 512
-bytes (UTF-8) are skipped, including the singular relocation URL; URLs are never cut into
+Each evidence list keeps at most five eligible items after redaction and full-text
+scans. Evidence URLs longer than 512 bytes (UTF-8) are skipped, including the singular relocation URL; URLs are never cut into
 misleading links. Every text cap counts UTF-8 bytes, not characters: findings 2,000, each
 stage summary 300, the gist 300, each tag notation and label 120, each dead-copy reason 120.
 Classification retains at most five subject tags. A cut text ends with `…`.
 
-A typical record is a few KB. The caps bound every record: the article URL is at most 8 KB
-(a longer one refuses the record with `too_large`), and everything else together stays well
-under the hard limit `RESULT_MAX_BYTES` of **32,768 bytes**. `build_record` still checks the
-final UTF-8 JSON and refuses an oversized record with `too_large`, as a fail-closed backstop.
+A typical result is a few KB. The article URL is at most 8,192 UTF-8 bytes;
+submission validation rejects longer URLs with 422. The store accepts unbounded archive
+identities, so results cap each of `article.ref` and `article.archive_id` at 512 UTF-8
+bytes, refusing longer identities with `too_large` rather than cutting them. Together,
+the URL, both identities, findings, six summaries, gist, twelve tag fields (five topics
+and a genre), sixteen evidence URLs and five reasons allow at most 23,548 content bytes.
+JSON escaping and metadata add overhead; `build_result` enforces the hard
+`RESULT_MAX_BYTES` limit of **32,768 UTF-8 JSON bytes** on every outgoing result and
+record. Oversized older rows are withheld with `too_large`.
 
 ## What stays on this service
 
@@ -81,16 +86,21 @@ Keeping one pointer avoids duplicating implementation and prompt data in every r
 
 ## Redaction and refusals
 
-`build_result(run, ...)` builds API results for stored runs in every category and state,
-validates the shared model, and returns plain JSON. It scrubs credential-key values and
-credentials inside URLs. `build_record(run, workflow, ...)` additionally checks record
-eligibility, workflow identity, timestamps and lineage, then scans the projected result
-for credentials and configured secrets before returning it.
+`build_result(run, ..., secret_values=())` is the shared fail-closed builder for
+results in every category and state. It projects untruncated stored result text,
+collapses stage explanation whitespace, scrubs credentials, and scans complete strings
+and serialized JSON for credentials and supplied secrets before applying text and list
+caps. It scans capped strings for credentials again, enforces byte limits, validates
+the shared model, and returns plain JSON. `build_record(run, workflow, ...)` additionally
+checks record eligibility, workflow identity, timestamps and lineage, then delegates
+to that builder with the supplied secrets.
 
-The record refusal codes are `not_live`, `not_finished`, `no_output`,
-`workflow_mismatch`, `invalid_timestamp`, `invalid_lineage`, `credential_detected`,
-`secret_detected`, and `too_large`. Interrupted runs return `not_finished`. A terminal
-run without output or a stored audit-failure error returns `no_output`.
+The refusal codes are `not_live`, `not_finished`, `no_output`, `workflow_mismatch`,
+`invalid_timestamp`, `invalid_lineage`, `credential_detected`, `secret_detected`,
+`too_large`, and `invalid_result` (the projection cannot satisfy the shared model).
+Interrupted records return `not_finished`. A terminal record without output or a stored
+audit-failure error returns `no_output`. API result refusals return HTTP 409
+`result_withheld` with the fixed reason and run ID; details remain available.
 
 Credential-like keys (`authorization`, `cookie`, `api_key`, `token`, `wallet`, `jwk`,
 `traceback`, and similar exact names) have their values replaced with `[redacted]`.
@@ -99,19 +109,21 @@ credential query or fragment parameters such as `access_token`, `key` and `sig`.
 A parameter containing an encoded credential URL is redacted as a whole. Semicolons
 and HTML-escaped separators are covered. Other URL bytes are retained.
 
-The final credential scan covers every string, including keys, through every state
+The credential scans cover every string, including keys, through every state
 reachable by up to five single URL-decoding or HTML-unescaping steps, with and without
-`+` as space. Remaining credentials or still-expanding encodings refuse the record.
+`+` as space. Remaining credentials or still-expanding encodings refuse the result.
 Only an exact `[redacted]` value counts as redacted. Supplied configured secret values,
-of any nonzero length, appearing anywhere in any decoding state refuse the record with
+of any nonzero length, appearing anywhere in any decoding state refuse the result with
 `secret_detected`; the final serialized JSON is checked too.
 
 ### What the guards promise
 
 - **Fail closed for supplied secrets:** the future poster must pass every configured
   model/API key, bearer token and wallet secret to `build_record`. Any surviving value
-  in the portable result refuses it. The API result builder performs redaction but does
-  not have that poster-supplied secret inventory or the record's final refusal scans.
+  in the portable result refuses it. API result routes pass the service's configured
+  API token, model key and wallet material through the same builder. Wallet material
+  includes private JWK components from inline JSON or the configured wallet file.
+  The service does not read SearXNG's server secret.
 - **No raw diagnostics or transcripts by projection:** the portable result copies only
   the named stored result fields and fixed service errors. Article text, upstream bodies,
   prompts and raw model completions have no field in this contract. Findings and summaries
@@ -124,6 +136,9 @@ of any nonzero length, appearing anywhere in any decoding state refuse the recor
 ## Lineage and storage keys
 
 The article is filed under `article.archive_id`, or `article.url` when that is unknown.
+Archive identity comes from the linked article row, including a `u-` reference enriched
+by import; a `ka-` reference supplies the fallback. An explicit `build_record` archive
+ID overrides both.
 `article.ref` links to this service's local article history. The record ID is the future
 post's idempotency key: repeating the same ID should keep one copy; a different ID is a
 new record. Serialization does not change historical run input or workflow snapshots.

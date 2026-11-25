@@ -14,12 +14,13 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, 
 from audit.domain import AuditFlag, GeographicScope, StageName, StageOutcome, Verdict
 
 SCHEMA_VERSION = "2.0"
-# Every free-text and link field below is capped in UTF-8 bytes, so a result is bounded:
-# article URL <= 8 KiB (a longer one refuses the record), findings 2000 B, six 300 B stage
-# summaries, a 300 B gist, five 120 B tag fields, 16 evidence links of <= 512 B and five 120 B
-# reasons stay well under this hard limit. Typical results are a few KB.
+# UTF-8 content budget: article URL 8192 B, two identities of 512 B each, findings
+# 2000 B, six 300 B summaries, gist 300 B, twelve 120 B tag fields (five topics + genre),
+# sixteen 512 B evidence URLs, five 120 B reasons: 23,548 B before JSON overhead.
+# JSON escaping/metadata can expand this; the serialized 32 KiB check is authoritative.
 RESULT_MAX_BYTES = 32768
 ARTICLE_URL_MAX_BYTES = 8192
+ARTICLE_ID_MAX_BYTES = 512
 NOTICE = "Machine triage record. No verdict, including POSSIBLE_CENSORSHIP, is a finding of censorship; a person decides on independent evidence."
 RecordId = Annotated[str, Field(pattern=r"^run_[0-9a-f]{32}\.r[0-9]+$")]
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
@@ -59,9 +60,19 @@ class Correction(FixedObject):
 Lineage = Annotated[Initial | ReAudit | Correction, Field(discriminator="kind")]
 
 
+def _identity(value: str) -> str:
+    if len(value.encode("utf-8")) > ARTICLE_ID_MAX_BYTES:
+        raise ValueError("identity_too_large")
+    return value
+
+
+Identity = Annotated[str, Field(min_length=1, max_length=ARTICLE_ID_MAX_BYTES),
+                     AfterValidator(_identity)]
+
+
 class ArticleIdentity(FixedObject):
-    ref: Annotated[str, Field(min_length=1, max_length=80)] | None
-    archive_id: Annotated[str, Field(min_length=1, max_length=80)] | None
+    ref: Identity | None
+    archive_id: Identity | None
     url: str
     content_sha256: Sha256
 
@@ -135,10 +146,16 @@ class AuditResult(FixedObject):
     notice: Literal[NOTICE]
 
 
+RecordErrorCode = Literal[
+    "not_live", "not_finished", "no_output", "workflow_mismatch", "invalid_timestamp",
+    "invalid_lineage", "credential_detected", "secret_detected", "too_large", "invalid_result",
+]
+
+
 class RecordError(ValueError):
     """Safe refusal code, never containing stored run data."""
 
-    def __init__(self, code: str):
+    def __init__(self, code: RecordErrorCode):
         self.code = code
         super().__init__(code)
 
@@ -290,12 +307,10 @@ def _contains_secret(value, secrets) -> bool:
     return False
 
 
-def _cap(value, limit, *, collapse=False):
+def _cap(value, limit):
     """Cap text at `limit` UTF-8 bytes, ending a cut text with an ellipsis."""
     if not isinstance(value, str):
         return ""
-    if collapse:
-        value = " ".join(value.split())
     data = value.encode("utf-8")
     if len(data) <= limit:
         return value
@@ -306,18 +321,22 @@ def _url(value):
     return value if isinstance(value, str) and value and len(value.encode("utf-8")) <= 512 else None
 
 
+def _text(value):
+    return value if isinstance(value, str) else ""
+
+
 def _tag(value):
     if not isinstance(value, dict):
         return None
-    return {"notation": _cap(value.get("notation"), 120), "label": _cap(value.get("label"), 120)}
+    return {"notation": _text(value.get("notation")), "label": _text(value.get("label"))}
 
 
 def _classification(value):
     if not isinstance(value, dict):
         return None
-    return {"subject_tags": [t for t in map(_tag, _items(value.get("subject_tags"))) if t][:5],
+    return {"subject_tags": [t for t in map(_tag, _items(value.get("subject_tags"))) if t],
             "genre": _tag(value.get("genre")), "geographic_scope": value.get("geographic_scope"),
-            "gist": _cap(value.get("gist", ""), 300)}
+            "gist": _text(value.get("gist"))}
 
 
 def _items(value):
@@ -325,11 +344,11 @@ def _items(value):
 
 
 def _urls(values):
-    return [url for value in _items(values) if (url := _url(value))][:5]
+    return [url for value in _items(values) if (url := _url(value))]
 
 
 def _share(value):
-    return value if type(value) in (int, float) and math.isfinite(value) else None
+    return float(value) if type(value) in (int, float) and math.isfinite(value) else None
 
 
 def _count(value):
@@ -348,12 +367,24 @@ def _recordable(run):
             and re.fullmatch(r"run_[0-9a-f]{32}", run["id"]) is not None)
 
 
-def build_result(run, *, lineage=None, revision=0) -> dict:
+def build_result(run, *, lineage=None, revision=0, secret_values=()) -> dict:
+    """Build an outgoing result or refuse with a fixed code, never stored diagnostics."""
+    try:
+        return _build_result(run, lineage=lineage, revision=revision, secret_values=secret_values)
+    except RecordError:
+        raise
+    except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
+        raise RecordError("invalid_result") from None
+
+
+def _build_result(run, *, lineage, revision, secret_values) -> dict:
     """Project saved output only; never inspect step evidence, prompts or transcripts."""
     article = run["input"]["removed_article"]
     ref = run.get("article_ref")
-    # Archive-owned references encode the archive identity; URL references do not.
+    # Linked article metadata also covers URL-owned references enriched by import.
     archive_id = run.get("archive_id")
+    if archive_id is None:
+        archive_id = run.get("article_archive_id")
     if archive_id is None and ref and ref.startswith("ka-"):
         archive_id = ref[3:] or None
     output = run.get("output") or {}
@@ -376,12 +407,12 @@ def build_result(run, *, lineage=None, revision=0) -> dict:
         "run": {key: run.get(key) for key in ("id", "origin", "category", "status",
                                              "created_at", "finished_at", "workflow_id")},
         "verdict": output.get("verdict"), "flags": output.get("flags") or [],
-        "findings": _cap(output["findings"], 2000) if output.get("findings") is not None else None,
+        "findings": output.get("findings"),
         "classification": classification,
         "stages": [{"stage": stage.value,
                     "outcome": stages.get(stage.value, {}).get("outcome", "inconclusive"),
-                    "summary": _cap(stages.get(stage.value, {}).get("explanation", ""),
-                                    300, collapse=True)} for stage in StageName] if output else [],
+                    "summary": " ".join(_text(stages.get(stage.value, {}).get("explanation")).split())}
+                   for stage in StageName] if output else [],
         "evidence": {
             "relocated_to": _url(relocation.get("relocated_to")),
             "old_in_new": _share(relocation.get("old_in_new")),
@@ -390,9 +421,9 @@ def build_result(run, *, lineage=None, revision=0) -> dict:
                                  if type(web.get("covers_key_facts")) is bool else None),
             "original_url_status": source.get("self_status"),
             "live_copies": _urls(web.get("matches")),
-            "dead_copies": [{"url": d["url"], "reason": _cap(d.get("reason", ""), 120)}
+            "dead_copies": [{"url": d["url"], "reason": _text(d.get("reason"))}
                             for d in _items(web.get("dead_same_story"))
-                            if isinstance(d, dict) and _url(d.get("url"))][:5],
+                            if isinstance(d, dict) and _url(d.get("url"))],
             "related_same_publisher": _urls(web.get("related_same_publisher")),
             "search_queries": _count(web.get("search_queries")),
             "search_queries_failed": _count(web.get("search_queries_failed")),
@@ -401,20 +432,41 @@ def build_result(run, *, lineage=None, revision=0) -> dict:
         "notice": NOTICE,
     }
     _redact(result)
+    if any(_has_credential(text) for text in _strings(result)):
+        raise RecordError("credential_detected")
+    secrets = tuple(s for s in secret_values if s)
+    serialized = json.dumps(result, allow_nan=False, ensure_ascii=False)
+    if _contains_secret(result, secrets) or any(secret in serialized for secret in secrets):
+        raise RecordError("secret_detected")
     # Scrubbing may expand short credential values to the redaction marker.
     if result["evidence"]:
         evidence = result["evidence"]
         evidence["relocated_to"] = _url(evidence["relocated_to"])
         for key in ("live_copies", "related_same_publisher"):
-            evidence[key] = _urls(evidence[key])
-        evidence["dead_copies"] = [d for d in evidence["dead_copies"] if _url(d["url"])]
+            evidence[key] = _urls(evidence[key])[:5]
+        evidence["dead_copies"] = [d for d in evidence["dead_copies"] if _url(d["url"])][:5]
         for dead in evidence["dead_copies"]:
             dead["reason"] = _cap(dead["reason"], 120)
     result["findings"] = _cap(result["findings"], 2000) if result["findings"] is not None else None
     for stage in result["stages"]:
         stage["summary"] = _cap(stage["summary"], 300)
     if result["classification"]:
-        result["classification"] = _classification(result["classification"])
+        classification = result["classification"]
+        classification["gist"] = _cap(classification["gist"], 300)
+        classification["subject_tags"] = classification["subject_tags"][:5]
+        for tag in [*classification["subject_tags"], classification["genre"]]:
+            if tag:
+                for key in ("notation", "label"):
+                    tag[key] = _cap(tag[key], 120)
+    if any(_has_credential(text) for text in _strings(result)):
+        raise RecordError("credential_detected")
+    serialized = json.dumps(result, allow_nan=False, ensure_ascii=False)
+    if (len(result["article"]["url"].encode("utf-8")) > ARTICLE_URL_MAX_BYTES
+            or any(isinstance(result["article"][key], str)
+                   and len(result["article"][key].encode("utf-8")) > ARTICLE_ID_MAX_BYTES
+                   for key in ("ref", "archive_id"))
+            or len(serialized.encode("utf-8")) > RESULT_MAX_BYTES):
+        raise RecordError("too_large")
     return AuditResult.model_validate(result).model_dump(mode="json", by_alias=True)
 
 
@@ -437,20 +489,10 @@ def build_record(run, workflow, *, article_ref=None, archive_id=None, revision=0
     lineage = _lineage(run["id"], revision, lineage)
     if not _recordable(run):
         raise RecordError("invalid_lineage")
-    record = build_result({**run,
-                           "article_ref": article_ref if article_ref is not None else run.get("article_ref"),
-                           "archive_id": archive_id}, lineage=lineage, revision=revision)
-    if any(_has_credential(text) for text in _strings(record)):
-        raise RecordError("credential_detected")
-    if _contains_secret(record, tuple(s for s in secret_values if s)):
-        raise RecordError("secret_detected")
-    serialized = json.dumps(record, allow_nan=False, ensure_ascii=False)
-    if any(secret in serialized for secret in secret_values if secret):
-        raise RecordError("secret_detected")
-    if (len(record["article"]["url"].encode("utf-8")) > ARTICLE_URL_MAX_BYTES
-            or len(serialized.encode("utf-8")) > RESULT_MAX_BYTES):
-        raise RecordError("too_large")
-    return record
+    return build_result({**run,
+                         "article_ref": article_ref if article_ref is not None else run.get("article_ref"),
+                         "archive_id": archive_id if archive_id is not None else run.get("archive_id")},
+                        lineage=lineage, revision=revision, secret_values=secret_values)
 
 
 def record_json_schema() -> dict:

@@ -434,3 +434,67 @@ async def test_archive_identity_and_explicit_record_overrides(finished_run):
     assert record["article"]["ref"] == "ka-7"
     assert record["article"]["archive_id"] == "7"
     assert run["article_ref"].startswith("u-")
+
+
+@pytest.mark.parametrize("builder", ["result", "record"])
+async def test_userinfo_is_scrubbed_before_findings_cut(finished_run, builder):
+    run, workflow = finished_run
+    run["output"]["findings"] = (
+        "F" * 1969 + " https://user:fictional-pass@news.example/story")
+    original = deepcopy(run)
+    result = (build_result(run) if builder == "result" else build_record(run, workflow))
+    assert "fictional-pass" not in json.dumps(result)
+    assert "[redacted]" in result["findings"]
+    assert len(result["findings"].encode("utf-8")) <= 2000
+    assert run == original
+
+
+@pytest.mark.parametrize("field", ["findings", "summary", "gist", "tag", "reason", "url"])
+@pytest.mark.parametrize("kind", ["credential", "secret"])
+async def test_full_projection_is_checked_before_caps(finished_run, field, kind):
+    run, workflow = finished_run
+    marker = "access_token=fictional-token" if kind == "credential" else "fictional-sensitive"
+    text = "F" * 2100 + " " + marker
+    stage = next(s for s in run["output"]["stages"] if s["stage"] == "web_search")
+    stage["details"] = stage.get("details") or {}
+    if field == "findings":
+        run["output"]["findings"] = text
+    elif field == "summary":
+        stage["explanation"] = text
+    elif field in {"gist", "tag"}:
+        run["output"]["classification"] = {
+            "subject_tags": [{"notation": "fictional", "label": "Fictional"}] * 5
+                            + [{"notation": text, "label": text}],
+            "genre": None, "geographic_scope": None,
+            "gist": text if field == "gist" else "Fictional gist"}
+    elif field == "reason":
+        stage["details"]["dead_same_story"] = [
+            {"url": "https://news.example/copy", "reason": "Fictional"}] * 5 + [
+            {"url": "https://news.example/last", "reason": text}]
+    else:
+        # Fully encoded userinfo cannot be scrubbed as a URL, but must be refused,
+        # even when it is the sixth otherwise eligible evidence link.
+        url = ("https%3A%2F%2Fuser%3Afictional-pass%40news.example/story"
+               if kind == "credential" else "https://news.example/" + marker)
+        stage["details"]["matches"] = ["https://news.example/copy"] * 5 + [url]
+    for build in (lambda: build_result(run, secret_values=("fictional-sensitive",)),
+                  lambda: build_record(run, workflow, secret_values=("fictional-sensitive",))):
+        with pytest.raises(RecordError, match=f"^{kind}_detected$"):
+            build()
+
+
+@pytest.mark.parametrize("key", ["article_ref", "article_archive_id"])
+async def test_identity_byte_bounds_fail_closed(finished_run, key):
+    run, workflow = finished_run
+    run[key] = "🧵" * 129
+    for build in (lambda: build_result(run), lambda: build_record(run, workflow)):
+        with pytest.raises(RecordError, match="^too_large$"):
+            build()
+
+
+async def test_result_checks_serialized_size_after_json_escaping(finished_run):
+    run, _ = finished_run
+    # A stored URL can fit its own byte bound yet expand sixfold in JSON.
+    run["input"]["removed_article"]["url"] = "https://news.example/" + "\x01" * 6000
+    with pytest.raises(RecordError, match="^too_large$"):
+        build_result(run)

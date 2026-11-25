@@ -6,7 +6,7 @@
         "archive_id": {
           "anyOf": [
             {
-              "maxLength": 80,
+              "maxLength": 512,
               "minLength": 1,
               "type": "string"
             },
@@ -24,7 +24,7 @@
         "ref": {
           "anyOf": [
             {
-              "maxLength": 80,
+              "maxLength": 512,
               "minLength": 1,
               "type": "string"
             },

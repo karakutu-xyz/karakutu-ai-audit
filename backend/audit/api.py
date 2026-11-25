@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from hmac import compare_digest
 import json
+from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -24,7 +25,7 @@ from audit.config import MODEL_STEPS, Settings, canonical_request_host
 from audit.db import ArticleStoreError, PromptStoreError, Store
 from audit.domain import AuditRequest, Verdict
 from audit.engine import AuditEngine
-from audit.record import build_result
+from audit.record import RecordError, build_result
 from audit.provenance import build_base, models_from_config, with_prompts
 from audit.schemas import (
     ArticleDetail, ArticleList, ArticleImported, ArticleStatus,
@@ -173,12 +174,35 @@ def seed_demo_data(database_url: str) -> bool:
     return True
 
 
+def _result_secrets(settings: Settings) -> tuple[str, ...]:
+    """Private refusal inventory; never expose settings or wallet parsing errors."""
+    values = [settings.api_auth_token, settings.model_api_key, settings.archive_wallet_path]
+    wallet = settings.archive_wallet_json
+    if not wallet and settings.archive_wallet_path:
+        try:
+            wallet = Path(settings.archive_wallet_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            wallet = ""
+    if wallet:
+        values.append(wallet)
+        try:
+            jwk = json.loads(wallet)
+        except ValueError:
+            jwk = None
+        if isinstance(jwk, dict):
+            values.extend(jwk[key] for key in ("d", "p", "q", "dp", "dq", "qi")
+                          if isinstance(jwk.get(key), str))
+    # SearXNG's server secret is not read by this service.
+    return tuple(value for value in values if value)
+
+
 def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
     settings = settings or Settings.from_env()
     if settings.api_auth_token and len(settings.api_auth_token) < 32:
         raise ValueError("API_AUTH_TOKEN must contain at least 32 characters")
     if settings.max_concurrent_runs < 1:
         raise ValueError("MAX_CONCURRENT_RUNS must be positive")
+    result_secrets = _result_secrets(settings)
     test_mode = settings.mode == "test"
     if engine is None and test_mode:
         from audit.demo_engine import DemoEngine
@@ -426,9 +450,20 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
     def lean_result(run):
         previous = app.state.store.previous_record_run_id(run)
         lineage = {"kind": "re_audit", "previous_record_id": previous + ".r0"} if previous else None
-        return build_result(run, lineage=lineage)
+        try:
+            return build_result(run, lineage=lineage, secret_values=result_secrets)
+        except RecordError as exc:
+            return JSONResponse(status_code=409, content={"error": {
+                "code": "result_withheld", "reason": exc.code, "run_id": run["id"],
+            }})
 
-    @app.get("/api/runs/{run_id}", response_model=AuditResult)
+    result_responses = {409: {
+        "model": SafeErrorResponse,
+        "description": "Result withheld; the saved run and its details remain available. "
+                       "Submissions remain queued and cancellations remain effective.",
+    }}
+
+    @app.get("/api/runs/{run_id}", response_model=AuditResult, responses=result_responses)
     async def run_result(run_id: str):
         return lean_result(run_or_404(run_id))
 
@@ -517,7 +552,8 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
             run = run_or_404(run_id)
             return run if run["status"] == "cancelled" else None
 
-    @app.post("/api/runs/{run_id}/cancel", response_model=AuditResult)
+    @app.post("/api/runs/{run_id}/cancel", response_model=AuditResult,
+             responses=result_responses)
     async def cancel_run(run_id: str):
         run = await cancel_active_run(run_id)
         if run is None:
@@ -635,7 +671,8 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
         result["links"] = {"original_url": result["url"], "archive_url": None}
         return result
 
-    @app.post("/api/articles/{ref}/audit", status_code=202, response_model=AuditResult)
+    @app.post("/api/articles/{ref}/audit", status_code=202, response_model=AuditResult,
+             responses=result_responses)
     async def article_audit(ref: str):
         async with app.state.article_lock:
             article = article_or_404(ref)
@@ -644,15 +681,18 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
             # Store re-reads the article and checks for active work under the database writer lock.
             return submit(None, article["category"], "article", article_ref=ref)
 
-    @app.post("/api/benchmarks/runs", status_code=202, response_model=AuditResult)
+    @app.post("/api/benchmarks/runs", status_code=202, response_model=AuditResult,
+             responses=result_responses)
     async def benchmark(body: RunInput):
         return submit(body, "benchmark", "benchmark")
 
-    @app.post("/api/audit", status_code=202, response_model=AuditResult)
+    @app.post("/api/audit", status_code=202, response_model=AuditResult,
+             responses=result_responses)
     async def audit(body: RunInput):
         return submit(body, "live", "api")
 
-    @app.post("/api/webhooks/audit", status_code=202, response_model=AuditResult)
+    @app.post("/api/webhooks/audit", status_code=202, response_model=AuditResult,
+             responses=result_responses)
     async def webhook(body: RunInput):
         return submit(body, "live", "webhook")
 

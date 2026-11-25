@@ -248,7 +248,7 @@
           "archive_id": {
             "anyOf": [
               {
-                "maxLength": 80,
+                "maxLength": 512,
                 "minLength": 1,
                 "type": "string"
               },
@@ -266,7 +266,7 @@
           "ref": {
             "anyOf": [
               {
-                "maxLength": 80,
+                "maxLength": 512,
                 "minLength": 1,
                 "type": "string"
               },
@@ -2521,6 +2521,21 @@
                 "type": "string"
               },
               {
+                "enum": [
+                  "not_live",
+                  "not_finished",
+                  "no_output",
+                  "workflow_mismatch",
+                  "invalid_timestamp",
+                  "invalid_lineage",
+                  "credential_detected",
+                  "secret_detected",
+                  "too_large",
+                  "invalid_result"
+                ],
+                "type": "string"
+              },
+              {
                 "const": "not_configured",
                 "type": "string"
               },
@@ -3666,7 +3681,7 @@
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Result withheld; the saved run and its details remain available. Submissions remain queued and cancellations remain effective."
           },
           "413": {
             "content": {
@@ -3774,7 +3789,7 @@
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Result withheld; the saved run and its details remain available. Submissions remain queued and cancellations remain effective."
           },
           "413": {
             "content": {
@@ -3882,7 +3897,7 @@
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Result withheld; the saved run and its details remain available. Submissions remain queued and cancellations remain effective."
           },
           "413": {
             "content": {
@@ -5630,7 +5645,7 @@
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Result withheld; the saved run and its details remain available. Submissions remain queued and cancellations remain effective."
           },
           "413": {
             "content": {
@@ -5739,7 +5754,7 @@
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Result withheld; the saved run and its details remain available. Submissions remain queued and cancellations remain effective."
           },
           "413": {
             "content": {
@@ -6289,7 +6304,7 @@
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Result withheld; the saved run and its details remain available. Submissions remain queued and cancellations remain effective."
           },
           "413": {
             "content": {

@@ -364,6 +364,17 @@ stage summaries and typed evidence. It has no article text, input, steps, prompt
 model calls. Submission returns 202 with queued metadata under `run`, `record_id: null`,
 `verdict: null` and `stages: []`. Clients navigate using `run.id`.
 
+Every result route can instead return **409** with
+`{"error": {"code": "result_withheld", "reason": "<fixed refusal code>", "run_id": "<id>"}}`.
+The shared builder scrubs and scans full projected text before truncation, using the
+configured API token, model key and wallet material. Credentials or secrets that survive
+scrubbing cause `credential_detected` or `secret_detected`; oversized stored URLs,
+identities or serialized results cause `too_large`. An invalid projection causes
+`invalid_result`. These responses contain no stored prose. Withholding affects only
+the response: a submission still creates and queues its run, and cancellation still
+cancels it. Full data remains at `/api/runs/{id}/details`. Submitted article URLs over
+8,192 UTF-8 bytes fail validation with the existing 422 error shape before creating a run.
+
 A finished live run with a stored result can serialize to the v2 record for karakutu.
 Benchmark, queued, running, cancelled and interrupted runs produce no record; their API
 result has `record_id: null`. Finished API records use initial lineage or point to the

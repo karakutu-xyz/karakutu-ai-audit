@@ -1169,3 +1169,161 @@ def test_seeded_demo_runs_have_lean_display_results_without_portable_identity(tm
             assert result.status_code == 200
             assert_lean_result(result.json())
             assert result.json()["record_id"] is result.json()["lineage"] is None
+
+
+def stored_result_run(client, *, payload=None, findings="Fictional output"):
+    store = client.app.state.store
+    run = store.create_run(workflow_id=client.app.state.workflow["id"], category="live",
+                           origin="api", input=deepcopy(payload or BODY))
+    store.complete_run(run["id"], {"response": {
+        "verdict": "INCONCLUSIVE", "stages": [], "findings": findings, "flags": [],
+        "short_circuited_at": None, "classification": None}})
+    return store.run(run["id"])
+
+
+@pytest.mark.parametrize("kind", ["credential", "api", "model", "wallet_json", "wallet_file"])
+def test_unsafe_stored_result_is_withheld_but_details_remain(tmp_path, database_url, kind):
+    secret = "fictional-sensitive-material"
+    options = {"api_auth_token": TOKEN}
+    if kind == "model":
+        options["model_api_key"] = secret
+    if kind.startswith("wallet"):
+        raw = json.dumps({"d": secret})
+        if kind == "wallet_json":
+            options["archive_wallet_json"] = raw
+        else:
+            wallet = tmp_path / "fictional-wallet.json"
+            wallet.write_text(raw)
+            options["archive_wallet_path"] = str(wallet)
+    findings = ("access_token=fictional-token" if kind == "credential"
+                else TOKEN if kind == "api" else secret)
+    config = settings(tmp_path, database_url=database_url, **options)
+    with TestClient(create_app(config, FakeEngine())) as client:
+        client.headers.update(AUTH)
+        run = stored_result_run(client, findings=findings)
+        response = client.get(f'/api/runs/{run["id"]}')
+        assert response.status_code == 409
+        assert response.json() == {"error": {
+            "code": "result_withheld", "run_id": run["id"],
+            "reason": "credential_detected" if kind == "credential" else "secret_detected"}}
+        details = client.get(f'/api/runs/{run["id"]}/details')
+        assert details.status_code == 200
+        assert details.json()["output"]["findings"] == findings
+        assert client.app.state.store.run(run["id"]) == run
+
+
+def test_unicode_url_byte_limit_at_submission(tmp_path, database_url):
+    payload = deepcopy(BODY)
+    payload["removed_article"]["url"] = "https://news.example/" + "🧵" * 4000
+    with TestClient(create_app(settings(tmp_path, database_url=database_url),
+                               FakeEngine())) as client:
+        response = client.post("/api/benchmarks/runs", json=payload)
+        assert response.status_code == 422
+        assert response.json() == {"error": {"code": "validation_error", "fields": [
+            {"loc": ["body", "removed_article", "url"], "type": "value_error",
+             "code": "invalid_value"}]}}
+        assert client.app.state.store.runs()["total"] == 0
+
+
+def test_old_oversized_url_is_withheld_on_read_reaudit_and_cancel(tmp_path, database_url):
+    payload = deepcopy(BODY)
+    payload["removed_article"]["url"] = "https://news.example/" + "🧵" * 4000
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN,
+                      live_ingestion_enabled=True)
+    with TestClient(create_app(config, FakeEngine(wait=True))) as client:
+        client.headers.update(AUTH)
+        client.post("/api/queue/pause")
+        run = stored_result_run(client, payload=payload)
+        response = client.get(f'/api/runs/{run["id"]}')
+        assert response.status_code == 409
+        assert response.json() == {"error": {
+            "code": "result_withheld", "reason": "too_large", "run_id": run["id"]}}
+        assert client.get(f'/api/runs/{run["id"]}/details').status_code == 200
+        response = client.post(f'/api/articles/{run["article_ref"]}/audit')
+        assert response.status_code == 409
+        error = response.json()["error"]
+        assert error["code"] == "result_withheld" and error["reason"] == "too_large"
+        run_id = error["run_id"]
+        assert client.get(f"/api/runs/{run_id}/details").json()["status"] == "queued"
+        response = client.post(f"/api/runs/{run_id}/cancel")
+        assert response.status_code == 409
+        assert response.json() == {"error": {
+            "code": "result_withheld", "reason": "too_large", "run_id": run_id}}
+        assert client.get(f"/api/runs/{run_id}/details").json()["status"] == "cancelled"
+
+
+@pytest.mark.parametrize("path", ["/api/audit", "/api/webhooks/audit", "/api/benchmarks/runs",
+                                  "/api/articles/{ref}/audit", "/api/runs/{run_id}/cancel"])
+def test_mutations_map_builder_refusals_without_undoing_work(
+        tmp_path, database_url, monkeypatch, path):
+    from audit.record import RecordError
+
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN,
+                      live_ingestion_enabled=True)
+    with TestClient(create_app(config, FakeEngine(wait=True))) as client:
+        client.headers.update(AUTH)
+        client.post("/api/queue/pause")
+        original = stored_result_run(client)
+        ref = original["article_ref"]
+        if path.endswith("/cancel"):
+            queued = client.post(f"/api/articles/{ref}/audit").json()
+            path = path.format(run_id=queued["run"]["id"])
+        else:
+            path = path.format(ref=ref)
+
+        def refuse(*args, **kwargs):
+            raise RecordError("too_large")
+
+        monkeypatch.setattr("audit.api.build_result", refuse)
+        response = client.post(path, json=BODY)
+        assert response.status_code == 409
+        error = response.json()["error"]
+        assert error["code"] == "result_withheld" and error["reason"] == "too_large"
+        details = client.get(f'/api/runs/{error["run_id"]}/details')
+        assert details.status_code == 200
+        assert details.json()["status"] == ("cancelled" if path.endswith("/cancel") else "queued")
+        assert error["run_id"] != original["id"]
+
+
+def test_imported_long_archive_identity_survives_result_routes(tmp_path, database_url):
+    from types import SimpleNamespace
+
+    archive_id = "7" * 78
+    ref = "ka-" + archive_id
+    url = "https://news.example/fictional-import"
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN,
+                      live_ingestion_enabled=True)
+    with TestClient(create_app(config, FakeEngine())) as client:
+        client.headers.update(AUTH)
+        store = client.app.state.store
+        assert store.import_articles([{"article_id": archive_id, "url": url,
+                                      "title": "Fictional archive item"}])["imported"] == 1
+        assert store.fill_article(ref, SimpleNamespace(
+            id=archive_id, versions=[], news_text="Fabricated archive text.",
+            language_code="en", checks=[]), expected_url=url, expected_archive_id=archive_id)
+        client.post("/api/queue/pause")
+        submitted = client.post(f"/api/articles/{ref}/audit")
+        assert submitted.status_code == 202
+        run_id = submitted.json()["run"]["id"]
+        responses = [submitted, client.get(f"/api/runs/{run_id}"),
+                     client.post(f"/api/runs/{run_id}/cancel")]
+        for response in responses:
+            assert response.status_code in {200, 202}
+            assert response.json()["article"]["ref"] == ref
+            assert response.json()["article"]["archive_id"] == archive_id
+        assert client.get(f"/api/runs/{run_id}/details").status_code == 200
+
+
+def test_url_owned_article_result_includes_attached_archive_identity(tmp_path, database_url):
+    with TestClient(create_app(settings(tmp_path, database_url=database_url),
+                               FakeEngine())) as client:
+        run = stored_result_run(client)
+        ref = run["article_ref"]
+        assert ref.startswith("u-")
+        assert client.app.state.store.import_articles([{
+            "article_id": "42", "url": BODY["removed_article"]["url"],
+            "title": "Fictional archive title"}])["updated"] == 1
+        response = client.get(f'/api/runs/{run["id"]}')
+        assert response.status_code == 200
+        assert response.json()["article"]["ref"] == ref
+        assert response.json()["article"]["archive_id"] == "42"

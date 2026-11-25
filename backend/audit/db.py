@@ -572,6 +572,9 @@ class Store:
             if row is None:
                 return None
             result = {**self._summary(session, row), **{name: getattr(row, name) for name in ["article_ref", "input", "output", "steps", "model", "error", "expected_verdict"]}}
+            result["article_archive_id"] = session.scalar(
+                select(ArticleRow.archive_id).where(ArticleRow.ref == row.article_ref)
+            ) if row.article_ref else None
             from audit.run_summary import summarize_run
             result["summary"] = summarize_run(result)
             return result
