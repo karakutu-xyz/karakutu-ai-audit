@@ -17,11 +17,9 @@ def test_settings_turn_on_mwmbl_and_nothing_else():
     settings = yaml.safe_load(SETTINGS.read_text(encoding='utf-8'))
     # The default set stays; a keep_only list would silently replace it.
     assert settings['use_default_settings'] is True
-    engines = settings.get('engines') or []
-    turned_on = {e['name'] for e in engines if not e.get('disabled', False)}
-    # Any other engine added here sends audit queries to a new provider: that needs a decision.
-    assert turned_on == {'mwmbl'}
-    assert all(set(e) <= {'name', 'disabled'} for e in engines)
+    # Exactly one override. Turning on another engine sends audit queries to a new provider,
+    # and turning a default off changes the evidence: either needs a decision.
+    assert settings.get('engines') == [{'name': 'mwmbl', 'disabled': False}]
 
 
 async def test_hits_from_one_answering_engine_reach_the_search_step():

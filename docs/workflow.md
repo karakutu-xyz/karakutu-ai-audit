@@ -59,7 +59,7 @@ results are of mixed quality and thin for Turkish queries.
 Audit queries describe removed news, so the engine set is a privacy choice, not only a
 quality one. Big providers that do answer from here (Yandex, Bing) are deliberately left
 off. Adding an engine needs a decision; `backend/tests/test_searxng_engines.py` fails when
-the settings turn on anything besides mwmbl. The settings file is part of the workflow
+the settings change any engine besides turning on mwmbl. The settings file is part of the workflow
 definition, so changing the engine set gives new runs a new workflow ID.
 
 ## Review a saved run
