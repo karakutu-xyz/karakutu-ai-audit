@@ -53,7 +53,7 @@ Every new environment variable must have an explained assignment in `.env.exampl
 and a row in `docs/configuration.md`; `test_env_example.py` enforces static coverage.
 Keep setup/run tests isolated in temporary directories and never overwrite operator settings.
 
-Read relevant files and preserve unrelated work. Prefer small domain changes. Update the nearest doc and CHANGELOG.md for meaningful changes. Maintain `openapi.json` with `scripts/export_openapi.py`; response models and TypeScript types must agree.
+Read relevant files and preserve unrelated work. Prefer small domain changes. Update the nearest doc and CHANGELOG.md for meaningful changes. Maintain `openapi.yaml` with `scripts/export_openapi.py`; response models and TypeScript types must agree.
 
 Run focused tests, then `uv run pytest -q`, `uv run ruff check .`, `npm --prefix web run typecheck`, `npm --prefix web run build`, `uv run python scripts/check_data_hygiene.py`, and `uv run python scripts/export_openapi.py --check`. Unit tests must not need network or a live model. Optional live smoke uses generated fictional data via the benchmark endpoint. Report exact checks and remaining limitations.
 

@@ -24,7 +24,7 @@ import sys
 import tokenize
 
 root = Path(__file__).resolve().parents[1]
-allowed_json = {"web/package.json", "web/package-lock.json", "web/tsconfig.json", "web/tsconfig.app.json", "web/tsconfig.node.json", "openapi.json",
+allowed_json = {"web/package.json", "web/package-lock.json", "web/tsconfig.json", "web/tsconfig.app.json", "web/tsconfig.node.json",
                 "docs/audit-record.v2.schema.json"}
 private_dirs = {"data", "datasets", "fixtures", "testdata", "test-data", "benchmarks", "live", "reports", "exports", "artifacts", "runs", "private"}
 private_suffixes = {".json", ".jsonl", ".ndjson", ".csv", ".tsv", ".parquet", ".arrow", ".db", ".sqlite", ".sqlite3", ".jwk", ".pem"}
