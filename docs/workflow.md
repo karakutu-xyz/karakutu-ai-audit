@@ -100,6 +100,22 @@ the quoted lede is removed. Its reverse score is 13.04% when the rest is rewritt
 so it is demoted below the sibling bar. The cap does not protect every partial copy
 or prevent every score increase below its limit.
 
+## Web search engines
+
+Web search goes through the bundled SearXNG (`searxng/settings.yml`, pinned image in
+`compose.search.yaml`), which the app queries with `categories=general`. The settings keep
+the image's default general web engines (Brave, DuckDuckGo, Google CSE and Startpage, plus
+Wikipedia and Wikidata) and turn on one more: mwmbl, a small independent index. Most of the
+default web engines refuse this machine at times ("too many requests" or a CAPTCHA); mwmbl
+answered every neutral test query, so web search no longer depends on them alone. Its
+results are of mixed quality and thin for Turkish queries.
+
+Audit queries describe removed news, so the engine set is a privacy choice, not only a
+quality one. Big providers that do answer from here (Yandex, Bing) are deliberately left
+off. Adding an engine needs a decision; `backend/tests/test_searxng_engines.py` fails when
+the settings change any engine besides turning on mwmbl. The settings file is part of the workflow
+definition, so changing the engine set gives new runs a new workflow ID.
+
 ## Review a saved run
 
 Open a run from the Runs ledger (`/runs/<id>`). The page puts the saved prediction and its findings first, then the run facts, the six workflow steps and an append-only human reaction (**Human review**). Reviewer identity is required; the note and expected verdict are optional.
