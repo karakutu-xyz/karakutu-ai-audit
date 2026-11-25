@@ -40,7 +40,7 @@ web and archive boxes are not used at all (see [Test and live mode](#test-and-li
 | [`backend/audit/provenance.py`](../backend/audit/provenance.py) | The workflow snapshot and its fingerprint. |
 | [`backend/audit/config.py`](../backend/audit/config.py) | `Settings`, read from the environment once at startup. |
 | [`backend/audit/domain.py`](../backend/audit/domain.py) | Verdicts, flags, step names and the request and response models. |
-| [`backend/audit/schemas.py`](../backend/audit/schemas.py) | API request and response models; they generate [`openapi.json`](../openapi.json). |
+| [`backend/audit/schemas.py`](../backend/audit/schemas.py) | API request and response models; they generate [`openapi.yaml`](../openapi.yaml). |
 | [`backend/audit/demo.py`](../backend/audit/demo.py), [`demo_engine.py`](../backend/audit/demo_engine.py) | The fictional demo dataset and the offline engine used in test mode. |
 | [`web/src/`](../web/src) | The review UI: [`router.tsx`](../web/src/router.tsx) (page addresses), [`pages/`](../web/src/pages) (one file per screen), [`api/client.ts`](../web/src/api/client.ts) (the only HTTP code) and [`api/hooks.ts`](../web/src/api/hooks.ts) (loading and polling), [`types.ts`](../web/src/types.ts) (API types), [`styles/tokens.css`](../web/src/styles/tokens.css) (colours, type and spacing). See [`web/README.md`](../web/README.md). |
 | [`scripts/`](../scripts) | Setup, demo seeding, batch benchmarks, OpenAPI export and the data-hygiene check. |

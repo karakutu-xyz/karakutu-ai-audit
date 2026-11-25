@@ -10,7 +10,7 @@ The machine-readable record contract is
 `$id` `urn:karakutu-ai-audit:audit-record:2`. The `AuditResult` models and builders in
 `backend/audit/record.py` are the source of truth. Generate the record schema with
 `uv run python scripts/export_record_schema.py`; `--check` verifies it is current.
-The API's nullable result contract is also included in `openapi.json`.
+The API's nullable result contract is also included in `openapi.yaml`.
 
 ## Shape
 

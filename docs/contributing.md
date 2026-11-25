@@ -41,7 +41,7 @@ uv run ruff check .                                # Python lint
 npm --prefix web run typecheck                     # TypeScript types
 npm --prefix web run build                         # production web build
 uv run python scripts/check_data_hygiene.py        # no private data or secrets in Git
-uv run python scripts/export_openapi.py --check    # openapi.json matches the API
+uv run python scripts/export_openapi.py --check    # openapi.yaml matches the API
 ```
 
 The data-hygiene check reads what Git tracks and stages. Stage new files (`git add`) before
@@ -129,7 +129,7 @@ The UI draws steps from the run data, so it usually needs no change.
 ## Change the API or the database
 
 - API: response models live in [`schemas.py`](../backend/audit/schemas.py). After a change,
-  run `uv run python scripts/export_openapi.py` to update [`openapi.json`](../openapi.json) and
+  run `uv run python scripts/export_openapi.py` to update [`openapi.yaml`](../openapi.yaml) and
   update [`web/src/types.ts`](../web/src/types.ts) to match. Update the route table in
   [the data and API guide](data-and-api.md#api).
 - Database: add a numbered migration in [`db.py`](../backend/audit/db.py); never edit one that
