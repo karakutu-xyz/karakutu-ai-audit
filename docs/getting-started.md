@@ -165,7 +165,7 @@ parts fit together, read [Architecture](architecture.md). Every variable and its
       on the old checkout, which also holds `.env` and `data/`:
 
       ```sh
-      (umask 022 && git clone https://github.com/karakutu-xyz/karakutu-ai-audit.git karakutu-ai-audit-fresh)
+      (umask 022 && git clone "$(git remote get-url origin)" ../karakutu-ai-audit-fresh)
       ```
 
       Then move `.env` (keep it mode 600) and any `data/` you need into the new
