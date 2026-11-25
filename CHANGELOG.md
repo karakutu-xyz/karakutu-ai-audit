@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Auditing an imported archive article now loads its text from the archive when it is missing, as opening it does; before, the audit answered 422 `article_has_no_content` until the article had been opened once.
+- The getting-started guide is now one ordered path from the demo to a real article audit: the model to load and how the containers reach it, the two settings real audits need (live ingestion and an API token), entering the token in the UI, archive import, the one-at-a-time queue, a run's result versus its details, search status, a second stack beside the main one, and troubleshooting.
 - The API image now builds on Debian trixie instead of bookworm. Bookworm's older TLS handshake drew a Cloudflare bot challenge from some publishers, so their pages read as unreadable inside Docker while the same pages read fine natively; Docker runs now read them, which can change verdicts toward the native result. Similarity candidates that could not be read now record why (an HTTP status or a connection error class), and the run's step summary shows it.
 - Record lean named step inputs referencing the run article, with catalog and archive/page evidence summaries by default. Exact model calls remain available beside step input in review; `RECORD_FULL_EVIDENCE=true` restores full private evidence for debugging. Computation, prompts and verdicts are unchanged; historical records remain readable.
 - The checked-in OpenAPI contract is now `openapi.yaml` (sorted keys, block style, no anchors) instead of `openapi.json`, for easier reading and review; `scripts/export_openapi.py --check` still compares it byte for byte, and PyYAML is now a declared dev dependency. The running API still serves `/openapi.json`; no API behaviour changes.
