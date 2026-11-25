@@ -208,6 +208,19 @@ async def test_drops_non_html_content_such_as_pdf(transport):
     assert pages == []
 
 
+@pytest.mark.parametrize("header, shown", [
+    ("application/pdf", "application/pdf"),
+    ("image/svg+xml; charset=utf-8", "image/svg+xml"),
+    ("x-fabricated upstream sentence/with spaces", "unrecognised type"),
+    ("application/" + "x" * 200, "unrecognised type"),
+])
+async def test_unreadable_reason_keeps_only_a_plain_media_type(transport, header, shown):
+    url = "https://gov.example/rapor"
+    transport[normalize_url(url)] = httpx.Response(200, text="body", headers={"content-type": header})
+    out = await fetch_candidates([hit(url)], exclude_url=REMOVED_URL)
+    assert [u.reason for u in out.unreadable] == [f"not HTML ({shown})"]
+
+
 async def test_html_content_type_is_kept(transport):
     transport[normalize_url("https://news.example/a")] = html_response()
 

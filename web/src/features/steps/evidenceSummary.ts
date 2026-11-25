@@ -27,6 +27,7 @@ function items(value: unknown) {
 // Only recognized stored fields are projected; arbitrary record text is not scanned.
 export function evidenceSummary(step: Step): EvidenceLine[] {
   const lines: EvidenceLine[] = [];
+  const pageLines = new Map<string, number>();
   function page(value: unknown, prefix = "") {
     const item = typeof value === "string" ? { url: value } : record(value);
     const url = externalUrl(item.url);
@@ -37,10 +38,13 @@ export function evidenceSummary(step: Step): EvidenceLine[] {
     const reason = typeof item.reason === "string" && item.reason &&
       !(status && item.reason.startsWith(`HTTP ${item.status}`))
       ? ` · ${item.reason.slice(0, 120)}` : "";
-    lines.push({
-      url,
-      text: `${prefix}${new URL(url).host}${status}${measured ? ` · ${measured}` : ""}${reason}`,
-    });
+    const text = `${prefix}${new URL(url).host}${status}${measured ? ` · ${measured}` : ""}${reason}`;
+    // One line per page: the fetch trace and a step's candidate list can both name it (older
+    // runs keep the reason only in the trace), so keep the most informative line.
+    const key = `${prefix}\u0000${url}`;
+    const seen = pageLines.get(key);
+    if (seen === undefined) pageLines.set(key, lines.push({ url, text }) - 1);
+    else if (text.length > lines[seen].text.length) lines[seen] = { url, text };
   }
   const details = record(record(step.output).details);
   for (const event of step.evidence ?? []) {

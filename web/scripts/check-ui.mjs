@@ -2493,6 +2493,15 @@ test("evidence lines say why a page could not be read", () => {
   assert.ok(lines.some((line) => line.text === "ledger.invalid"));
   // A reason that only repeats the HTTP status is not shown twice.
   assert.ok(lines.some((line) => line.text === "copy.invalid · HTTP 404"));
+  assert.ok(!lines.some((line) => line.text.includes("HTTP 404 · HTTP 404")));
+  // An older run keeps the reason only in the fetch trace: one line per page, with the reason.
+  const older = evidenceSummary({ name: "similarity", output: { details: { candidates: [
+    { url: "https://ledger.invalid/a", status: "unreadable" },
+  ] } }, evidence: [{ type: "fetch_candidates", output: { unreadable: [
+    { url: "https://ledger.invalid/a", reason: "HTTP 403 (blocked/erroring, not gone)" },
+  ] } }] });
+  assert.equal(older.map((line) => line.text).join("\n"),
+    "ledger.invalid · HTTP 403 (blocked/erroring, not gone)");
 });
 
 test("Articles clamps only fresh offsets and resets its own epoch across routes", () => {

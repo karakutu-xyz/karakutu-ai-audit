@@ -443,6 +443,8 @@ def markdown_to_text(md: str) -> str:
 # Prefix of the error a refused connection raises; `_fetch_one` turns it into a
 # "refused" unreadable reason (httpx keeps the message when it maps the exception).
 _DNS_REFUSAL = "ssrf-guard: refused"
+# A plain `type/subtype` media type, as kept in an unreadable reason.
+_MEDIA_TYPE = re.compile(r"[a-z0-9][a-z0-9.+-]{0,39}/[a-z0-9][a-z0-9.+-]{0,59}")
 
 
 class GuardedNetworkBackend(httpcore.AsyncNetworkBackend):  # `timeout` params: httpcore interface
@@ -576,8 +578,11 @@ async def _fetch_one(client: httpx.AsyncClient, hit: SearchResult) -> object:
             content_type = resp.headers.get("content-type", "").split(";")[0].strip().lower()
             if content_type and not content_type.startswith(_READABLE_TYPES):
                 # A PDF or an image answered 200. Not a dead article — just not an article.
+                # The type comes from the response header: keep it only when it is a plain
+                # media type, so no upstream free text reaches stored or displayed reasons.
+                shown = content_type if _MEDIA_TYPE.fullmatch(content_type) else "unrecognised type"
                 return UnreadableCandidate(url=hit.url, title=hit.title,
-                                           reason=f"not HTML ({content_type})")
+                                           reason=f"not HTML ({shown})")
 
             # HTML: read the body, but cap it — a news page is small, and this bounds the
             # cost of a mislabelled giant response.
