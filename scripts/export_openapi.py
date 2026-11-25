@@ -2,7 +2,7 @@
 
 The contract is written as YAML for people to read: sorted keys, block style, no anchors or
 aliases, and non-ASCII text kept as is, so the same application always gives the same bytes
-and `--check` can compare them exactly. The running app still serves `/openapi.json`.
+and `--check` can compare them exactly (UTF-8, LF line endings). The running app still serves `/openapi.json`.
 """
 import argparse
 from pathlib import Path
@@ -32,11 +32,11 @@ parser.add_argument("--check", action="store_true")
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 path = root / "openapi.yaml"
-value = render(create_app(Settings()).openapi())
+value = render(create_app(Settings()).openapi()).encode("utf-8")
 if args.check:
-    if not path.exists() or path.read_text(encoding="utf-8") != value:
+    if not path.exists() or path.read_bytes() != value:
         raise SystemExit("OpenAPI contract is stale; run scripts/export_openapi.py")
     print("OpenAPI contract matches the application.")
 else:
-    path.write_text(value, encoding="utf-8")
+    path.write_bytes(value)
     print("Wrote openapi.yaml.")
