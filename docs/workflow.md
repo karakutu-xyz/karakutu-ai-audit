@@ -160,7 +160,9 @@ title, publication date, content character count and SHA-256, without article te
 Classification adds catalog topic/genre counts, serialized bytes and SHA-256;
 similarity adds archive availability; relevance adds the prose head length.
 Related removals adds the classification gist, relevance flag, text head lengths,
-and the actual archive anchor/window when available. Source reads only the article.
+the actual archive anchor/window when available, and the publish date its model prompt
+carried (the archive's date when its record was valid, otherwise the submitted one).
+Source reads only the article.
 Web search records lead URLs/titles, prefetched page counts, the best rewrite URL
 and the cited dead-source URL. Skipped steps record their reason.
 Earlier stage objects and the catalog are never copied into a step input.

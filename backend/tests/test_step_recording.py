@@ -155,7 +155,8 @@ async def test_large_step_records_are_bounded(offline_recording, record_property
     related = result['steps'][3]
     assert related['model_calls']
     assert len(related['output']['details']['prefiltered']) == 1
-    assert related['input']['archive_publish_date'] == '2030-03-11'
+    assert related['input']['publish_date_in_prompt'] == '2030-03-11'
+    assert 'ARTICLE published: 2030-03-11' in related['model_calls'][0]['request']['messages'][1]['content']
     assert related['input']['anchor_ts'] == ANCHOR - 100
     assert related['input']['window'] == {
         'date_from': ANCHOR - 100 - 14 * 86400, 'date_to': ANCHOR}
@@ -245,16 +246,16 @@ async def test_unusual_archive_text_never_loses_the_read():
     assert events[0]['output']['summary']['id'] == 1
 
 
-def test_upstream_summary_field_is_not_taken_for_the_recording_envelope():
+def test_related_input_records_the_date_the_prompt_carried_not_the_archive_body():
     from types import SimpleNamespace
 
     inp = {}
-    updates = {'related': SimpleNamespace(anchor_ts=ANCHOR, anchor_source='archive')}
+    updates = {'related': SimpleNamespace(anchor_ts=ANCHOR, anchor_source='first_dead_check',
+                                          prompt_publish_date='2030-03-12')}
+    # An archive body the step rejected (or with an upstream field named summary) is ignored.
     events = [{'type': 'archive_get', 'path': '/articles', 'params': {},
                'output': {'id': 1, 'summary': 'An invented upstream summary.',
-                          'publish_date': '2030-03-11'}}]
+                          'publish_date': '2020-01-01', 'news_text': None}}]
     step_inputs.observed_related(inp, updates, events)
-    assert inp['archive_publish_date'] == '2030-03-11'
-    lean = [{**events[0], 'output': {'summary': {'id': 1, 'publish_date': '2030-03-12'}}}]
-    step_inputs.observed_related(inp, updates, lean)
-    assert inp['archive_publish_date'] == '2030-03-12'
+    assert inp['publish_date_in_prompt'] == '2030-03-12'
+    assert 'archive_publish_date' not in inp

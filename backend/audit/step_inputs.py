@@ -95,17 +95,11 @@ def observed_related(inp, updates, events):
     if related is None or related.anchor_ts is None:
         return
     inp.update(anchor_ts=related.anchor_ts, anchor_source=related.anchor_source)
+    if related.prompt_publish_date:
+        inp['publish_date_in_prompt'] = related.prompt_publish_date
     for event in events:
         if event['type'] != 'archive_get':
             continue
-        if event.get('path') == '/articles':
-            body = event.get('output') or {}
-            if not isinstance(body, dict):
-                continue
-            if set(body) == {'summary'} and isinstance(body['summary'], dict):
-                body = body['summary']   # the lean recording envelope, not an upstream field
-            if body.get('publish_date'):
-                inp['archive_publish_date'] = body['publish_date']
         if event.get('path') == '/audits':
             params = event.get('params') or {}
             inp['window'] = {key: params.get(key) for key in ('date_from', 'date_to')}
