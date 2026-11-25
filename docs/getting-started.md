@@ -174,6 +174,12 @@ parts fit together, read [Architecture](architecture.md). Every variable and its
       its model list and the appropriate model URL in step 2. A disabled model
       shows **Disabled** in Settings and produces `AUDIT_FAILED` runs; calls can
       also fail after startup even when status says it is enabled.
+    - If every candidate page from one publisher reads as unreadable with
+      `HTTP 403` inside Docker while the pages open normally in a browser, the
+      API container is likely running an old image. The image is built on Debian
+      trixie because the older bookworm image drew bot challenges from some
+      publishers; run `make live` again to rebuild it. See
+      [Outbound fetches and bot challenges](deploy-docker.md#outbound-fetches-and-bot-challenges).
     - For degraded search, see step 9. For an unreachable search service, check
       SearXNG and its configured URL; a refused request may mean JSON output is off.
     - A live audit 404 means the live gate may be off (step 3). The token message
