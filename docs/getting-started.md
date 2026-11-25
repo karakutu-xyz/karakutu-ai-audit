@@ -160,14 +160,16 @@ parts fit together, read [Architecture](architecture.md). Every variable and its
     - For unhealthy containers, inspect `docker compose -p <project> ps` and
       `docker logs <container>`. The default project is `karakutu-ai-audit`.
       A checkout created with a restrictive umask such as 077 can make copied
-      files unreadable to the API image's non-root user. Clone again with umask
-      022, or open up only the files git tracks, so `.env` and `data/` stay
-      private:
+      files unreadable to the API image's non-root user. Clone again with a
+      normal umask and move your private files across; do not loosen permissions
+      on the old checkout, which also holds `.env` and `data/`:
 
       ```sh
-      git ls-files -z | xargs -0 chmod a+r
-      git ls-files -z | xargs -0 -n1 dirname | sort -u | xargs chmod a+rx
+      (umask 022 && git clone https://github.com/karakutu-xyz/karakutu-ai-audit.git karakutu-ai-audit-fresh)
       ```
+
+      Then move `.env` (keep it mode 600) and any `data/` you need into the new
+      checkout.
     - If model discovery fails or no chat model is loaded, check LM Studio,
       its model list and the appropriate model URL in step 2. A disabled model
       shows **Disabled** in Settings and produces `AUDIT_FAILED` runs; calls can
