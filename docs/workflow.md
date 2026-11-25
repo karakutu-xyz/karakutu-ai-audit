@@ -86,8 +86,8 @@ a learned paragraph the candidate lacks counts in the old-in-new score as missin
 like any other. A background paragraph that follow-up stories repeat word for word is
 learned, but its absence from a relocated copy can no longer be hidden by dropping it.
 The same applies to furniture: a copy on a different page template, with another footer
-or none, keeps the learned footer it lacks in its score, so it scores lower than before
-and may fall below the move bar.
+or none, keeps the learned footer it lacks in its score (below the cap described next,
+where it was dropped before) and may fall below the move bar.
 If the learned text covers more than 50% of the removed article's shingles, neither
 side is stripped: both scores stay raw and `boilerplate_capped` is true. This cap also
 protects against copies with long distinct teasers voting most of the body into
