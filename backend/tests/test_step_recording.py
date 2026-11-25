@@ -333,3 +333,27 @@ async def test_archive_request_parameters_are_recorded_bounded_but_sent_in_full(
     assert len(sent[0]) > 50000
     assert len(json.dumps(events[0])) < 2048
     assert set(events[0]['params']['url']['summary']) == {'chars', 'sha256'}
+
+
+def test_an_oversized_upstream_list_is_recorded_with_a_cap_and_a_count():
+    from types import SimpleNamespace
+
+    from audit.evidence import LIST_MAX_ITEMS, fetch_input, fetch_output
+    from audit.search.base import SearchResult
+    from audit.search.fetch import FetchOutcome
+
+    hits = [SearchResult(url=f'https://publisher.example/{i}', title=f'Invented {i}',
+                         snippet='', source='archive') for i in range(10000)]
+    recorded = fetch_input((hits,), {'exclude_url': ORIGINAL}, 'fetch_candidates')
+    assert len(json.dumps(recorded)) < 8192
+    assert recorded['urls'][-1]['omitted']['items'] == 10000 - LIST_MAX_ITEMS
+    pages = [{'url': h.url, 'status': 404, 'reason': 'gone'} for h in hits]
+    assert len(json.dumps(fetch_output({'live': [], 'dead': pages, 'unreadable': []}))) < 8192
+    state = {
+        'request': AuditRequest(removed_article=Article(
+            url=ORIGINAL, title='Invented headline', content='Invented text.')),
+        'similarity': SimpleNamespace(hits=hits, fetched=FetchOutcome(), rewrite=None),
+        'source': SimpleNamespace(live_source=None, extra_hits=[], dead_source=None),
+    }
+    engine = SimpleNamespace(synthetic=False, catalog=None, archive=SimpleNamespace(enabled=True))
+    assert len(json.dumps(step_inputs.build('web_search', state, engine))) < 8192

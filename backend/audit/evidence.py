@@ -22,6 +22,7 @@ def summary(value):
 
 
 SCALAR_MAX_CHARS = 500
+LIST_MAX_ITEMS = 50
 
 
 def _scalar(value):
@@ -34,11 +35,15 @@ def _scalar(value):
 
 
 def bounded(value):
-    """Recorded metadata with every long string (a title holding a body, say) as size and hash."""
+    """Recorded metadata with every long string (a title holding a body, say) as size and hash,
+    and every list cut to LIST_MAX_ITEMS items plus a count and hash of the whole list."""
     if isinstance(value, dict):
         return {key: bounded(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
-        return [bounded(item) for item in value]
+        kept = [bounded(item) for item in value[:LIST_MAX_ITEMS]]
+        if len(value) > LIST_MAX_ITEMS:
+            kept.append({'omitted': {'items': len(value) - LIST_MAX_ITEMS, **summary(list(value))}})
+        return kept
     return _scalar(value)
 
 
@@ -80,6 +85,6 @@ def fetch_output(body):
         return body
     if 'url' in body:
         return page_summary(body)
-    return {key: [page_summary(page) for page in value]
+    return {key: bounded([page_summary(page) for page in value])
             if key in ('live', 'dead', 'unreadable') else bounded(value)
             for key, value in body.items()}
