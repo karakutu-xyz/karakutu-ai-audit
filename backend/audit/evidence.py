@@ -10,13 +10,14 @@ record_full_evidence = ContextVar('record_full_evidence', default=False)
 
 
 def text_summary(text):
-    return {'chars': len(text), 'sha256': hashlib.sha256(text.encode('utf-8')).hexdigest()}
+    return {'chars': len(text),
+            'sha256': hashlib.sha256(text.encode('utf-8', 'surrogatepass')).hexdigest()}
 
 
 def summary(value):
     """Hash compact, sorted UTF-8 JSON, with non-finite numbers normalized to null."""
     body = json.dumps(json_safe(value), sort_keys=True, ensure_ascii=False,
-                      separators=(',', ':')).encode('utf-8')
+                      separators=(',', ':')).encode('utf-8', 'surrogatepass')
     return {'bytes': len(body), 'sha256': hashlib.sha256(body).hexdigest()}
 
 

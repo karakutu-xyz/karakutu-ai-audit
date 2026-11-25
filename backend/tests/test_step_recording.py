@@ -222,3 +222,39 @@ def test_archive_summary_is_stable_and_json_safe():
     body = {'unrecognized': ['invented text' * 500], 'score': float('nan')}
     assert archive_output('/other', body) == {'summary': summary(body)}
     json.dumps(archive_output('/other', body), allow_nan=False)
+
+
+async def test_unusual_archive_text_never_loses_the_read():
+    from audit.clients.karakutu import KarakutuClient
+    from audit.model import trace
+
+    raw = b'{"id": 1, "link": "https://publisher.example/a", "extra": "\\ud800"}'
+    client = KarakutuClient('https://archive.example')
+    await client.http.aclose()
+    client.http = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(
+        200, content=raw, headers={'content-type': 'application/json'})))
+    events = []
+    token = trace.set(events)
+    try:
+        body = await client._get('/articles', {'url': 'https://publisher.example/a'})
+    finally:
+        trace.reset(token)
+        await client.close()
+    assert body['id'] == 1
+    assert client.state == 'ok'
+    assert events[0]['output']['summary']['id'] == 1
+
+
+def test_upstream_summary_field_is_not_taken_for_the_recording_envelope():
+    from types import SimpleNamespace
+
+    inp = {}
+    updates = {'related': SimpleNamespace(anchor_ts=ANCHOR, anchor_source='archive')}
+    events = [{'type': 'archive_get', 'path': '/articles', 'params': {},
+               'output': {'id': 1, 'summary': 'An invented upstream summary.',
+                          'publish_date': '2030-03-11'}}]
+    step_inputs.observed_related(inp, updates, events)
+    assert inp['archive_publish_date'] == '2030-03-11'
+    lean = [{**events[0], 'output': {'summary': {'id': 1, 'publish_date': '2030-03-12'}}}]
+    step_inputs.observed_related(inp, updates, lean)
+    assert inp['archive_publish_date'] == '2030-03-12'

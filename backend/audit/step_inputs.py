@@ -102,7 +102,8 @@ def observed_related(inp, updates, events):
             body = event.get('output') or {}
             if not isinstance(body, dict):
                 continue
-            body = body.get('summary', body)
+            if set(body) == {'summary'} and isinstance(body['summary'], dict):
+                body = body['summary']   # the lean recording envelope, not an upstream field
             if body.get('publish_date'):
                 inp['archive_publish_date'] = body['publish_date']
         if event.get('path') == '/audits':

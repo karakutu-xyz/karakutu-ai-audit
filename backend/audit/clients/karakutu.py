@@ -72,7 +72,10 @@ class KarakutuClient:
                 event['retry_status'] = result.status_code
             result.raise_for_status()
             body = result.json()
-            event['output'] = archive_output(path, body)
+            try:
+                event['output'] = archive_output(path, body)
+            except Exception as exc:  # noqa: BLE001 — recording never changes the read
+                event['output'] = {'summary': {'record_error': type(exc).__name__}}
             return body
         except (httpx.HTTPError, ValueError) as exc:
             event['error_type'] = type(exc).__name__

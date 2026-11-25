@@ -201,7 +201,10 @@ def capture_fetch(fn, kind):
             events.append(event)
         try:
             result = await fn(*args, **kwargs)
-            event['output'] = evidence.fetch_output(dump(result))
+            try:
+                event['output'] = evidence.fetch_output(dump(result))
+            except Exception as exc:  # noqa: BLE001 — recording never changes the fetch
+                event['output'] = {'record_error': type(exc).__name__}
             return result
         except Exception as exc:
             event['error_type'] = type(exc).__name__
@@ -328,7 +331,10 @@ class AuditEngine:
                 trace.reset(token)
                 evidence.record_full_evidence.reset(evidence_token)
             if name == 'related_removals':
-                step_inputs.observed_related(inp, updates, events)
+                try:
+                    step_inputs.observed_related(inp, updates, events)
+                except Exception as exc:  # noqa: BLE001 — recording must never change an audit
+                    inp['record_error'] = type(exc).__name__
             status = 'skipped' if result.skipped else ('failed' if result.explanation.startswith('Stage did not complete') else 'completed')
             step = dump({'name':name, 'status':status,
                     'model':next((e.get('request', {}).get('model') for e in events if e['type'] == 'model'), None), 'input':inp, 'output':dump(result),
