@@ -119,24 +119,17 @@ def _key_index(boilerplate: frozenset[str]) -> dict[tuple[str, ...], list[tuple[
     return index
 
 
-def _clean_shingles(text: str, boilerplate: frozenset[str]) -> tuple[frozenset, int]:
-    """Shingles of `text` that touch no token of a boilerplate paragraph, and the share
-    of the text's shingles removed.
+def _spans(toks: list[str], keys: frozenset[str]) -> list[tuple[int, int]]:
+    """Every occurrence of a learned key in `toks`, as (start, end) token positions.
 
-    Boilerplate is found as a token sequence anywhere in the token stream, not as whole
-    lines, so identical text loses identical shingles whatever its paragraph breaks (a
-    footer run into the last body paragraph on one page and set apart on another). Each
-    position is checked against the few sequences that start with its tokens, and every
-    occurrence is marked, overlapping ones included. No regular expression; the cost is
-    bounded by the page size times the length of the keys that match there.
+    Each position is checked against the few sequences that start with its tokens, and
+    the longest key starting there is taken; a match that starts inside the previous one
+    is its own occurrence, so overlapping ones are all found. No regular expression; the
+    cost is bounded by the page size times the length of the keys that match there.
     """
-    toks = tokens(text)
-    index = _key_index(boilerplate)
+    index = _key_index(keys)
     heads = {len(head) for head in index}
-    # Every occurrence is marked, overlapping ones included (a match that starts inside
-    # the previous one may extend past it). A difference array keeps marking linear;
-    # matching costs at most the length of the few keys sharing a position's head.
-    depth = [0] * (len(toks) + 1)
+    found = []
     for i in range(len(toks)):
         longest = 0
         for size in heads:
@@ -144,15 +137,28 @@ def _clean_shingles(text: str, boilerplate: frozenset[str]) -> tuple[frozenset, 
                 if len(seq) > longest and tuple(toks[i:i + len(seq)]) == seq:
                     longest = len(seq)
         if longest:
-            depth[i] += 1
-            depth[i + longest] -= 1
-    marked = []
-    running = 0
-    for i in range(len(toks)):
+            found.append((i, i + longest))
+    return found
+
+
+def _covered(size: int, spans: list[tuple[int, int]]) -> list[bool]:
+    """Which of `size` token positions lie inside any span (difference array, linear)."""
+    depth = [0] * (size + 1)
+    for start, end in spans:
+        depth[start] += 1
+        depth[end] -= 1
+    marked, running = [], 0
+    for i in range(size):
         running += depth[i]
         marked.append(running > 0)
+    return marked
+
+
+def _kept(text: str, toks: list[str], spans: list[tuple[int, int]]) -> tuple[frozenset, int]:
+    """Shingles of `text` that touch no spanned token, and how many shingles were dropped."""
     if not toks:
         return frozenset(), 0
+    marked = _covered(len(toks), spans)
     k = SHINGLE_K
     if len(toks) < k:
         windows = [(0, len(toks))]
@@ -162,9 +168,36 @@ def _clean_shingles(text: str, boilerplate: frozenset[str]) -> tuple[frozenset, 
     return kept, len(shingles(text)) - len(kept)
 
 
+def _clean_shingles(text: str, boilerplate: frozenset[str]) -> tuple[frozenset, int]:
+    """Shingles of `text` that touch no token of a boilerplate paragraph, and the share
+    of the text's shingles removed.
+
+    Boilerplate is found as a token sequence anywhere in the token stream, not as whole
+    lines, so identical text loses identical shingles whatever its paragraph breaks (a
+    footer run into the last body paragraph on one page and set apart on another).
+    """
+    toks = tokens(text)
+    return _kept(text, toks, _spans(toks, boilerplate))
+
+
+def _clean_removed(
+    removed_prose: str, boilerplate: frozenset[str], carried: frozenset[str],
+) -> frozenset:
+    """The removed article's shingles after dropping only paragraphs the candidate carries.
+
+    An occurrence of a carried paragraph is kept when it overlaps an occurrence of a learned
+    paragraph the candidate lacks: a short footer variant inside a longer one must not
+    take the longer one's missing words out of the score with it.
+    """
+    toks = tokens(removed_prose)
+    missing = _covered(len(toks), _spans(toks, boilerplate - carried))
+    spans = [(a, b) for a, b in _spans(toks, carried) if not any(missing[a:b])]
+    return _kept(removed_prose, toks, spans)[0]
+
+
 def _carried(text: str, boilerplate: frozenset[str]) -> frozenset[str]:
     """Learned paragraphs that occur in `text` as token sequences, whatever its paragraph
-    breaks. Same matching as `_clean_shingles`; returns keys only, never text spans."""
+    breaks; keys only, never text spans."""
     toks = tokens(text)
     index = _key_index(boilerplate)
     heads = {len(head) for head in index}
@@ -213,7 +246,7 @@ def measure(
     _, learned_removed = _clean_shingles(removed_prose, boilerplate)
     if learned_removed > MAX_REMOVED_SHARE * len(shingles(removed_prose)):
         return Measurement(*raw, *raw, counts, boilerplate_capped=True)
-    old_clean, _ = _clean_shingles(removed_prose, carried)
+    old_clean = _clean_removed(removed_prose, boilerplate, carried)
     if raw[0] is None:
         # A side unmeasurable to begin with stays unmeasurable: no evidence, no call.
         return Measurement(*raw, *raw, counts)

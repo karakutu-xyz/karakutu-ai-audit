@@ -518,6 +518,19 @@ def test_a_paragraph_the_copy_lacks_is_never_stripped_from_the_original():
     assert exact.old_in_new >= MOVED_THRESHOLD
 
 
+def test_a_carried_short_variant_cannot_hide_a_longer_variant_the_copy_lacks():
+    # Both footer variants are learned; the original has the longer one, the copy only the
+    # shorter one inside it. Dropping the short one from the original must not take the
+    # longer one's extra words out of the score with it.
+    short = "Explore our publication archives and contact the reader desk"
+    long = short + " for general subscription assistance and delivery questions"
+    removed = prose(BODY + [long])
+    copy = prose(BODY + [short])
+    measured = measure(removed, copy, frozenset(paragraph_keys([short, long])))
+    assert not measured.boilerplate_capped
+    assert measured.old_in_new == measured.raw_old_in_new < MOVED_THRESHOLD
+
+
 def test_a_revised_site_footer_does_not_demote_an_exact_copy():
     # The live site appended a word to its footer since the article was archived. Voters
     # only show the revised footer, so the archived footer is not matched as boilerplate
