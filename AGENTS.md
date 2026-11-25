@@ -24,8 +24,8 @@ Read README, docs/architecture.md, docs/workflow.md and docs/contributing.md bef
 Preserve prompts, thresholds and verdict semantics unless intentionally changing behavior; document and benchmark deliberate changes. `POSSIBLE_CENSORSHIP` is not a finding of censorship and requires human review. `FOUND_ONLINE`/`NOT_REMOVED` are never exculpatory. Model failure must be `AUDIT_FAILED`, never an invented negative finding. Only independently verified 404/410 evidence can raise a dead-source flag; archive-sourced dead candidates, 403s, PDFs, private URLs and unreachable sites cannot.
 
 Same-publisher rewrite verdicts require a live page whose requested and final URLs
-stay on the publisher. At least 20 own distinctive words require 40% word overlap,
-40% of the original headline words and a known publication gap of at most two days.
+stay on the publisher. At least 20 own distinctive words require 35% word overlap,
+35% of the original headline words and a known publication gap of at most two days.
 Shorter originals require 80% headline overlap in both directions within one day.
 Their live page must contain at least 80% of the original headline words.
 No rewrite may redirect to a different page: a final URL, when present,

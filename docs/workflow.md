@@ -34,7 +34,7 @@ phrase. `search/rewrite.py` therefore measures headline words and distinctive wo
 The removed article's own words are those covered by shingles surviving boilerplate
 cleaning; if cleaning is capped or leaves nothing, all its distinctive words count.
 These words are looked for throughout the candidate page. For at least 20 own words,
-a rewrite needs at least 40% of those words, at least 40% of the original headline
+a rewrite needs at least 35% of those words, at least 35% of the original headline
 words and a publication gap of at most two days. Shorter originals instead need
 at least 80% headline overlap in both directions within one day, with at least 80%
 of the original headline words present in the live page's text. For both rules, the

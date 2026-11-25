@@ -398,14 +398,14 @@ async def test_pure_paraphrase_stays_set_aside_by_design(run_offline_audit):
     own = distinctive_words(html_to_text(page(BUDGET)))
     rewrite_share, _ = word_overlap(own, html_to_text(page(REWRITE)))
     unrelated_share, _ = word_overlap(own, html_to_text(page(ORCHARD)))
-    assert rewrite_share < unrelated_share < 0.40
+    assert rewrite_share < unrelated_share < 0.35
     result = await run_offline_audit(
         dated_budget(), similar=[dated_rewrite_candidate()],
         pages={NEW_URL: page(REWRITE)}, web_result=rewrite_match(),
     )
     measured = details(result, "similarity")["candidates"][0]
     assert measured["date_gap_days"] == 2
-    assert measured["title_overlap"] >= 0.40
+    assert measured["title_overlap"] >= 0.35
     assert measured["rewrite"] is False
     assert result["response"]["verdict"] == "INCONCLUSIVE"
     assert details(result, "web_search")["relocated_to"] is None
@@ -756,7 +756,7 @@ def test_factual_rewrite_changes_phrases_but_keeps_distinctive_words(record_prop
     assert max(values) < SIBLING_MAX
     share, count = word_overlap(distinctive_words(html_to_text(page(BUDGET))),
                                 html_to_text(page(REWRITE_FACTS)))
-    assert share >= 0.40
+    assert share >= 0.35
     assert count >= 20
 
 
@@ -767,7 +767,7 @@ async def test_factual_rewrite_model_match_is_likely_moved(run_offline_audit):
     )
     measured = details(result, "similarity")["candidates"][0]
     assert measured["rewrite"] is True
-    assert measured["title_overlap"] >= 0.40
+    assert measured["title_overlap"] >= 0.35
     assert max(measured["old_in_new"], measured["new_in_old"]) < SIBLING_MAX
     web = details(result, "web_search")
     assert web["relocated_to"] == NEW_URL
@@ -908,7 +908,7 @@ async def test_template_headline_with_unrelated_words_stays_set_aside(run_offlin
         pages={NEW_URL: page(ORCHARD)}, web_result=rewrite_match(),
     )
     measured = details(result, "similarity")["candidates"][0]
-    assert measured["title_overlap"] >= 0.40
+    assert measured["title_overlap"] >= 0.35
     assert measured["word_overlap"] < 0.30
     assert measured["rewrite"] is False
     assert details(result, "web_search")["related_same_publisher"] == [NEW_URL]
@@ -997,8 +997,8 @@ async def test_long_rewrite_redirect_must_stay_on_same_article(
     assert measured["status"] == "live"
     assert measured["final_url"] == destination
     assert measured["own_words"] >= 20
-    assert measured["title_overlap"] >= 0.40
-    assert measured["word_overlap"] >= 0.40
+    assert measured["title_overlap"] >= 0.35
+    assert measured["word_overlap"] >= 0.35
     assert measured["date_gap_days"] == 2
     assert max(measured["old_in_new"], measured["new_in_old"]) < SIBLING_MAX
     assert measured["rewrite"] is expected_rewrite
@@ -1012,8 +1012,8 @@ async def test_factual_rewrite_without_any_archive_date_fails_closed(run_offline
         pages={NEW_URL: page(REWRITE_FACTS)}, web_result=rewrite_match(),
     )
     measured = details(result, "similarity")["candidates"][0]
-    assert measured["title_overlap"] >= 0.40
-    assert measured["word_overlap"] >= 0.40
+    assert measured["title_overlap"] >= 0.35
+    assert measured["word_overlap"] >= 0.35
     assert measured["date_gap_days"] is None
     assert measured["rewrite"] is False
     assert details(result, "web_search")["relocated_to"] is None

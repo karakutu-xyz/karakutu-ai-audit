@@ -123,7 +123,7 @@ Models find and describe evidence. They never pick the verdict. Code does:
   ([`boilerplate.py`](../backend/audit/search/boilerplate.py)).
 - Same-publisher rewrites add headline, distinctive-word and publication-date measurements
   ([`rewrite.py`](../backend/audit/search/rewrite.py)). At least 20 own distinctive words
-  require 40% word overlap, 40% original-headline overlap and a known gap of at most two
+  require 35% word overlap, 35% original-headline overlap and a known gap of at most two
   days. Shorter originals require 80% headline overlap both ways within one day
   and at least 80% of the original headline words in the live text. Every rewrite must
   stay at the requested page (normalized URLs and same-article variants qualify).

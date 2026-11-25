@@ -89,8 +89,8 @@ def test_date_gap_uses_calendar_dates_then_archive(old, new, archive, expected):
 
 @pytest.mark.parametrize(("changes", "expected"), [
     ({}, True),
-    ({"title_overlap": 0.399999}, False),
-    ({"word_overlap": 0.399999}, False),
+    ({"title_overlap": 0.349999}, False),
+    ({"word_overlap": 0.349999}, False),
     ({"date_gap_days": 3}, False),
     ({"date_gap_days": None}, False),
     ({"title_overlap": None}, False),
@@ -103,8 +103,8 @@ def test_date_gap_uses_calendar_dates_then_archive(old, new, archive, expected):
     ({"final_url": NEW_URL + "/?view=reader"}, True),
 ])
 def test_text_rule_inclusive_bars(changes, expected):
-    values = dict(title_overlap=0.40, title_overlap_reverse=0.1,
-                  word_overlap=0.40, own_words=20, date_gap_days=2,
+    values = dict(title_overlap=0.35, title_overlap_reverse=0.1,
+                  word_overlap=0.35, own_words=20, date_gap_days=2,
                   headline_in_text=None, requested_url=NEW_URL,
                   final_url=NEW_URL)
     assert is_rewrite(**(values | changes)) is expected

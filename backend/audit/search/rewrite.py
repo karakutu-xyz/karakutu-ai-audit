@@ -23,8 +23,8 @@ DISTINCTIVE_MIN_CHARS = 5
 # near-identical headlines in both directions and a tighter publication window.
 # Short originals' live text must also contain the headline words. For BOTH rules,
 # the requested page must not redirect to a different article or a landing page.
-REWRITE_TITLE_MIN = 0.40
-REWRITE_WORDS_MIN = 0.40
+REWRITE_TITLE_MIN = 0.35
+REWRITE_WORDS_MIN = 0.35
 REWRITE_MAX_DAYS = 2
 STUB_MAX_WORDS = 20
 STUB_TITLE_MIN = 0.80
