@@ -177,7 +177,8 @@ def seed_demo_data(database_url: str) -> bool:
 def _result_secrets(settings: Settings) -> tuple[str, ...]:
     """Private refusal inventory; never expose settings or wallet parsing errors."""
     values = [settings.api_auth_token, settings.model_api_key, settings.archive_wallet_path]
-    wallet = settings.archive_wallet_json
+    # Same source resolution as ArweaveWalletAuth: stripped inline JSON wins, else the file.
+    wallet = (settings.archive_wallet_json or "").strip()
     if not wallet and settings.archive_wallet_path:
         try:
             wallet = Path(settings.archive_wallet_path).read_text(encoding="utf-8")

@@ -1181,7 +1181,8 @@ def stored_result_run(client, *, payload=None, findings="Fictional output"):
     return store.run(run["id"])
 
 
-@pytest.mark.parametrize("kind", ["credential", "api", "model", "wallet_json", "wallet_file"])
+@pytest.mark.parametrize("kind", ["credential", "api", "model", "wallet_json", "wallet_file",
+                                  "wallet_file_blank_json"])
 def test_unsafe_stored_result_is_withheld_but_details_remain(tmp_path, database_url, kind):
     secret = "fictional-sensitive-material"
     options = {"api_auth_token": TOKEN}
@@ -1192,6 +1193,9 @@ def test_unsafe_stored_result_is_withheld_but_details_remain(tmp_path, database_
         if kind == "wallet_json":
             options["archive_wallet_json"] = raw
         else:
+            # Blank inline JSON falls back to the file, exactly as archive sign-in does.
+            if kind == "wallet_file_blank_json":
+                options["archive_wallet_json"] = "  \n"
             wallet = tmp_path / "fictional-wallet.json"
             wallet.write_text(raw)
             options["archive_wallet_path"] = str(wallet)

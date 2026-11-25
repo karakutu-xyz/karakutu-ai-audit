@@ -372,7 +372,8 @@ scrubbing cause `credential_detected` or `secret_detected`; oversized stored URL
 identities or serialized results cause `too_large`. An invalid projection causes
 `invalid_result`. These responses contain no stored prose. Withholding affects only
 the response: a submission still creates and queues its run, and cancellation still
-cancels it. Full data remains at `/api/runs/{id}/details`. Submitted article URLs over
+cancels it, so a caller must not resubmit: follow `run_id` instead (the review UI opens the
+run or refreshes and shows no error). Full data remains at `/api/runs/{id}/details`. Submitted article URLs over
 8,192 UTF-8 bytes fail validation with the existing 422 error shape before creating a run.
 
 A finished live run with a stored result can serialize to the v2 record for karakutu.

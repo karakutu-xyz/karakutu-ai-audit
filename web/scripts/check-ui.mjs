@@ -767,8 +767,10 @@ function resourceHarness() {
       if (name === "./context") return { ApiContext: {} };
       if (name === "../format") return format;
       if (name === "./client") {
+        const client = load(path.join(root, "api/client.ts"));
         return {
-          ApiError: load(path.join(root, "api/client.ts")).ApiError,
+          ApiError: client.ApiError,
+          withheldRunId: client.withheldRunId,
           errorMessage: (error) => error.message,
           request: (path, token, { signal, method }) => new Promise((resolve, reject) => {
             requests.push({ path, token, signal, method, resolve, reject });
@@ -1952,7 +1954,26 @@ test("run cancellation stops polling and mutation uses safe conflict feedback", 
   control.requests[2].resolve({});
   assert.equal(await stale, false);
   assert.equal(control.render().busy, false);
+  // A stop that took effect but whose result the service withheld counts as done.
+  const stopped = [];
+  const withheld = control.render().mutate(endpoint, (data) => stopped.push(data));
+  control.requests[3].reject(new ApiError(409, "result_withheld", baseRun.id));
+  assert.equal(await withheld, true);
+  assert.deepEqual(stopped, [null]);
+  assert.equal(control.render().error, "");
   control.unmount();
+});
+
+test("a withheld article audit is followed, not reported as a failure", async () => {
+  const harness = articleDetailHarness();
+  harness.render();
+  const action = harness.start();
+  harness.requests[0].reject(new harness.client.ApiError(409, "result_withheld", "run_new"));
+  await action;
+  const html = harness.render();
+  assert.ok(!html.includes("An audit for this article is already running."));
+  assert.equal(harness.refreshes, 1);
+  harness.unmount();
 });
 
 function controlHarness(file, name, props) {

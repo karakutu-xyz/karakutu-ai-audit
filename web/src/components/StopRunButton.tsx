@@ -9,7 +9,8 @@ export function StopRunButton({
   variant = "default",
 }: {
   run: { id: string; status: RunStatus };
-  onStopped?: (run: AuditResult) => void;
+  // `null` when the stop took effect but its result was withheld.
+  onStopped?: (run: AuditResult | null) => void;
   variant?: "default" | "compact";
 }) {
   const { token, epoch } = useApi();

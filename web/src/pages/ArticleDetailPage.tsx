@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useApi, useArticle, useRun } from "../api/hooks";
-import { ApiError, auditArticle, articleAuditError } from "../api/client";
+import { ApiError, auditArticle, articleAuditError, withheldRunId } from "../api/client";
 import { Link, useScrollRestoration } from "../router";
 import {
   articleDate,
@@ -94,6 +94,12 @@ export function ArticleDetailPage({ articleRef }: { articleRef: string }) {
       refresh();
     } catch (error) {
       if (current.signal.aborted) return;
+      if (withheldRunId(error)) {
+        // The audit was accepted; its result was withheld. Follow it through the details.
+        articlesCache.clear();
+        refresh();
+        return;
+      }
       setActionError(articleAuditError(error, article.category === "live" &&
         service?.mode === "live" && !service.live_ingestion_enabled));
       if (error instanceof ApiError && error.status === 409) refresh();
@@ -200,7 +206,7 @@ export function ArticleDetailPage({ articleRef }: { articleRef: string }) {
                 run={{ id: latest.id, status: run?.status ?? latest.status }}
                 onStopped={(stopped) => {
                   // Show the stopped run at once, then reload the article and its list entry.
-                  if (run) detail.setData({
+                  if (run && stopped) detail.setData({
                     ...run, ...stopped.run, verdict: stopped.verdict,
                     output: null, summary: null,
                     error: null,

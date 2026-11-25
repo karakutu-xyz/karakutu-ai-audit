@@ -1,5 +1,5 @@
 import { useCallback, useState, useEffect, useRef, type FormEvent } from "react";
-import { request, errorMessage } from "../api/client";
+import { request, errorMessage, withheldRunId } from "../api/client";
 import type { AuditResult } from "../types";
 import { Icon } from "../components/Icon";
 import { Modal } from "../components/Modal";
@@ -13,7 +13,7 @@ export function CreateBenchmarkDialog({
 }: {
   token: string;
   onClose: () => void;
-  onCreated: (run: AuditResult) => void;
+  onCreated: (runId: string) => void;
 }) {
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
@@ -67,9 +67,13 @@ export function CreateBenchmarkDialog({
           ...(expected ? { expected_verdict: expected } : {}),
         }),
       });
-      if (!current.signal.aborted) onCreated(run);
+      if (!current.signal.aborted) onCreated(run.run.id);
     } catch (error) {
-      if (!current.signal.aborted) setError(errorMessage(error));
+      if (current.signal.aborted) return;
+      // Accepted, but the result was withheld: open the run instead of inviting a resubmit.
+      const withheld = withheldRunId(error);
+      if (withheld) onCreated(withheld);
+      else setError(errorMessage(error));
     } finally {
       if (!current.signal.aborted) setSaving(false);
     }

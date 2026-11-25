@@ -15,7 +15,7 @@ export function BenchmarksPage() {
           key={epoch}
           token={token}
           onClose={() => setOpen(false)}
-          onCreated={(run) => navigate(`/runs/${encodeURIComponent(run.run.id)}`)}
+          onCreated={(runId) => navigate(`/runs/${encodeURIComponent(runId)}`)}
         />
       )}
     </>

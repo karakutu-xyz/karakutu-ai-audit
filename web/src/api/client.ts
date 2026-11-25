@@ -2,7 +2,12 @@ import type { ArticleImported, AuditResult } from "../types";
 
 export class ApiError extends Error {
   /** The server's safe error code (`{"error": {"code": ...}}`), when it sent one. */
-  constructor(public status: number, public code: string | null = null) {
+  constructor(
+    public status: number,
+    public code: string | null = null,
+    /** The run a withheld result belongs to (`result_withheld`), when sent. */
+    public runId: string | null = null,
+  ) {
     super(
       status === 401
         ? "Access requires an API token. Add it in Settings."
@@ -37,17 +42,35 @@ export async function request<T>(
       "Cannot reach the audit service. Check that the local API is running.",
     );
   }
-  if (!response.ok) throw new ApiError(response.status, await errorCode(response));
+  if (!response.ok) {
+    const { code, runId } = await errorBody(response);
+    throw new ApiError(response.status, code, runId);
+  }
   return response.json() as Promise<T>;
 }
 
-// Only a short lowercase identifier is kept; anything else in an error body is ignored.
-async function errorCode(response: Response): Promise<string | null> {
+/**
+ * The action took effect but its result was withheld by the service's safety checks
+ * (409 `result_withheld`): returns the run id to follow through its details, else null.
+ */
+export function withheldRunId(error: unknown): string | null {
+  return error instanceof ApiError && error.code === "result_withheld" ? error.runId : null;
+}
+
+// Only a short lowercase code and a run id are kept; anything else in an error body is ignored.
+async function errorBody(
+  response: Response,
+): Promise<{ code: string | null; runId: string | null }> {
   try {
-    const code = (await response.json())?.error?.code;
-    return typeof code === "string" && /^[a-z0-9_]{1,64}$/.test(code) ? code : null;
+    const error = (await response.json())?.error;
+    const code = error?.code;
+    const runId = error?.run_id;
+    return {
+      code: typeof code === "string" && /^[a-z0-9_]{1,64}$/.test(code) ? code : null,
+      runId: typeof runId === "string" && /^run_[A-Za-z0-9_]{1,80}$/.test(runId) ? runId : null,
+    };
   } catch {
-    return null;
+    return { code: null, runId: null };
   }
 }
 

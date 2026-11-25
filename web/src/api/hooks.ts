@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ApiContext, type RunsResponse } from "./context";
-import { request, errorMessage, ApiError } from "./client";
+import { request, errorMessage, ApiError, withheldRunId } from "./client";
 import { pending } from "../format";
 import type {
   ArticleDetail, ArticleList, QueueState, Run, Workflow,
@@ -261,7 +261,8 @@ export function useRunControl() {
 
   async function mutate<T = unknown>(
     path: string,
-    onSuccess?: (data: T) => void,
+    // `null` when the action took effect but the service withheld its result.
+    onSuccess?: (data: T | null) => void,
   ): Promise<boolean> {
     if (controller.current && !controller.current.signal.aborted) return false;
     const active = new AbortController();
@@ -277,6 +278,11 @@ export function useRunControl() {
       onSuccess?.(data);
       return true;
     } catch (error) {
+      if (!active.signal.aborted && withheldRunId(error)) {
+        for (const refresh of queueListeners) refresh();
+        onSuccess?.(null);
+        return true;
+      }
       if (!active.signal.aborted) {
         setError(
           error instanceof ApiError && error.status === 409
