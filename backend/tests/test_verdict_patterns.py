@@ -15,7 +15,7 @@ from audit.search.base import BaseSearchProvider, SearchResult
 from audit.search.boilerplate import build_boilerplate, measure as measure_cleaned
 from audit.search.fetch import FetchOutcome, LivePage, html_to_text, normalize_url
 from audit.search.rewrite import distinctive_words, word_overlap
-from audit.search.textmatch import MOVED_THRESHOLD, SIBLING_MAX, directional_containments
+from audit.search.textmatch import MOVED_THRESHOLD, PARTIAL_MIN, SIBLING_MAX, directional_containments
 from audit.search.urls import is_public_web_url
 from audit.workflow import classification, pipeline, relevance, similarity, source, web_search
 
@@ -517,7 +517,10 @@ async def test_shared_footer_page_is_set_aside(run_offline_audit):
     assert result["response"]["verdict"] == "INCONCLUSIVE"
 
 
-async def test_copy_with_changed_furniture_uses_cleaned_move_bar(run_offline_audit):
+async def test_copy_without_the_site_furniture_goes_on_to_web_search(run_offline_audit):
+    # The other live pages share the footer; the copy is on a template without it. The
+    # footer stays in the removed article's score, so the copy is a partial fit and the
+    # audit goes on to web search instead of stopping at a measured move.
     article = budget_article()
     article.content = page(BUDGET + FOOTER)
     orchard_url = "https://dusulke.example/haber/71003/orchard-survey"
@@ -532,12 +535,39 @@ async def test_copy_with_changed_furniture_uses_cleaned_move_bar(run_offline_aud
         },
     )
     measured = details(result, "similarity")["candidates"][0]
-    assert measured["raw_old_in_new"] < MOVED_THRESHOLD
-    assert measured["old_in_new"] >= MOVED_THRESHOLD
-    assert measured["fit"] == "verbatim"
-    assert measured["boilerplate_paragraphs"] == [2, 0]
-    assert result["response"]["verdict"] == "MOVED"
-    assert result["response"]["short_circuited_at"] == "similarity"
+    assert PARTIAL_MIN <= measured["raw_old_in_new"] < MOVED_THRESHOLD
+    assert measured["old_in_new"] == measured["raw_old_in_new"]
+    assert measured["fit"] == "partial"
+    assert measured["boilerplate_paragraphs"] == [0, 0]
+    assert result["response"]["verdict"] != "MOVED"
+    assert result["response"]["short_circuited_at"] != "similarity"
+    assert any(step["name"] == "web_search" for step in result["steps"])
+
+
+async def test_copy_missing_a_repeated_background_paragraph_is_not_moved(run_offline_audit):
+    # Two follow-up stories on the site repeat the original's middle paragraph word for
+    # word, so it is learned as same-site boilerplate. The relocated page is the original
+    # without that paragraph: a partial copy, never a measured MOVED.
+    background = BUDGET[1]
+    orchard_url = "https://dusulke.example/haber/71003/orchard-survey"
+    result = await run_offline_audit(
+        budget_article(),
+        similar=[candidate(), SimilarArticle(id=71002, link=SECOND_URL),
+                 SimilarArticle(id=71003, link=orchard_url)],
+        pages={
+            NEW_URL: page([BUDGET[0], BUDGET[2]]),
+            SECOND_URL: page(POTTERY + [background]),
+            orchard_url: page(footer_orchard() + [background]),
+        },
+    )
+    measured = details(result, "similarity")["candidates"][0]
+    assert PARTIAL_MIN <= measured["raw_old_in_new"] < MOVED_THRESHOLD
+    assert measured["old_in_new"] == measured["raw_old_in_new"]
+    assert measured["boilerplate_paragraphs"][0] == 0
+    assert measured["fit"] == "partial"
+    assert result["response"]["verdict"] != "MOVED"
+    assert result["response"]["short_circuited_at"] != "similarity"
+    assert any(step["name"] == "web_search" for step in result["steps"])
 
 
 def live_page(url, paragraphs):
@@ -649,7 +679,8 @@ def test_web_boilerplate_ignores_own_url_and_other_publishers(excluded_vote_url)
     assert evidence.boilerplate_paragraphs == (0, 0)
 
 
-def test_web_relocation_records_cleaned_and_raw_copy_scores():
+def test_web_relocation_without_the_site_furniture_stays_below_the_move_bar():
+    # Web search applies the same rule: the footer the copy lacks stays in the score.
     article = budget_article()
     article.content = page(BUDGET + FOOTER)
     fetched = FetchOutcome(live=[
@@ -660,13 +691,13 @@ def test_web_relocation_records_cleaned_and_raw_copy_scores():
     evidence = web_search._ground(web_search.WebSearchResult(
         matches=[web_search.PageMatch(url=NEW_URL)], reasoning="Invented copy",
     ), fetched, article, 3)
-    assert evidence.relocation_old_in_new >= MOVED_THRESHOLD
-    assert evidence.raw_old_in_new < MOVED_THRESHOLD
-    assert evidence.boilerplate_paragraphs == (2, 0)
-    assert evidence.same_publisher_measurements[NEW_URL].old_in_new >= MOVED_THRESHOLD
-    assert pipeline._decide(evidence)[0].value == "MOVED"
+    assert PARTIAL_MIN <= evidence.raw_old_in_new < MOVED_THRESHOLD
+    assert evidence.relocation_old_in_new == evidence.raw_old_in_new
+    assert evidence.boilerplate_paragraphs == (0, 0)
+    assert evidence.same_publisher_measurements[NEW_URL].old_in_new < MOVED_THRESHOLD
+    assert pipeline._decide(evidence)[0].value != "MOVED"
     recorded = web_search.overlap_details(evidence)
-    assert recorded["boilerplate_paragraphs"] == [2, 0]
+    assert recorded["boilerplate_paragraphs"] == [0, 0]
     assert recorded["same_publisher_measurements"][NEW_URL]["raw_old_in_new"] == (
         evidence.raw_old_in_new
     )
