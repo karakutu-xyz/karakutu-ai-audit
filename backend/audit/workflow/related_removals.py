@@ -116,7 +116,9 @@ class RelatedRemovalsEvidence(BaseModel):
     reason: str = ""
     anchor_ts: Optional[int] = None
     anchor_source: str = ""                  # first_dead_check | now
-    prompt_publish_date: str = ""            # the publish date the model prompt carried, if one was sent
+    # The publish date the model prompt carried. Recording only: excluded from dumps, so
+    # stage details and the audit response stay as they were.
+    prompt_publish_date: str = Field(default="", exclude=True)
     window_days: int = WINDOW_DAYS
     window_size: int = 0                     # candidate audits in the window (after self-exclusion)
     entities: List[str] = Field(default_factory=list)

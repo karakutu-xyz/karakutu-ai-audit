@@ -21,6 +21,18 @@ def summary(value):
     return {'bytes': len(body), 'sha256': hashlib.sha256(body).hexdigest()}
 
 
+SCALAR_MAX_CHARS = 300
+
+
+def _scalar(value):
+    """A short scalar as is; anything else (an object, a long string) only as size and hash."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str) and len(value) <= SCALAR_MAX_CHARS:
+        return value
+    return {'summary': text_summary(value) if isinstance(value, str) else summary(value)}
+
+
 def archive_output(path, body):
     if record_full_evidence.get():
         return body
@@ -29,8 +41,8 @@ def archive_output(path, body):
         result['items'] = len(body.get('items') or [])
     elif (path == '/articles' or path.startswith('/articles/')) and isinstance(body, dict):
         if 'id' in body:
-            result.update({key: body.get(key) for key in ('id', 'title', 'publish_date')})
-            result['url'] = body.get('link') or body.get('url')
+            result.update({key: _scalar(body.get(key)) for key in ('id', 'title', 'publish_date')})
+            result['url'] = _scalar(body.get('link') or body.get('url'))
         if isinstance(body.get('news_text'), str):
             result['news_text'] = text_summary(body['news_text'])
     return {'summary': result}

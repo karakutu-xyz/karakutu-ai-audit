@@ -259,3 +259,24 @@ def test_related_input_records_the_date_the_prompt_carried_not_the_archive_body(
     step_inputs.observed_related(inp, updates, events)
     assert inp['publish_date_in_prompt'] == '2030-03-12'
     assert 'archive_publish_date' not in inp
+
+
+def test_article_summary_keeps_only_short_scalars():
+    body = {'id': 1, 'title': {'news_text': 'Invented body. ' * 20000},
+            'publish_date': 'x' * 5000, 'link': 'https://publisher.example/a'}
+    recorded = archive_output('/articles', body)['summary']
+    assert len(json.dumps(recorded)) < 1024
+    assert recorded['id'] == 1
+    assert recorded['url'] == 'https://publisher.example/a'
+    assert set(recorded['title']['summary']) == {'bytes', 'sha256'}
+    assert set(recorded['publish_date']['summary']) == {'chars', 'sha256'}
+
+
+def test_recording_only_date_stays_out_of_stage_details():
+    from audit.workflow import pipeline
+    from audit.workflow.related_removals import RelatedRemovalsEvidence
+
+    evidence = RelatedRemovalsEvidence(available=True)
+    evidence.prompt_publish_date = '2030-03-12'
+    assert 'prompt_publish_date' not in pipeline._related_details(evidence)
+    assert 'prompt_publish_date' not in evidence.model_dump_json()
