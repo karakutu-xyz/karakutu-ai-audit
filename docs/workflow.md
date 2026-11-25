@@ -83,12 +83,13 @@ the removed article's text that a candidate carries (for example after the site 
 its footer; an archived footer that no longer matches today's is simply not dropped).
 The removed article loses a learned paragraph only when the candidate also carries it.
 Follow-up stories often repeat a background paragraph word for word, so it is learned;
-a relocated copy missing that paragraph keeps the gap in its score and stays a partial
-fit instead of reaching the 99% move bar. Real site furniture is on every live page,
+a relocated copy missing that paragraph keeps the gap in its score, measured like any
+other missing text: it clears the 99% move bar only if the paragraph is under about 1% of
+the article, and otherwise becomes a partial fit. Real site furniture is on every live page,
 so a copy that carries the site's current footer still reaches `MOVED`. A copy on a
 different page template, with another footer or none, keeps the learned footer it lacks
-in its score; unless that footer is a very small share of the article, the copy falls
-below the move bar, becomes a partial fit and the audit goes on to web search.
+in its score the same way, so it usually falls below the move bar, becomes a partial
+fit and the audit goes on to web search.
 If the learned text covers more than 50% of the removed article's shingles, neither
 side is stripped: both scores stay raw and `boilerplate_capped` is true. This cap also
 protects against copies with long distinct teasers voting most of the body into
