@@ -166,9 +166,9 @@ def test_demo_engine_completes_benchmark_through_api(tmp_path):
             **request_for(5).model_dump(mode="json"), "label": "Fabricated offline demo",
         })
         assert submitted.status_code == 202
-        run_id = submitted.json()["id"]
+        run_id = submitted.json()["run"]["id"]
         for _ in range(100):
-            fetched = client.get(f"/api/runs/{run_id}")
+            fetched = client.get(f"/api/runs/{run_id}/details")
             assert fetched.status_code == 200
             run = fetched.json()
             if run["status"] in {"succeeded", "failed"}:
@@ -191,9 +191,9 @@ def test_test_mode_cancels_demo_during_step_delay_and_keeps_progress(tmp_path):
         app.state.audit_engine.step_delay = 0.1
         run_id = client.post("/api/benchmarks/runs", json={
             **request_for(5).model_dump(mode="json"),
-        }).json()["id"]
+        }).json()["run"]["id"]
         for _ in range(100):
-            before = client.get(f"/api/runs/{run_id}").json()
+            before = client.get(f"/api/runs/{run_id}/details").json()
             if before["steps"]:
                 break
             time.sleep(0.005)
@@ -201,11 +201,12 @@ def test_test_mode_cancels_demo_during_step_delay_and_keeps_progress(tmp_path):
             pytest.fail("Demo did not emit its first step")
         response = client.post(f"/api/runs/{run_id}/cancel")
         assert response.status_code == 200
-        stopped = response.json()
+        assert response.json()["record_id"] is None
+        stopped = client.get(f"/api/runs/{run_id}/details").json()
         assert stopped["status"] == "cancelled"
         assert stopped["verdict"] is None and stopped["output"] is None
         assert stopped["steps"][:len(before["steps"])] == before["steps"]
         assert 1 <= len(stopped["steps"]) < 6
         assert stopped["summary"]["verdict_label"] == "Stopped by a person"
         assert stopped["summary"]["failed_steps"] == []
-        assert client.get(f"/api/runs/{run_id}").json() == stopped
+        assert client.get(f"/api/runs/{run_id}/details").json() == stopped

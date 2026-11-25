@@ -1,0 +1,615 @@
+{
+  "$defs": {
+    "ArticleIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "archive_id": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Archive Id"
+        },
+        "content_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Content Sha256",
+          "type": "string"
+        },
+        "ref": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ref"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "archive_id",
+        "url",
+        "content_sha256"
+      ],
+      "title": "ArticleIdentity",
+      "type": "object"
+    },
+    "AuditFlag": {
+      "description": "Machine-readable red flags. A flag is a pointer for a human, never a finding.",
+      "enum": [
+        "SOURCE_DEAD",
+        "RELATED_REMOVALS"
+      ],
+      "title": "AuditFlag",
+      "type": "string"
+    },
+    "Classification": {
+      "additionalProperties": false,
+      "properties": {
+        "genre": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConceptTag"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "geographic_scope": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GeographicScope"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gist": {
+          "maxLength": 300,
+          "title": "Gist",
+          "type": "string"
+        },
+        "subject_tags": {
+          "items": {
+            "$ref": "#/$defs/ConceptTag"
+          },
+          "maxItems": 5,
+          "title": "Subject Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "subject_tags",
+        "genre",
+        "geographic_scope",
+        "gist"
+      ],
+      "title": "Classification",
+      "type": "object"
+    },
+    "ConceptTag": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "notation": {
+          "title": "Notation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "notation",
+        "label"
+      ],
+      "title": "ConceptTag",
+      "type": "object"
+    },
+    "Correction": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "correction",
+          "title": "Kind",
+          "type": "string"
+        },
+        "previous_record_id": {
+          "pattern": "^run_[0-9a-f]{32}\\.r[0-9]+$",
+          "title": "Previous Record Id",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "record_error",
+            "redaction"
+          ],
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "previous_record_id",
+        "reason"
+      ],
+      "title": "Correction",
+      "type": "object"
+    },
+    "DeadCopy": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "maxLength": 120,
+          "title": "Reason",
+          "type": "string"
+        },
+        "url": {
+          "maxLength": 512,
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url",
+        "reason"
+      ],
+      "title": "DeadCopy",
+      "type": "object"
+    },
+    "Error": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "const": "audit_failed",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "Error",
+      "type": "object"
+    },
+    "Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "covers_key_facts": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Covers Key Facts"
+        },
+        "dead_copies": {
+          "items": {
+            "$ref": "#/$defs/DeadCopy"
+          },
+          "maxItems": 5,
+          "title": "Dead Copies",
+          "type": "array"
+        },
+        "live_copies": {
+          "items": {
+            "maxLength": 512,
+            "type": "string"
+          },
+          "maxItems": 5,
+          "title": "Live Copies",
+          "type": "array"
+        },
+        "new_in_old": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "New In Old"
+        },
+        "old_in_new": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Old In New"
+        },
+        "original_url_status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Original Url Status"
+        },
+        "related_same_publisher": {
+          "items": {
+            "maxLength": 512,
+            "type": "string"
+          },
+          "maxItems": 5,
+          "title": "Related Same Publisher",
+          "type": "array"
+        },
+        "relocated_to": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Relocated To"
+        },
+        "search_queries": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Search Queries"
+        },
+        "search_queries_failed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Search Queries Failed"
+        }
+      },
+      "required": [
+        "relocated_to",
+        "old_in_new",
+        "new_in_old",
+        "covers_key_facts",
+        "original_url_status",
+        "live_copies",
+        "dead_copies",
+        "related_same_publisher",
+        "search_queries",
+        "search_queries_failed"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "GeographicScope": {
+      "description": "Reach of the STORY. Mirrors the archive's `GeographicScope` minus `platform_specific`,\nwhich describes the reach of a censorship action, not a property of an article.",
+      "enum": [
+        "local",
+        "regional",
+        "national",
+        "global_scope"
+      ],
+      "title": "GeographicScope",
+      "type": "string"
+    },
+    "Initial": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "initial",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "Initial",
+      "type": "object"
+    },
+    "ReAudit": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "re_audit",
+          "title": "Kind",
+          "type": "string"
+        },
+        "previous_record_id": {
+          "pattern": "^run_[0-9a-f]{32}\\.r[0-9]+$",
+          "title": "Previous Record Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "previous_record_id"
+      ],
+      "title": "ReAudit",
+      "type": "object"
+    },
+    "ResultRun": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "const": "live",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "finished_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "origin": {
+          "enum": [
+            "api",
+            "webhook",
+            "article"
+          ],
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "failed"
+          ],
+          "type": "string"
+        },
+        "workflow_id": {
+          "title": "Workflow Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "origin",
+        "category",
+        "status",
+        "created_at",
+        "finished_at",
+        "workflow_id"
+      ],
+      "title": "ResultRun",
+      "type": "object"
+    },
+    "StageName": {
+      "description": "The six steps, in pipeline order (AuditResponse.stages is always this order).",
+      "enum": [
+        "classification",
+        "similarity",
+        "relevance",
+        "related_removals",
+        "source",
+        "web_search"
+      ],
+      "title": "StageName",
+      "type": "string"
+    },
+    "StageOutcome": {
+      "enum": [
+        "pass",
+        "fail",
+        "inconclusive"
+      ],
+      "title": "StageOutcome",
+      "type": "string"
+    },
+    "StageSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/StageOutcome"
+        },
+        "stage": {
+          "$ref": "#/$defs/StageName"
+        },
+        "summary": {
+          "maxLength": 300,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage",
+        "outcome",
+        "summary"
+      ],
+      "title": "StageSummary",
+      "type": "object"
+    },
+    "Verdict": {
+      "description": "Audit outcome.\n\nNone of these is a finding of censorship. `POSSIBLE_CENSORSHIP` is a triage flag that\nnominates an article for human review \u2014 the determination that something *was* censored\nis a human call on independent evidence, and this service has no authority to make it.",
+      "enum": [
+        "LIKELY_LOW_PUBLIC_INTEREST",
+        "NOT_REMOVED",
+        "MOVED",
+        "LIKELY_MOVED",
+        "FOUND_ONLINE",
+        "POSSIBLE_CENSORSHIP",
+        "INCONCLUSIVE",
+        "AUDIT_FAILED"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "$id": "urn:karakutu-ai-audit:audit-record:2",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "article": {
+      "$ref": "#/$defs/ArticleIdentity"
+    },
+    "classification": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Classification"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Error"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "evidence": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Evidence"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "findings": {
+      "anyOf": [
+        {
+          "maxLength": 2000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Findings"
+    },
+    "flags": {
+      "items": {
+        "$ref": "#/$defs/AuditFlag"
+      },
+      "title": "Flags",
+      "type": "array"
+    },
+    "lineage": {
+      "discriminator": {
+        "mapping": {
+          "correction": "#/$defs/Correction",
+          "initial": "#/$defs/Initial",
+          "re_audit": "#/$defs/ReAudit"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Initial"
+        },
+        {
+          "$ref": "#/$defs/ReAudit"
+        },
+        {
+          "$ref": "#/$defs/Correction"
+        }
+      ]
+    },
+    "notice": {
+      "const": "Machine triage record. No verdict, including POSSIBLE_CENSORSHIP, is a finding of censorship; a person decides on independent evidence.",
+      "title": "Notice",
+      "type": "string"
+    },
+    "record_id": {
+      "pattern": "^run_[0-9a-f]{32}\\.r[0-9]+$",
+      "type": "string"
+    },
+    "run": {
+      "$ref": "#/$defs/ResultRun"
+    },
+    "schema": {
+      "const": "karakutu-ai-audit/audit-result",
+      "title": "Schema",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "2.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "stages": {
+      "items": {
+        "$ref": "#/$defs/StageSummary"
+      },
+      "maxItems": 6,
+      "title": "Stages",
+      "type": "array"
+    },
+    "verdict": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Verdict"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema",
+    "schema_version",
+    "record_id",
+    "lineage",
+    "article",
+    "run",
+    "verdict",
+    "flags",
+    "findings",
+    "classification",
+    "stages",
+    "evidence",
+    "error",
+    "notice"
+  ],
+  "title": "karakutu-ai-audit audit record v2",
+  "type": "object"
+}

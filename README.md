@@ -65,7 +65,7 @@ Connection settings holds the optional in-memory API token.
 | [Architecture](docs/architecture.md) | How the parts fit, with links to the code, and a glossary |
 | [Workflow](docs/workflow.md) | The six steps, the verdict rules, and how to change a prompt or rule |
 | [Data and API](docs/data-and-api.md) | Storage, every API route, access control and data hygiene |
-| [Audit record schema](docs/audit-record-schema.md) | The versioned record a finished audit posts to karakutu |
+| [Audit record schema](docs/audit-record-schema.md) | Lean v2 results, record limits and explicit private review details |
 | [Contributing](docs/contributing.md) | Dev setup, the six checks, tests, and the rules for changes |
 | [Web UI](web/README.md) | How the review UI is built |
 | [Changelog](CHANGELOG.md) | What changed |

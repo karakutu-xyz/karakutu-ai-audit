@@ -129,7 +129,7 @@ def test_only_the_quoted_json_schema_dialect_is_exempt_in_the_record_contract():
     host = "json-" + "schema" + ".org"
     dialect = "https:" + SLASHES + host + "/draft/2020-12/schema"
     line = f'  "$schema": "{dialect}",'
-    for name in ("docs/audit-record.v1.schema.json", "backend/audit/record.py"):
+    for name in ("docs/audit-record.v2.schema.json", "backend/audit/record.py"):
         assert kinds(name, line) == set()
         assert kinds(name, f'  "$id": "https:{SLASHES}{host}/other",') & {"URL on a real host"}
         assert kinds(name, line + " https:" + SLASHES + REAL) & {"URL on a real host"}

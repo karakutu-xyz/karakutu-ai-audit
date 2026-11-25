@@ -108,7 +108,7 @@ port_free() { ! python3 -c 'import socket,sys; s=socket.socket(); s.settimeout(1
 wait_run() {  # wait_run RUN_ID [auth header] -> final status; body holds the run
   local id=$1 i status
   for i in $(seq 1 120); do
-    if [ -n "${2:-}" ]; then http GET "/api/runs/$id" -H "$2" >/dev/null; else http GET "/api/runs/$id" >/dev/null; fi
+    if [ -n "${2:-}" ]; then http GET "/api/runs/$id/details" -H "$2" >/dev/null; else http GET "/api/runs/$id/details" >/dev/null; fi
     status=$(json 'd["status"]')
     case $status in succeeded|failed|cancelled) echo "$status"; return 0 ;; esac
     sleep 2
@@ -257,7 +257,7 @@ http GET "/api/runs?category=benchmark" >/dev/null
 check "demo runs are listed ($(json 'd["total"]'))" test "$(json 'sum(r["id"].startswith("run_demo_") for r in d["items"]) > 0')" = True
 code=$(http POST /api/benchmarks/runs -H 'Content-Type: application/json' --data "$(benchmark_body 'Smoke test-mode case' "$STORY")")
 check "test-mode benchmark accepted ($code)" test "$code" = 202
-id=$(json 'd["id"]')
+id=$(json 'd["run"]["id"]')
 status=$(wait_run "$id")
 check "test-mode benchmark finished ($status, $(json 'd["verdict"]'))" test "$status" = succeeded
 API=$UI
@@ -322,7 +322,7 @@ check "per-step model assignment accepted ($code)" test "$code" = 200
 
 code=$(http POST /api/benchmarks/runs -H "$AUTH" -H 'Content-Type: application/json' --data "$(benchmark_body 'Smoke live case' "$STORY")")
 check "live benchmark accepted ($code)" test "$code" = 202
-live_id=$(json 'd["id"]')
+live_id=$(json 'd["run"]["id"]')
 status=$(wait_run "$live_id" "$AUTH")
 log "      live run $status, verdict $(json 'd["verdict"]'), error $(json '(d.get("error") or {}).get("code")')"
 # The fake model's answers and the unreachable .example article make this deterministic.
@@ -338,23 +338,23 @@ check "json_schema was rejected, then json_object parsed" \
 stage "persistence and interruption"
 code=$(http POST /api/benchmarks/runs -H "$AUTH" -H 'Content-Type: application/json' \
   --data "$(benchmark_body 'Smoke slow case' "SMOKE-SLOW $STORY")")
-slow_id=$(json 'd["id"]')
+slow_id=$(json 'd["run"]["id"]')
 for i in $(seq 1 30); do
-  http GET "/api/runs/$slow_id" -H "$AUTH" >/dev/null
+  http GET "/api/runs/$slow_id/details" -H "$AUTH" >/dev/null
   [ "$(json 'd["status"]')" = running ] && break
   sleep 1
 done
 check "slow run is running before the restart" test "$(json 'd["status"]')" = running
 "${LIVE[@]}" restart karakutu-audit-api >/dev/null
 wait_health
-http GET "/api/runs/$live_id" -H "$AUTH" >/dev/null
+http GET "/api/runs/$live_id/details" -H "$AUTH" >/dev/null
 check "finished run survives an API restart" test "$(json 'd["status"]')" = "$status"
-http GET "/api/runs/$slow_id" -H "$AUTH" >/dev/null
+http GET "/api/runs/$slow_id/details" -H "$AUTH" >/dev/null
 check "run in flight during the restart is marked interrupted" \
   test "$(json 'd["status"] + "/" + ((d.get("error") or {}).get("code") or "")')" = failed/interrupted
 "${LIVE[@]}" down >/dev/null 2>&1
 "${LIVE[@]}" up -d --wait karakutu-fake-model karakutu-audit-api karakutu-audit-web >/dev/null
-http GET "/api/runs/$live_id" -H "$AUTH" >/dev/null
+http GET "/api/runs/$live_id/details" -H "$AUTH" >/dev/null
 check "runs survive down/up in the named volume" test "$(json 'd["id"]')" = "$live_id"
 
 # --- backup and restore (the documented make targets) --------------------------------------
@@ -368,7 +368,7 @@ check "make backup wrote an archive" test -s "$backup_file"
 check "API is back after the backup" wait_health
 code=$(http POST /api/benchmarks/runs -H "$AUTH" -H 'Content-Type: application/json' \
   --data "$(benchmark_body 'Smoke after backup' "$STORY")")
-after_id=$(json 'd["id"]')
+after_id=$(json 'd["run"]["id"]')
 check "a run created after the backup is accepted ($code)" test "$code" = 202
 wait_run "$after_id" "$AUTH" >/dev/null
 head -c 200 "$backup_file" > "$WORK/damaged.tar.gz"
@@ -378,12 +378,12 @@ damaged_exit=$?
 set -e
 check "make restore refuses a damaged archive (exit $damaged_exit)" test "$damaged_exit" -ne 0
 check "API is running again after the refused restore" wait_health
-check "the refused restore left the newer run in place" test "$(http GET "/api/runs/$after_id" -H "$AUTH")" = 200
+check "the refused restore left the newer run in place" test "$(http GET "/api/runs/$after_id/details" -H "$AUTH")" = 200
 make --no-print-directory restore "${BACKUPVARS[@]}" BACKUP_FILE="$backup_file" >/dev/null
 check "API is back after the restore" wait_health
-check "restored data holds the runs from the backup" test "$(http GET "/api/runs/$live_id" -H "$AUTH")" = 200
+check "restored data holds the runs from the backup" test "$(http GET "/api/runs/$live_id/details" -H "$AUTH")" = 200
 check "restored data no longer holds the run made after the backup" \
-  test "$(http GET "/api/runs/$after_id" -H "$AUTH")" = 404
+  test "$(http GET "/api/runs/$after_id/details" -H "$AUTH")" = 404
 "${LIVE[@]}" down --volumes >/dev/null 2>&1
 API=$API_DIRECT
 
@@ -409,12 +409,12 @@ except u.HTTPError as e: print(e.code, e.read().decode())' "$@"
     docker run -d --name "$upgrade_container" --network none -e DATA_DIR=/data -v "$upgrade_volume:/data" "$P-old-api" >/dev/null
     wait_inside
     inside POST /api/benchmarks/runs "$(benchmark_body 'Smoke upgrade case' "$STORY")" | cut -d' ' -f2- > "$WORK/body"
-    old_id=$(json 'd["id"]')
+    old_id=$(json 'd.get("run", d)["id"]')
     sleep 5
     docker rm -f "$upgrade_container" >/dev/null
     docker run -d --name "$upgrade_container" --network none -e DATA_DIR=/data -v "$upgrade_volume:/data" "$SMOKE_API_IMAGE" >/dev/null
     check "current image starts on the older volume" wait_inside
-    inside GET "/api/runs/$old_id" | cut -d' ' -f2- > "$WORK/body"
+    inside GET "/api/runs/$old_id/details" | cut -d' ' -f2- > "$WORK/body"
     check "run created by the older image is still there" test "$(json 'd["id"]')" = "$old_id"
     versions=$(docker exec "$upgrade_container" python -c 'import sqlite3
 from audit.db import SCHEMA_VERSION

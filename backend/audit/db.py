@@ -572,9 +572,27 @@ class Store:
             if row is None:
                 return None
             result = {**self._summary(session, row), **{name: getattr(row, name) for name in ["article_ref", "input", "output", "steps", "model", "error", "expected_verdict"]}}
+            result["article_archive_id"] = session.scalar(
+                select(ArticleRow.archive_id).where(ArticleRow.ref == row.article_ref)
+            ) if row.article_ref else None
             from audit.run_summary import summarize_run
             result["summary"] = summarize_run(result)
             return result
+
+    def previous_record_run_id(self, run: dict) -> str | None:
+        """Lineage needs only one ID; never load historical payloads or review data."""
+        if (run["category"] != "live" or not run.get("article_ref")
+                or run["status"] not in {"succeeded", "failed"} or not run.get("finished_at")):
+            return None
+        with Session(self.engine) as session:
+            return session.scalar(select(Run.id).where(
+                Run.article_ref == run["article_ref"], Run.category == "live",
+                Run.status.in_(["succeeded", "failed"]), Run.finished_at.is_not(None),
+                Run.created_at < run["created_at"],
+                Run.id.not_like("run_demo_%"),
+                or_(and_(Run.output.is_not(None), cast(Run.output, Text) != "null"),
+                    Run.error["code"].as_string() == "audit_failed"),
+            ).order_by(Run.created_at.desc(), Run.id.desc()).limit(1))
 
     def runs(self, *, category: str | None = None, limit: int = 50, offset: int = 0,
              verdict: str | None = None, workflow_id: str | None = None,
