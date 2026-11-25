@@ -25,7 +25,7 @@ import tokenize
 
 root = Path(__file__).resolve().parents[1]
 allowed_json = {"web/package.json", "web/package-lock.json", "web/tsconfig.json", "web/tsconfig.app.json", "web/tsconfig.node.json", "openapi.json",
-                "docs/audit-record.v1.schema.json"}
+                "docs/audit-record.v2.schema.json"}
 private_dirs = {"data", "datasets", "fixtures", "testdata", "test-data", "benchmarks", "live", "reports", "exports", "artifacts", "runs", "private"}
 private_suffixes = {".json", ".jsonl", ".ndjson", ".csv", ".tsv", ".parquet", ".arrow", ".db", ".sqlite", ".sqlite3", ".jwk", ".pem"}
 probes = ["data/benchmark/case.json", "data/live/run.json", "tests/fixtures/article.json", "reports/review.html", "exports/run.json", "unplaced-article.json", "local.sqlite3-wal", ".env"]
@@ -66,7 +66,7 @@ project_clone = re.compile(r"git clone https://github[.]com/karakutu-xyz/karakut
 # The JSON Schema dialect identifier of the audit record contract. Only this exact string, and
 # only in the two files that declare it, is exempt; every other URL there stays scanned.
 json_schema_dialect = "https://json-schema" + ".org/draft/2020-12/schema"  # split: self-scan
-json_schema_files = {"backend/audit/record.py", "docs/audit-record.v1.schema.json"}
+json_schema_files = {"backend/audit/record.py", "docs/audit-record.v2.schema.json"}
 
 
 def path_violations(paths):

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useApi, useRunControl } from "../api/hooks";
 import { StopAuditsDialog } from "../dialogs/StopAuditsDialog";
-import type { Run, RunStatus } from "../types";
+import type { AuditResult, RunStatus } from "../types";
 
 export function StopRunButton({
   run,
@@ -9,7 +9,7 @@ export function StopRunButton({
   variant = "default",
 }: {
   run: { id: string; status: RunStatus };
-  onStopped?: (run: Run) => void;
+  onStopped?: (run: AuditResult) => void;
   variant?: "default" | "compact";
 }) {
   const { token, epoch } = useApi();
@@ -20,7 +20,7 @@ export function StopRunButton({
   const compact = variant === "compact";
 
   async function stop() {
-    if (await mutate<Run>(
+    if (await mutate<AuditResult>(
       `/api/runs/${encodeURIComponent(run.id)}/cancel`, onStopped,
     )) {
       setOpen(false);

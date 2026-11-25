@@ -576,6 +576,21 @@ class Store:
             result["summary"] = summarize_run(result)
             return result
 
+    def previous_record_run_id(self, run: dict) -> str | None:
+        """Lineage needs only one ID; never load historical payloads or review data."""
+        if (run["category"] != "live" or not run.get("article_ref")
+                or run["status"] not in {"succeeded", "failed"} or not run.get("finished_at")):
+            return None
+        with Session(self.engine) as session:
+            return session.scalar(select(Run.id).where(
+                Run.article_ref == run["article_ref"], Run.category == "live",
+                Run.status.in_(["succeeded", "failed"]), Run.finished_at.is_not(None),
+                Run.created_at < run["created_at"],
+                Run.id.not_like("run_demo_%"),
+                or_(and_(Run.output.is_not(None), cast(Run.output, Text) != "null"),
+                    Run.error["code"].as_string() == "audit_failed"),
+            ).order_by(Run.created_at.desc(), Run.id.desc()).limit(1))
+
     def runs(self, *, category: str | None = None, limit: int = 50, offset: int = 0,
              verdict: str | None = None, workflow_id: str | None = None,
              status: str | None = None, origin: str | None = None) -> dict:

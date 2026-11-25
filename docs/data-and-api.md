@@ -174,24 +174,25 @@ The generated [OpenAPI contract](../openapi.json) documents validation schemas a
 | `GET /api/prompts/{name}/diff?from=<v>&to=<v>` | Unified diff preserving line endings. |
 | `GET /api/workflow` | Current immutable workflow snapshot. |
 | `GET /api/workflows/{id}` | Snapshot used by a historical run. |
-| `POST /api/benchmarks/runs` | Submit a benchmark, return 202 and its queued run. |
+| `POST /api/benchmarks/runs` | Submit a benchmark, return 202 and its lean queued `AuditResult`. |
 | `POST /api/audit` | Submit a **live** run; disabled by default. |
 | `POST /api/webhooks/audit` | Submit a **live** webhook run; disabled by default. |
 | `GET /api/articles` | Paginated articles with latest audit status/verdict, run count and activity. |
 | `GET /api/articles/{ref}` | Stored content, archive metadata/links and newest-first run history with computed summaries; unknown refs return 404. |
-| `POST /api/articles/{ref}/audit` | First audit or re-run; 202 `RunDetail`, origin `article`; preserves every previous run. |
+| `POST /api/articles/{ref}/audit` | First audit or re-run; 202 `AuditResult`, origin `article`; preserves every previous run. |
 | `POST /api/articles/import?days=30` | Read archive audit listings and upsert local article metadata; 200 `{imported, updated, skipped}`. |
 | `GET /api/runs` | Filter/paginate by category, origin, status, verdict and workflow ID. |
-| `GET /api/runs/{id}` | Complete run with stage and model/evidence records. |
-| `POST /api/runs/{id}/cancel` | Stop a queued/running audit; return 200 `RunDetail`. |
+| `GET /api/runs/{id}` | Read the lean `AuditResult`; full review data requires `/details`. |
+| `GET /api/runs/{id}/details` | Read full `RunDetail`, including input, output, steps, evidence and model calls. |
+| `POST /api/runs/{id}/cancel` | Stop a queued/running audit; return 200 `AuditResult`. |
 | `GET /api/queue` | Queue pause flag, concurrency limit and oldest-first running/queued run IDs. |
 | `POST /api/queue/pause` | Hold queued and new submissions; running audits continue. Return `QueueState`. |
 | `POST /api/queue/resume` | Release queued work; return `QueueState`. |
 | `POST /api/queue/cancel?include_running=false` | Stop queued audits; optionally include running audits. Return `{cancelled: [run IDs]}`. |
-| `GET /api/runs/{id}/export` | Download the same local review record. |
+| `GET /api/runs/{id}/export` | Download the full local review record, including exact transcripts. |
 | `POST /api/runs/{id}/reactions` | Append `agree`, `disagree` or `needs_review`, reviewer and note. |
 
-Run submission accepts `removed_article: {url, title, content, published_at?}`, `similar_articles` (up to five), optional `label`, and optional `expected_verdict`. Poll the returned run ID until status is `succeeded`, `failed` or `cancelled`. `AUDIT_FAILED` is a failed execution, not a substantive finding.
+Run submission accepts `removed_article: {url, title, content, published_at?}`, `similar_articles` (up to five), optional `label`, and optional `expected_verdict`. Poll `GET /api/runs/{id}` using the returned `run.id` until `run.status` is `succeeded`, `failed` or `cancelled`. `AUDIT_FAILED` is a failed execution, not a substantive finding.
 
 ### Run and queue controls
 
@@ -355,7 +356,21 @@ local import/enrichment never mutates the archive.
 
 This is an intentionally changed API: the old synchronous `/api/audit` response and `/api/v1/articles/...` publishing jobs are archived. New `/api/audit` is asynchronous, persisted and live-gated. Consumers must explicitly migrate; no silent compatibility facade publishes to Karakutu.
 
-A finished live run serializes to the versioned [audit record](audit-record-schema.md) that will be posted to karakutu (`backend/audit/record.py`). Benchmark, unfinished and interrupted runs never serialize. No route posts records yet; `GET /api/runs/{id}/export` remains the local review record, with reactions and exact transcripts.
+All audit-submission POSTs, benchmark submission and individual cancellation return the
+lean `AuditResult` defined in [the v2 result contract](audit-record-schema.md).
+`GET /api/runs/{id}` returns the same shape: article identity and content hash, run
+metadata with a workflow pointer, nullable verdict, bounded findings, classification,
+stage summaries and typed evidence. It has no article text, input, steps, prompts or
+model calls. Submission returns 202 with queued metadata under `run`, `record_id: null`,
+`verdict: null` and `stages: []`. Clients navigate using `run.id`.
+
+A finished live run with a stored result can serialize to the v2 record for karakutu.
+Benchmark, queued, running, cancelled and interrupted runs produce no record; their API
+result has `record_id: null`. Finished API records use initial lineage or point to the
+latest earlier finished live result for the same article. No route posts records yet.
+Full `RunDetail` review data is available only through `GET /api/runs/{id}/details` and
+the explicit `GET /api/runs/{id}/export` download. The review UI polls `/details`.
+Authentication, rate limits and unknown-ID 404 behavior are unchanged.
 
 The editable names are `relevance`, `classification_coarse`, `classification_fine`, `source`, `web_search`, and `related_removals`. Prompt text must be a valid UTF-8 string, nonblank, at most 20,000 characters, without NUL, and retain the registry's required output tokens and `GUARDRAIL` section marker (or `NONE` for related removals). Author is 1–120 characters; note is at most 2,000. Validation returns 422 with safe codes, including `missing_token:<token>`; it never echoes prompt text. Duplicate text for the same name returns 409 `duplicate_version`; activate the existing version instead. Rollback without a previous distinct version returns 409 `no_previous_version`. Unknown names/versions return 404. Prompt summaries omit text; individual versions and the current/historical workflow snapshots contain exact text.
 

@@ -484,27 +484,28 @@ def test_benchmark_api_fields_report_and_summary(
     monkeypatch.setattr(module, "load_dotenv", lambda *a, **kw: None)
     submitted = []
 
+    saved = {}
+
     def handler(request):
+        if request.method == "GET":
+            assert request.url.path == f"/api/runs/{len(submitted)}/details"
+            return httpx.Response(200, json=saved[str(len(submitted))])
         assert request.method == "POST"
+        assert request.url.path == "/api/benchmarks/runs"
         case = json.loads(request.content)
         submitted.append(case)
         RunInput.model_validate(case)
-        return httpx.Response(
-            200,
-            json={
-                **run(
-                    case["label"],
-                    case.get("expected_verdict", "INCONCLUSIVE"),
-                    workflow="measured",
-                    expected=case.get("expected_verdict"),
-                    relevant="fail"
-                    if case.get("expected_verdict")
-                    == "LIKELY_LOW_PUBLIC_INTEREST"
-                    else "pass",
-                ),
-                "id": str(len(submitted)),
-            },
-        )
+        run_id = str(len(submitted))
+        saved[run_id] = {
+            **run(
+                case["label"], case.get("expected_verdict", "INCONCLUSIVE"),
+                workflow="measured", expected=case.get("expected_verdict"),
+                relevant="fail" if case.get("expected_verdict")
+                == "LIKELY_LOW_PUBLIC_INTEREST" else "pass",
+            ),
+            "id": run_id,
+        }
+        return httpx.Response(202, json={"run": {"id": run_id, "status": "queued"}})
 
     real_client = httpx.Client
     monkeypatch.setattr(

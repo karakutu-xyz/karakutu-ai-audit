@@ -1,6 +1,6 @@
 import { useCallback, useState, useEffect, useRef, type FormEvent } from "react";
 import { request, errorMessage } from "../api/client";
-import type { Run } from "../types";
+import type { AuditResult } from "../types";
 import { Icon } from "../components/Icon";
 import { Modal } from "../components/Modal";
 import { ErrorState as ErrorBox } from "../components/ErrorState";
@@ -13,7 +13,7 @@ export function CreateBenchmarkDialog({
 }: {
   token: string;
   onClose: () => void;
-  onCreated: (run: Run) => void;
+  onCreated: (run: AuditResult) => void;
 }) {
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
@@ -50,7 +50,7 @@ export function CreateBenchmarkDialog({
     setSaving(true);
     setError("");
     try {
-      const run = await request<Run>("/api/benchmarks/runs", token, {
+      const run = await request<AuditResult>("/api/benchmarks/runs", token, {
         signal: current.signal,
         method: "POST",
         body: JSON.stringify({

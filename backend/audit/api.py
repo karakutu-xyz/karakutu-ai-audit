@@ -24,10 +24,12 @@ from audit.config import MODEL_STEPS, Settings, canonical_request_host
 from audit.db import ArticleStoreError, PromptStoreError, Store
 from audit.domain import AuditRequest, Verdict
 from audit.engine import AuditEngine
+from audit.record import build_result
 from audit.provenance import build_base, models_from_config, with_prompts
 from audit.schemas import (
     ArticleDetail, ArticleList, ArticleImported, ArticleStatus,
-    Health, Reaction, ReactionInput, RunDetail, RunInput, RunList, SafeErrorResponse, ServiceStatus,
+    AuditResult, Health, Reaction, ReactionInput, RunDetail, RunInput, RunList,
+    SafeErrorResponse, ServiceStatus,
     WorkflowSnapshot, PromptList, PromptDetail, PromptVersion, PromptVersionInput,
     ModelList, ModelStepInput, ModelAssigned, QueueState, QueueCancelled,
     PromptActivateInput, PromptAuthorInput, PromptActivated, PromptDiff,
@@ -421,7 +423,16 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
             raise HTTPException(404)
         return result
 
-    @app.get("/api/runs/{run_id}", response_model=RunDetail)
+    def lean_result(run):
+        previous = app.state.store.previous_record_run_id(run)
+        lineage = {"kind": "re_audit", "previous_record_id": previous + ".r0"} if previous else None
+        return build_result(run, lineage=lineage)
+
+    @app.get("/api/runs/{run_id}", response_model=AuditResult)
+    async def run_result(run_id: str):
+        return lean_result(run_or_404(run_id))
+
+    @app.get("/api/runs/{run_id}/details", response_model=RunDetail)
     async def run_detail(run_id: str):
         return run_or_404(run_id)
 
@@ -487,7 +498,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
                 completed.exception()
 
         task.add_done_callback(task_finished)
-        return run
+        return lean_result(run)
 
     async def cancel_active_run(run_id: str) -> dict | None:
         # Serialize overlapping individual/bulk stops so only one request wins.
@@ -506,12 +517,12 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
             run = run_or_404(run_id)
             return run if run["status"] == "cancelled" else None
 
-    @app.post("/api/runs/{run_id}/cancel", response_model=RunDetail)
+    @app.post("/api/runs/{run_id}/cancel", response_model=AuditResult)
     async def cancel_run(run_id: str):
         run = await cancel_active_run(run_id)
         if run is None:
             return JSONResponse(status_code=409, content={"error": {"code": "run_not_active"}})
-        return run
+        return lean_result(run)
 
     def queue_state() -> dict:
         return {"paused": app.state.queue_paused,
@@ -624,7 +635,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
         result["links"] = {"original_url": result["url"], "archive_url": None}
         return result
 
-    @app.post("/api/articles/{ref}/audit", status_code=202, response_model=RunDetail)
+    @app.post("/api/articles/{ref}/audit", status_code=202, response_model=AuditResult)
     async def article_audit(ref: str):
         async with app.state.article_lock:
             article = article_or_404(ref)
@@ -633,15 +644,15 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
             # Store re-reads the article and checks for active work under the database writer lock.
             return submit(None, article["category"], "article", article_ref=ref)
 
-    @app.post("/api/benchmarks/runs", status_code=202, response_model=RunDetail)
+    @app.post("/api/benchmarks/runs", status_code=202, response_model=AuditResult)
     async def benchmark(body: RunInput):
         return submit(body, "benchmark", "benchmark")
 
-    @app.post("/api/audit", status_code=202, response_model=RunDetail)
+    @app.post("/api/audit", status_code=202, response_model=AuditResult)
     async def audit(body: RunInput):
         return submit(body, "live", "api")
 
-    @app.post("/api/webhooks/audit", status_code=202, response_model=RunDetail)
+    @app.post("/api/webhooks/audit", status_code=202, response_model=AuditResult)
     async def webhook(body: RunInput):
         return submit(body, "live", "webhook")
 

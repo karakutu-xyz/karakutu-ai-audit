@@ -199,7 +199,7 @@ const pollRun = (run: Run) => pending(run.status);
 
 export function useRun(id: string | null) {
   return useResource<Run>(
-    id ? `/api/runs/${encodeURIComponent(id)}` : null, 1500, pollRun,
+    id ? `/api/runs/${encodeURIComponent(id)}/details` : null, 1500, pollRun,
   );
 }
 

@@ -202,6 +202,22 @@ const baseRun = {
   reactions: [],
 };
 
+function resultFixture(run = baseRun) {
+  return {
+    schema: "karakutu-ai-audit/audit-result", schema_version: "2.0",
+    record_id: null, lineage: null,
+    article: { ref: "ref_fictional", archive_id: null,
+      url: "https://news.example/fictional", content_sha256: "a".repeat(64) },
+    run: { id: run.id, origin: run.origin ?? "benchmark", category: run.category,
+      status: run.status, created_at: run.created_at, finished_at: run.finished_at,
+      workflow_id: run.workflow_id },
+    verdict: run.verdict, flags: [], findings: null, classification: null,
+    stages: [], evidence: null, error: null,
+    notice: "Machine triage record. No verdict, including POSSIBLE_CENSORSHIP, " +
+      "is a finding of censorship; a person decides on independent evidence.",
+  };
+}
+
 test("route matching decodes identifiers and rejects malformed or unknown addresses", () => {
   for (const name of ["articles", "runs", "benchmarks", "settings"]) {
     assert.equal(router.matchRoute(`/${name}`).name, name);
@@ -930,6 +946,7 @@ for (const [name, argument, data] of [
 test("run polling handles visibility, overlap, completion and manual refresh", async () => {
   const harness = resourceHarness();
   harness.render("useRun", baseRun.id);
+  assert.equal(harness.requests[0].path, `/api/runs/${baseRun.id}/details`);
   assert.equal([...harness.timers.values()][0].interval, 1500);
   harness.poll();
   assert.equal(harness.requests.length, 1);
@@ -2211,8 +2228,11 @@ test("article rail offers Stop audit only while the latest audit is queued or ru
     assert.equal(control.props.run.status, status);
     const before = harness.refreshes;
     const stopped = { ...baseRun, id: latest.id, status: "cancelled", verdict: null };
-    control.props.onStopped(stopped);
-    assert.equal(harness.run, stopped);
+    harness.setRun({ ...latest, steps: [], input: {}, output: null });
+    harness.render();
+    harness.stopControl().props.onStopped(resultFixture(stopped));
+    assert.equal(harness.run.id, stopped.id);
+    assert.equal(harness.run.status, "cancelled");
     assert.equal(harness.api.articlesCache.size, 0);
     assert.equal(harness.refreshes, before + 1);
     harness.unmount();
@@ -2301,7 +2321,7 @@ test("article POST presents the accepted run immediately and preserves history",
   const accepted = { ...baseRun, id: "run_new", origin: "article", status: "queued",
     verdict: null, summary: fictionalStory({ verdict: null, steps: [] }) };
   assert.equal(harness.requests[0].ref, "ref_fictional");
-  harness.requests[0].resolve(accepted);
+  harness.requests[0].resolve(resultFixture(accepted));
   await action;
   const html = harness.render();
   assert.equal(harness.article.runs[0].id, "run_new");
@@ -2467,7 +2487,7 @@ test("stop controls confirm before mutations and refresh after success", async (
     error: "",
     mutate: async (path, onSuccess) => {
       calls.push(path);
-      onSuccess?.({ ...baseRun, status: "cancelled", verdict: null });
+      onSuccess?.(resultFixture({ ...baseRun, status: "cancelled", verdict: null }));
       return true;
     },
   });
@@ -2497,7 +2517,7 @@ test("stop controls confirm before mutations and refresh after success", async (
     await dialog.props.onConfirm();
     assert.deepEqual(calls, ["/api/runs/run%20fictional/cancel"]);
     assert.equal(refreshes, 1);
-    assert.equal(stoppedRun.status, "cancelled");
+    assert.equal(stoppedRun.run.status, "cancelled");
     tree = control.render();
     assert.equal(findNode(tree, (node) => typeof node.type === "function"), null);
   } finally {

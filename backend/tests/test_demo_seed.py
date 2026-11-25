@@ -225,7 +225,7 @@ def test_seeded_workflows_and_prompt_history_through_api(tmp_path):
                 definition = workflow.json()["definition"]
                 assert bool(definition["prompts"] == app.state.store.workflow(f"wf_demo_v{version}")["definition"]["prompts"])
                 assert definition["models"]["steps"]["source"] == "demo-model-large"
-                run = client.get(f"/api/runs/run_demo_reservoir_v{version}")
+                run = client.get(f"/api/runs/run_demo_reservoir_v{version}/details")
                 assert run.status_code == 200
                 assert run.json()["workflow_id"] == workflow.json()["id"]
                 assert run.json()["steps"][2]["model"] == "demo-model-small"

@@ -4,6 +4,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
+from audit.record import AuditResult as AuditResult
 from audit.clients.karakutu import ArchiveState
 from audit.search.base import SearchState
 from audit.domain import Article, AuditRequest, AuditResponse, StageName, Verdict

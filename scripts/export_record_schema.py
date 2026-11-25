@@ -9,7 +9,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--check", action="store_true")
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
-path = root / "docs" / "audit-record.v1.schema.json"
+path = root / "docs" / "audit-record.v2.schema.json"
 value = json.dumps(record_json_schema(), indent=2, sort_keys=True) + "\n"
 if args.check:
     if not path.exists() or path.read_text(encoding="utf-8") != value:
@@ -17,4 +17,4 @@ if args.check:
     print("Audit record schema matches the models.")
 else:
     path.write_text(value, encoding="utf-8")
-    print("Wrote docs/audit-record.v1.schema.json.")
+    print("Wrote docs/audit-record.v2.schema.json.")

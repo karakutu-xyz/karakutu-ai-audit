@@ -381,3 +381,44 @@ def test_terminal_result_cannot_be_overwritten(tmp_path, failed, database_url):
     store.complete_run(run_id, {"response": {"verdict": "MOVED"}})
     assert store.run(run_id) == before
     store.close()
+
+
+def test_record_lineage_selects_only_latest_eligible_id(database_url):
+    from sqlalchemy import event
+
+    store = Store(database_url)
+    workflow(store)
+    try:
+        def saved(day, *, category="live", state="succeeded", error=None, output=None):
+            row = store.create_run(workflow_id="wf_test", category=category,
+                                   origin="api", input=INPUT)
+            store._update(row["id"], created_at=f"2026-11-{day:02}T00:00:00+00:00",
+                          finished_at=f"2026-11-{day:02}T00:01:00+00:00", status=state,
+                          output=output, error=error)
+            return store.run(row["id"])
+
+        first = saved(1, output={"verdict": "INCONCLUSIVE"})
+        previous = saved(2, state="failed", error={"code": "audit_failed", "message": "Fixed failure."})
+        saved(3, category="benchmark", output={"verdict": "INCONCLUSIVE"})
+        saved(4, state="failed", error={"code": "interrupted", "message": "Fixed interruption."})
+        saved(5, state="cancelled")
+        saved(6)  # No stored result.
+        current = saved(7, output={"verdict": "INCONCLUSIVE"})
+        saved(8, output={"verdict": "INCONCLUSIVE"})  # A later run is never an ancestor.
+        saved(7, output={"verdict": "INCONCLUSIVE"})  # Equal creation times are not earlier.
+        statements = []
+
+        def capture(_conn, _cursor, statement, _parameters, _context, _many):
+            statements.append(statement)
+
+        event.listen(store.engine, "before_cursor_execute", capture)
+        assert store.previous_record_run_id(current) == previous["id"]
+        assert len(statements) == 1
+        projection = statements[0].split("FROM", 1)[0].strip()
+        assert projection == "SELECT runs.id"
+        event.remove(store.engine, "before_cursor_execute", capture)
+        assert store.previous_record_run_id(first) is None
+        assert store.previous_record_run_id({**current, "article_ref": None}) is None
+        assert store.previous_record_run_id({**current, "category": "benchmark"}) is None
+    finally:
+        store.close()

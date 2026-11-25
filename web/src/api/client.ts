@@ -1,4 +1,4 @@
-import type { ArticleImported, Run } from "../types";
+import type { ArticleImported, AuditResult } from "../types";
 
 export class ApiError extends Error {
   /** The server's safe error code (`{"error": {"code": ...}}`), when it sent one. */
@@ -64,7 +64,7 @@ export function errorMessage(error: unknown): string {
 }
 
 export function auditArticle(ref: string, token: string, signal: AbortSignal) {
-  return request<Run>(`/api/articles/${encodeURIComponent(ref)}/audit`, token, {
+  return request<AuditResult>(`/api/articles/${encodeURIComponent(ref)}/audit`, token, {
     method: "POST", signal,
   });
 }

@@ -61,7 +61,7 @@ def settings(tmp_path, **kwargs):
 
 def finished(client, run_id):
     for _ in range(100):
-        run = client.get(f"/api/runs/{run_id}", headers=AUTH).json()
+        run = client.get(f"/api/runs/{run_id}/details", headers=AUTH).json()
         if run["status"] in {"succeeded", "failed", "cancelled"}:
             return run
         time.sleep(0.01)
@@ -81,7 +81,7 @@ def test_benchmark_workflow_reaction_export_and_restart(tmp_path, database_url):
         assert client.get("/api/workflows/" + workflow["id"]).json() == workflow
         response = client.post("/api/benchmarks/runs", json=BODY)
         assert response.status_code == 202
-        queued = response.json()
+        queued = response.json()["run"]
         assert queued["status"] == "queued"
         assert queued["category"] == "benchmark"
         run = finished(client, queued["id"])
@@ -104,7 +104,7 @@ def test_benchmark_workflow_reaction_export_and_restart(tmp_path, database_url):
     changed_engine = FakeEngine()
     changed_engine.public_config = {**FakeEngine.public_config, "model_name": "alternate-fabricated-model"}
     with TestClient(create_app(config, changed_engine)) as client:
-        assert client.get(f'/api/runs/{run["id"]}').json() == exported.json()
+        assert client.get(f'/api/runs/{run["id"]}/details').json() == exported.json()
         assert client.get("/api/workflow").json()["id"] != workflow["id"]
         assert client.get("/api/workflows/" + workflow["id"]).json() == workflow
 
@@ -120,7 +120,7 @@ def test_live_disabled_precedes_auth_and_validation(tmp_path, route, database_ur
 
 def test_auth_precedes_validation_and_protects_all_api_routes(tmp_path, database_url):
     with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, live_ingestion_enabled=True), FakeEngine())) as client:
-        for path in ["/api/status", "/api/workflow", "/api/workflows/missing", "/api/runs", "/api/runs/missing", "/api/runs/missing/export"]:
+        for path in ["/api/status", "/api/workflow", "/api/workflows/missing", "/api/runs", "/api/runs/missing", "/api/runs/missing/details", "/api/runs/missing/export"]:
             assert client.get(path).status_code == 401
             assert client.get(path, headers={"Authorization": "Bearer wrong"}).status_code == 401
         for path in ["/api/audit", "/api/webhooks/audit", "/api/benchmarks/runs", "/api/runs/missing/reactions"]:
@@ -141,9 +141,9 @@ def test_live_category_and_origin_are_server_assigned(tmp_path, database_url):
         for route, origin in [("/api/audit", "api"), ("/api/webhooks/audit", "webhook"), ("/api/benchmarks/runs", "benchmark")]:
             response = client.post(route, json=BODY, headers=AUTH)
             assert response.status_code == 202
-            assert response.json()["origin"] == origin
-            assert response.json()["category"] == ("benchmark" if origin == "benchmark" else "live")
-            finished(client, response.json()["id"])
+            assert response.json()["run"]["origin"] == origin
+            assert response.json()["run"]["category"] == ("benchmark" if origin == "benchmark" else "live")
+            finished(client, response.json()["run"]["id"])
         assert client.get("/api/runs?category=live", headers=AUTH).json()["total"] == 2
         for query, total in [
             ("status=succeeded", 3),
@@ -187,7 +187,7 @@ def test_safe_validation_body_limits_and_origin(tmp_path, database_url):
 
 def test_failure_retains_completed_steps_and_safe_error(tmp_path, database_url):
     with TestClient(create_app(settings(tmp_path, database_url=database_url), FakeEngine(fail=True))) as client:
-        run_id = client.post("/api/benchmarks/runs", json=BODY).json()["id"]
+        run_id = client.post("/api/benchmarks/runs", json=BODY).json()["run"]["id"]
         run = finished(client, run_id)
         assert run["status"] == "failed"
         assert run["output"] is None
@@ -201,19 +201,19 @@ def test_cancellation_marks_interrupted_and_concurrency_is_bounded(tmp_path, dat
     engine = FakeEngine(wait=True)
     config = settings(tmp_path, database_url=database_url, max_concurrent_runs=1)
     with TestClient(create_app(config, engine)) as client:
-        ids = [client.post("/api/benchmarks/runs", json=BODY).json()["id"] for _ in range(3)]
+        ids = [client.post("/api/benchmarks/runs", json=BODY).json()["run"]["id"] for _ in range(3)]
         assert engine.peak == 1
         assert client.get("/api/runs").json()["total"] == 3
-        assert client.get(f"/api/runs/{ids[0]}").json()["status"] == "running"
-        assert client.get(f"/api/runs/{ids[1]}").json()["status"] == "queued"
+        assert client.get(f"/api/runs/{ids[0]}/details").json()["status"] == "running"
+        assert client.get(f"/api/runs/{ids[1]}/details").json()["status"] == "queued"
     with TestClient(create_app(config, FakeEngine())) as client:
         for run_id in ids:
-            assert client.get(f"/api/runs/{run_id}").json()["error"]["code"] == "interrupted"
+            assert client.get(f"/api/runs/{run_id}/details").json()["error"]["code"] == "interrupted"
 
 
 def test_missing_run_reaction_and_invalid_reviewer(tmp_path, database_url):
     with TestClient(create_app(settings(tmp_path, database_url=database_url), FakeEngine())) as client:
-        assert client.get("/api/runs/missing").status_code == 404
+        assert client.get("/api/runs/missing/details").status_code == 404
         assert client.get("/api/runs/missing/export").status_code == 404
         assert client.get("/api/workflows/missing").status_code == 404
         assert client.post("/api/runs/missing/reactions", json={"reaction": "agree", "reviewer": "Fabricated"}).status_code == 404
@@ -271,11 +271,14 @@ def test_openapi_documents_typed_run_workflow_and_reaction_outputs(tmp_path, dat
         ("/api/workflow", "get", "200", "WorkflowSnapshot"),
         ("/api/workflows/{workflow_id}", "get", "200", "WorkflowSnapshot"),
         ("/api/runs", "get", "200", "RunList"),
-        ("/api/runs/{run_id}", "get", "200", "RunDetail"),
+        ("/api/runs/{run_id}", "get", "200", "AuditResult"),
+        ("/api/runs/{run_id}/details", "get", "200", "RunDetail"),
         ("/api/runs/{run_id}/export", "get", "200", "RunDetail"),
-        ("/api/benchmarks/runs", "post", "202", "RunDetail"),
-        ("/api/audit", "post", "202", "RunDetail"),
-        ("/api/webhooks/audit", "post", "202", "RunDetail"),
+        ("/api/benchmarks/runs", "post", "202", "AuditResult"),
+        ("/api/audit", "post", "202", "AuditResult"),
+        ("/api/articles/{ref}/audit", "post", "202", "AuditResult"),
+        ("/api/runs/{run_id}/cancel", "post", "200", "AuditResult"),
+        ("/api/webhooks/audit", "post", "202", "AuditResult"),
         ("/api/runs/{run_id}/reactions", "post", "201", "Reaction"),
     ]
     for path, method, code, name in expected:
@@ -455,7 +458,7 @@ def test_prompt_lifecycle_workflow_history_and_restart(tmp_path, database_url):
             assert detail['required_tokens'] == list(REGISTRY[name].required_tokens)
             assert detail['activations'][0]['kind'] == 'seed'
             assert 'text' not in detail['versions'][0]
-        first_run = finished(client, client.post('/api/benchmarks/runs', headers=AUTH, json=BODY).json()['id'])
+        first_run = finished(client, client.post('/api/benchmarks/runs', headers=AUTH, json=BODY).json()["run"]["id"])
         text = DEFAULTS['relevance'] + '\nFabricated API instruction'
         created = client.post('/api/prompts/relevance/versions', headers=AUTH,
                               json={'text': text, 'author': 'Reviewer', 'note': 'Fabricated edit'})
@@ -469,7 +472,7 @@ def test_prompt_lifecycle_workflow_history_and_restart(tmp_path, database_url):
         assert new_id != old['id']
         new = client.get('/api/workflow', headers=AUTH).json()
         assert new['definition']['prompts']['relevance'] == text
-        second_run = finished(client, client.post('/api/benchmarks/runs', headers=AUTH, json=BODY).json()['id'])
+        second_run = finished(client, client.post('/api/benchmarks/runs', headers=AUTH, json=BODY).json()["run"]["id"])
         assert first_run['workflow_id'] == old['id']
         assert second_run['workflow_id'] == new_id
         assert engine.received_prompts == [DEFAULTS, {**DEFAULTS, 'relevance': text}]
@@ -599,18 +602,18 @@ def test_running_and_queued_runs_keep_captured_prompts(tmp_path, database_url):
     app = create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, max_concurrent_runs=1), engine)
     with TestClient(app) as client:
         old_id = client.get('/api/workflow', headers=AUTH).json()['id']
-        first = client.post('/api/benchmarks/runs', headers=AUTH, json=BODY).json()
+        first = client.post('/api/benchmarks/runs', headers=AUTH, json=BODY).json()["run"]
         for _ in range(100):
             if engine.received_prompts:
                 break
             time.sleep(.01)
         assert engine.received_prompts == [DEFAULTS]
-        queued = client.post('/api/benchmarks/runs', headers=AUTH, json=BODY).json()
+        queued = client.post('/api/benchmarks/runs', headers=AUTH, json=BODY).json()["run"]
         text = DEFAULTS['relevance'] + '\nFabricated new instruction'
         client.post('/api/prompts/relevance/versions', headers=AUTH, json={'text': text, 'author': 'Reviewer'})
         new_id = client.post('/api/prompts/relevance/activate', headers=AUTH,
                              json={'version': 2, 'author': 'Reviewer'}).json()['workflow_id']
-        latest = client.post('/api/benchmarks/runs', headers=AUTH, json=BODY).json()
+        latest = client.post('/api/benchmarks/runs', headers=AUTH, json=BODY).json()["run"]
         assert engine.received_prompts == [DEFAULTS]
         # Release the running fake, allowing both pre- and post-activation queued runs.
         engine.wait = False
@@ -786,16 +789,16 @@ def test_running_and_queued_runs_keep_captured_models_and_prompt_activation_pres
     app = create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, max_concurrent_runs=1), engine)
     with TestClient(app) as client:
         old = client.get('/api/workflow', headers=AUTH).json()
-        first = client.post('/api/benchmarks/runs', headers=AUTH, json=BODY).json()
+        first = client.post('/api/benchmarks/runs', headers=AUTH, json=BODY).json()["run"]
         for _ in range(100):
             if engine.received_models:
                 break
             time.sleep(.01)
-        queued = client.post('/api/benchmarks/runs', headers=AUTH, json=BODY).json()
+        queued = client.post('/api/benchmarks/runs', headers=AUTH, json=BODY).json()["run"]
         response = client.post('/api/models/steps', headers=AUTH, json={'step': 'relevance', 'model': 'fabricated-screen', 'author': 'Reviewer'})
         assert response.status_code == 200
         updated = client.get('/api/workflow', headers=AUTH).json()
-        latest = client.post('/api/benchmarks/runs', headers=AUTH, json=BODY).json()
+        latest = client.post('/api/benchmarks/runs', headers=AUTH, json=BODY).json()["run"]
         assert engine.received_models == [old['definition']['models']]
         client.post('/api/prompts/relevance/versions', headers=AUTH, json={'text': DEFAULTS['relevance'] + '\nInvented revision', 'author': 'Reviewer'})
         assert client.post('/api/prompts/relevance/activate', headers=AUTH, json={'version': 2, 'author': 'Reviewer'}).status_code == 200
@@ -845,7 +848,7 @@ def test_operator_stop_queued_and_running_preserves_steps(tmp_path, database_url
     engine = FakeEngine(wait=True)
     app = create_app(settings(tmp_path, database_url=database_url, max_concurrent_runs=1), engine)
     with TestClient(app) as client:
-        first, second = [client.post("/api/benchmarks/runs", json=BODY).json()["id"]
+        first, second = [client.post("/api/benchmarks/runs", json=BODY).json()["run"]["id"]
                          for _ in range(2)]
         assert client.get("/api/queue").json() == {
             "paused": False, "max_concurrent_runs": 1,
@@ -853,12 +856,12 @@ def test_operator_stop_queued_and_running_preserves_steps(tmp_path, database_url
         }
         response = client.post(f"/api/runs/{second}/cancel")
         assert response.status_code == 200
-        assert_stopped(response.json())
+        assert_stopped(client.get(f"/api/runs/{second}/details").json())
         assert engine.active == 1
-        assert client.get(f"/api/runs/{first}").json()["status"] == "running"
+        assert client.get(f"/api/runs/{first}/details").json()["status"] == "running"
         response = client.post(f"/api/runs/{first}/cancel")
         assert response.status_code == 200
-        assert_stopped(response.json(), 1)
+        assert_stopped(client.get(f"/api/runs/{first}/details").json(), 1)
         assert engine.active == 0
         assert not app.state.run_tasks
         assert not app.state.operator_cancels
@@ -867,7 +870,7 @@ def test_operator_stop_queued_and_running_preserves_steps(tmp_path, database_url
         assert articles["total"] == 1
         assert articles["items"][0]["latest_run_status"] == "cancelled"
         assert articles["items"][0]["latest_verdict"] is None
-        history = client.get("/api/articles/" + response.json()["article_ref"]).json()
+        history = client.get("/api/articles/" + response.json()["article"]["ref"]).json()
         assert all(run["status"] == "cancelled" for run in history["runs"])
         assert client.post(f"/api/runs/{first}/cancel").json() == {
             "error": {"code": "run_not_active"}}
@@ -875,12 +878,12 @@ def test_operator_stop_queued_and_running_preserves_steps(tmp_path, database_url
 
 def test_stop_finished_and_unknown_runs(tmp_path, database_url):
     with TestClient(create_app(settings(tmp_path, database_url=database_url), FakeEngine())) as client:
-        run_id = client.post("/api/benchmarks/runs", json=BODY).json()["id"]
+        run_id = client.post("/api/benchmarks/runs", json=BODY).json()["run"]["id"]
         before = finished(client, run_id)
         response = client.post(f"/api/runs/{run_id}/cancel")
         assert response.status_code == 409
         assert response.json() == {"error": {"code": "run_not_active"}}
-        assert client.get(f"/api/runs/{run_id}").json() == before
+        assert client.get(f"/api/runs/{run_id}/details").json() == before
         assert client.post("/api/runs/missing/cancel").status_code == 404
 
 
@@ -889,10 +892,10 @@ def test_pause_resume_and_restart_queue(tmp_path, database_url):
     engine = FakeEngine(wait=True)
     app = create_app(config, engine)
     with TestClient(app) as client:
-        first = client.post("/api/benchmarks/runs", json=BODY).json()["id"]
-        second = client.post("/api/benchmarks/runs", json=BODY).json()["id"]
+        first = client.post("/api/benchmarks/runs", json=BODY).json()["run"]["id"]
+        second = client.post("/api/benchmarks/runs", json=BODY).json()["run"]["id"]
         assert client.post("/api/queue/pause").json()["paused"] is True
-        third = client.post("/api/benchmarks/runs", json=BODY).json()["id"]
+        third = client.post("/api/benchmarks/runs", json=BODY).json()["run"]["id"]
         # Release the active engine on its own loop, after pause. The second
         # task already passed the event and is waiting for the semaphore.
         client.portal.call(engine.release.set)
@@ -901,7 +904,7 @@ def test_pause_resume_and_restart_queue(tmp_path, database_url):
             "paused": True, "max_concurrent_runs": 1,
             "running": [], "queued": [second, third],
         }
-        assert client.get(f"/api/runs/{second}").json()["steps"] == []
+        assert client.get(f"/api/runs/{second}/details").json()["steps"] == []
         assert engine.peak == 1
         assert client.post("/api/queue/resume").json()["paused"] is False
         for run_id in [second, third]:
@@ -916,7 +919,7 @@ def test_bulk_stop_queue(tmp_path, include_running, database_url):
     engine = FakeEngine(wait=True)
     app = create_app(settings(tmp_path, database_url=database_url), engine)
     with TestClient(app) as client:
-        ids = [client.post("/api/benchmarks/runs", json=BODY).json()["id"]
+        ids = [client.post("/api/benchmarks/runs", json=BODY).json()["run"]["id"]
                for _ in range(3)]
         query = "?include_running=true" if include_running else ""
         response = client.post("/api/queue/cancel" + query)
@@ -924,12 +927,12 @@ def test_bulk_stop_queue(tmp_path, include_running, database_url):
         assert response.status_code == 200
         assert set(response.json()["cancelled"]) == set(expected)
         for run_id in expected:
-            assert_stopped(client.get(f"/api/runs/{run_id}").json(),
+            assert_stopped(client.get(f"/api/runs/{run_id}/details").json(),
                            1 if run_id == ids[0] else 0)
         assert client.get("/api/queue").json()["queued"] == []
         if not include_running:
             assert engine.active == 1
-            assert client.get(f"/api/runs/{ids[0]}").json()["status"] == "running"
+            assert client.get(f"/api/runs/{ids[0]}/details").json()["status"] == "running"
         assert client.post("/api/queue/cancel").json() == {"cancelled": []}
 
 
@@ -943,7 +946,9 @@ def test_stop_untracked_active_rows_and_prestart_task(tmp_path, database_url):
                                            ("removed_article", "similar_articles")})
             if running:
                 app.state.store.start_run(run["id"])
-            assert_stopped(client.post(f'/api/runs/{run["id"]}/cancel').json())
+            stopped = client.post(f'/api/runs/{run["id"]}/cancel').json()
+            assert stopped["record_id"] is None
+            assert_stopped(client.get(f'/api/runs/{run["id"]}/details').json())
 
         async def stop_before_task_runs():
             # Calling the route functions in the same turn deterministically
@@ -951,9 +956,11 @@ def test_stop_untracked_active_rows_and_prestart_task(tmp_path, database_url):
             routes = {route.path: route.endpoint for route in app.routes}
             from audit.schemas import RunInput
             run = await routes["/api/benchmarks/runs"](RunInput.model_validate(BODY))
-            return await routes["/api/runs/{run_id}/cancel"](run["id"])
+            return await routes["/api/runs/{run_id}/cancel"](run["run"]["id"])
 
-        assert_stopped(client.portal.call(stop_before_task_runs))
+        stopped = client.portal.call(stop_before_task_runs)
+        assert stopped["record_id"] is None
+        assert_stopped(client.get(f"/api/runs/{stopped['run']['id']}/details").json())
 
 
 def test_completion_wins_operator_stop_race(tmp_path, database_url):
@@ -967,11 +974,11 @@ def test_completion_wins_operator_stop_race(tmp_path, database_url):
 
     app = create_app(settings(tmp_path, database_url=database_url), CompletingEngine())
     with TestClient(app) as client:
-        run_id = client.post("/api/benchmarks/runs", json=BODY).json()["id"]
+        run_id = client.post("/api/benchmarks/runs", json=BODY).json()["run"]["id"]
         response = client.post(f"/api/runs/{run_id}/cancel")
         assert response.status_code == 409
         assert response.json() == {"error": {"code": "run_not_active"}}
-        assert client.get(f"/api/runs/{run_id}").json()["status"] == "succeeded"
+        assert client.get(f"/api/runs/{run_id}/details").json()["status"] == "succeeded"
 
 
 @pytest.mark.parametrize("path", ["/api/runs/missing/cancel", "/api/queue/pause",
@@ -1002,14 +1009,15 @@ def test_cancelled_story_marks_interrupted_step_stopped_without_rewriting_it(tmp
 
     app = create_app(settings(tmp_path, database_url=database_url), InterruptedEngine(wait=True))
     with TestClient(app) as client:
-        run_id = client.post("/api/benchmarks/runs", json=BODY).json()["id"]
+        run_id = client.post("/api/benchmarks/runs", json=BODY).json()["run"]["id"]
         for _ in range(100):
-            if client.get(f"/api/runs/{run_id}").json()["steps"]:
+            if client.get(f"/api/runs/{run_id}/details").json()["steps"]:
                 break
             time.sleep(0.01)
         response = client.post(f"/api/runs/{run_id}/cancel")
         assert response.status_code == 200
-        stopped = response.json()
+        assert response.json()["record_id"] is None
+        stopped = client.get(f"/api/runs/{run_id}/details").json()
         assert_stopped(stopped, 2)
         step = stopped["steps"][1]
         assert step["status"] == "failed"
@@ -1022,7 +1030,7 @@ def test_cancelled_story_marks_interrupted_step_stopped_without_rewriting_it(tmp
         assert story["headline"] == (
             "A person stopped this audit before it finished. This is not a result."
         )
-        assert client.get(f"/api/runs/{run_id}").json() == stopped
+        assert client.get(f"/api/runs/{run_id}/details").json() == stopped
 
 
 def test_cancelled_summary_suppresses_stale_verdict_and_flags():
@@ -1077,3 +1085,87 @@ def test_live_startup_refuses_a_database_holding_demo_data(tmp_path, database_ur
     with pytest.raises((ValueError, RuntimeError), match="demo data"):
         with TestClient(create_app(settings(tmp_path, database_url=database_url), FakeEngine())):
             pass
+
+
+def assert_lean_result(body):
+    from audit.record import AuditResult
+    assert AuditResult.model_validate(body).model_dump(mode="json", by_alias=True) == body
+    assert body["schema_version"] == "2.0"
+    assert not {"steps", "input", "output", "model", "provenance", "request"} & body.keys()
+
+
+@pytest.mark.parametrize("path", ["/api/audit", "/api/webhooks/audit", "/api/benchmarks/runs"])
+def test_submissions_and_single_result_are_lean(tmp_path, database_url, path):
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN,
+                      live_ingestion_enabled=True)
+    with TestClient(create_app(config, FakeEngine())) as client:
+        client.headers.update(AUTH)
+        submitted = client.post(path, json=BODY)
+        assert submitted.status_code == 202
+        body = submitted.json()
+        assert_lean_result(body)
+        assert body["run"]["status"] == "queued"
+        assert body["record_id"] is body["lineage"] is body["verdict"] is None
+        assert body["stages"] == [] and body["evidence"] is None
+        run_id = body["run"]["id"]
+        details = finished(client, run_id)
+        result = client.get(f"/api/runs/{run_id}").json()
+        assert_lean_result(result)
+        assert result["verdict"] == details["output"]["verdict"]
+        assert result["run"]["workflow_id"] == details["workflow_id"]
+        if path == "/api/benchmarks/runs":
+            assert result["record_id"] is result["lineage"] is None
+        else:
+            assert result["record_id"] == run_id + ".r0"
+            assert result["lineage"] == {"kind": "initial"}
+        assert client.get(f"/api/runs/{run_id}/details").json() == details
+        assert details["input"]["removed_article"]["content"] == BODY["removed_article"]["content"]
+        assert details["steps"]
+        assert client.get("/api/runs/missing").status_code == 404
+        assert client.get("/api/runs/missing/details").status_code == 404
+
+
+def test_article_submission_and_reaudit_lineage(tmp_path, database_url):
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN,
+                      live_ingestion_enabled=True)
+    with TestClient(create_app(config, FakeEngine())) as client:
+        client.headers.update(AUTH)
+        first = client.post("/api/audit", json=BODY).json()
+        first_id = first["run"]["id"]
+        finished(client, first_id)
+        assert client.get(f"/api/runs/{first_id}").json()["lineage"] == {"kind": "initial"}
+        ref = first["article"]["ref"]
+        second = client.post(f"/api/articles/{ref}/audit")
+        assert second.status_code == 202
+        assert_lean_result(second.json())
+        assert second.json()["record_id"] is None
+        second_id = second.json()["run"]["id"]
+        finished(client, second_id)
+        result = client.get(f"/api/runs/{second_id}").json()
+        assert result["record_id"] == second_id + ".r0"
+        assert result["lineage"] == {"kind": "re_audit", "previous_record_id": first_id + ".r0"}
+        # Re-reading an old result never points forward to a later run.
+        assert client.get(f"/api/runs/{first_id}").json()["lineage"] == {"kind": "initial"}
+
+
+def test_cancel_response_and_cancelled_result_have_no_record(tmp_path, database_url):
+    with TestClient(create_app(settings(tmp_path, database_url=database_url), FakeEngine(wait=True))) as client:
+        accepted = client.post("/api/benchmarks/runs", json=BODY).json()
+        run_id = accepted["run"]["id"]
+        response = client.post(f"/api/runs/{run_id}/cancel")
+        assert response.status_code == 200
+        assert_lean_result(response.json())
+        assert response.json()["run"]["status"] == "cancelled"
+        assert response.json()["record_id"] is response.json()["lineage"] is None
+        assert response.json()["verdict"] is None and response.json()["stages"] == []
+        assert client.get(f"/api/runs/{run_id}").json() == response.json()
+
+
+def test_seeded_demo_runs_have_lean_display_results_without_portable_identity(tmp_path):
+    app = create_app(settings(tmp_path, mode="test"))
+    with TestClient(app) as client:
+        for summary in client.get("/api/runs").json()["items"]:
+            result = client.get(f"/api/runs/{summary['id']}")
+            assert result.status_code == 200
+            assert_lean_result(result.json())
+            assert result.json()["record_id"] is result.json()["lineage"] is None

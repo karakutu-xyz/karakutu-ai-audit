@@ -63,4 +63,4 @@ CLAUDE.md
 !web/tsconfig.app.json
 !web/tsconfig.node.json
 !openapi.json
-!docs/audit-record.v1.schema.json
+!docs/audit-record.v2.schema.json

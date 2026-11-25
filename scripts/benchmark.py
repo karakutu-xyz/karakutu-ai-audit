@@ -74,14 +74,14 @@ def main(argv=None):
         for case in cases:
             response = client.post("/api/benchmarks/runs", json=api_case(case))
             response.raise_for_status()
-            run = response.json()
+            run = response.json()["run"]
             print(f"Submitted benchmark {run['id']}", flush=True)
             deadline = time.monotonic() + args.timeout
             while run["status"] in {"queued", "running"}:
                 if time.monotonic() >= deadline:
                     raise TimeoutError("Benchmark polling timed out")
                 time.sleep(1)
-                response = client.get("/api/runs/" + run["id"])
+                response = client.get("/api/runs/" + run["id"] + "/details")
                 response.raise_for_status()
                 run = response.json()
             report["runs"].append(run)

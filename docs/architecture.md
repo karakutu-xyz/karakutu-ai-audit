@@ -49,7 +49,7 @@ web and archive boxes are not used at all (see [Test and live mode](#test-and-li
 
 1. A client posts an article to `POST /api/benchmarks/runs` (or a live route, if enabled), or
    asks for an audit of a stored article with `POST /api/articles/{ref}/audit`. `submit` in
-   [`api.py`](../backend/audit/api.py#L460) saves a `queued` run and links it to its article in
+   [`api.py`](../backend/audit/api.py#L478) saves a `queued` run and links it to its article in
    the same transaction. The run records the current workflow, prompts and step models at this
    moment.
 2. An `asyncio` task waits for a free slot (`MAX_CONCURRENT_RUNS`, default 1), marks the run

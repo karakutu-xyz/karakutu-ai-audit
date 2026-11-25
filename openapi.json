@@ -242,6 +242,54 @@
         "title": "ArticleDetail",
         "type": "object"
       },
+      "ArticleIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "archive_id": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Id"
+          },
+          "content_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "archive_id",
+          "url",
+          "content_sha256"
+        ],
+        "title": "ArticleIdentity",
+        "type": "object"
+      },
       "ArticleImported": {
         "properties": {
           "imported": {
@@ -647,7 +695,7 @@
           "classification": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/Classification"
+                "$ref": "#/components/schemas/audit__domain__Classification"
               },
               {
                 "type": "null"
@@ -694,63 +742,350 @@
         "title": "AuditResponse",
         "type": "object"
       },
-      "Classification": {
-        "description": "Step 1 output. Tags are ranked (most central first); every notation was validated\nagainst the catalog pulled from the Karakutu API \u2014 the model cannot invent one.",
+      "AuditResult": {
+        "additionalProperties": false,
         "properties": {
-          "genre": {
+          "article": {
+            "$ref": "#/components/schemas/ArticleIdentity"
+          },
+          "classification": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/ConceptTag"
+                "$ref": "#/components/schemas/audit__record__Classification"
               },
               {
                 "type": "null"
               }
             ]
           },
-          "geographic_scope": {
+          "error": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/GeographicScope"
+                "$ref": "#/components/schemas/Error"
               },
               {
                 "type": "null"
               }
             ]
           },
-          "gist": {
-            "default": "",
-            "title": "Gist",
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Evidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "findings": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Findings"
+          },
+          "flags": {
+            "items": {
+              "$ref": "#/components/schemas/AuditFlag"
+            },
+            "title": "Flags",
+            "type": "array"
+          },
+          "lineage": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "correction": "#/components/schemas/Correction",
+                    "initial": "#/components/schemas/Initial",
+                    "re_audit": "#/components/schemas/ReAudit"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Initial"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReAudit"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Correction"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lineage"
+          },
+          "notice": {
+            "const": "Machine triage record. No verdict, including POSSIBLE_CENSORSHIP, is a finding of censorship; a person decides on independent evidence.",
+            "title": "Notice",
             "type": "string"
           },
-          "subject_tags": {
+          "record_id": {
+            "anyOf": [
+              {
+                "pattern": "^run_[0-9a-f]{32}\\.r[0-9]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record Id"
+          },
+          "run": {
+            "$ref": "#/components/schemas/ResultRun"
+          },
+          "schema": {
+            "const": "karakutu-ai-audit/audit-result",
+            "title": "Schema",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "2.0",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "stages": {
             "items": {
-              "$ref": "#/components/schemas/ConceptTag"
+              "$ref": "#/components/schemas/StageSummary"
             },
-            "maxItems": 5,
-            "title": "Subject Tags",
+            "maxItems": 6,
+            "title": "Stages",
             "type": "array"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Verdict"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
-        "title": "Classification",
+        "required": [
+          "schema",
+          "schema_version",
+          "record_id",
+          "lineage",
+          "article",
+          "run",
+          "verdict",
+          "flags",
+          "findings",
+          "classification",
+          "stages",
+          "evidence",
+          "error",
+          "notice"
+        ],
+        "title": "AuditResult",
         "type": "object"
       },
-      "ConceptTag": {
+      "Correction": {
+        "additionalProperties": false,
         "properties": {
-          "label": {
-            "title": "Label",
+          "kind": {
+            "const": "correction",
+            "title": "Kind",
             "type": "string"
           },
-          "notation": {
-            "description": "IPTC notation, e.g. medtop:20000093 or genre:Current",
-            "title": "Notation",
+          "previous_record_id": {
+            "pattern": "^run_[0-9a-f]{32}\\.r[0-9]+$",
+            "title": "Previous Record Id",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "record_error",
+              "redaction"
+            ],
+            "title": "Reason",
             "type": "string"
           }
         },
         "required": [
-          "notation",
-          "label"
+          "kind",
+          "previous_record_id",
+          "reason"
         ],
-        "title": "ConceptTag",
+        "title": "Correction",
+        "type": "object"
+      },
+      "DeadCopy": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 120,
+            "title": "Reason",
+            "type": "string"
+          },
+          "url": {
+            "maxLength": 512,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "reason"
+        ],
+        "title": "DeadCopy",
+        "type": "object"
+      },
+      "Error": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "const": "audit_failed",
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "Error",
+        "type": "object"
+      },
+      "Evidence": {
+        "additionalProperties": false,
+        "properties": {
+          "covers_key_facts": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Covers Key Facts"
+          },
+          "dead_copies": {
+            "items": {
+              "$ref": "#/components/schemas/DeadCopy"
+            },
+            "maxItems": 5,
+            "title": "Dead Copies",
+            "type": "array"
+          },
+          "live_copies": {
+            "items": {
+              "maxLength": 512,
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Live Copies",
+            "type": "array"
+          },
+          "new_in_old": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New In Old"
+          },
+          "old_in_new": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Old In New"
+          },
+          "original_url_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Url Status"
+          },
+          "related_same_publisher": {
+            "items": {
+              "maxLength": 512,
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Related Same Publisher",
+            "type": "array"
+          },
+          "relocated_to": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relocated To"
+          },
+          "search_queries": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Queries"
+          },
+          "search_queries_failed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Queries Failed"
+          }
+        },
+        "required": [
+          "relocated_to",
+          "old_in_new",
+          "new_in_old",
+          "covers_key_facts",
+          "original_url_status",
+          "live_copies",
+          "dead_copies",
+          "related_same_publisher",
+          "search_queries",
+          "search_queries_failed"
+        ],
+        "title": "Evidence",
         "type": "object"
       },
       "GeographicScope": {
@@ -785,6 +1120,21 @@
           "mode"
         ],
         "title": "Health",
+        "type": "object"
+      },
+      "Initial": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "initial",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "Initial",
         "type": "object"
       },
       "JsonValue": {},
@@ -1384,6 +1734,27 @@
         "title": "QueueState",
         "type": "object"
       },
+      "ReAudit": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "re_audit",
+            "title": "Kind",
+            "type": "string"
+          },
+          "previous_record_id": {
+            "pattern": "^run_[0-9a-f]{32}\\.r[0-9]+$",
+            "title": "Previous Record Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "previous_record_id"
+        ],
+        "title": "ReAudit",
+        "type": "object"
+      },
       "Reaction": {
         "properties": {
           "created_at": {
@@ -1484,6 +1855,76 @@
           "reviewer"
         ],
         "title": "ReactionInput",
+        "type": "object"
+      },
+      "ResultRun": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "enum": [
+              "live",
+              "benchmark"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "api",
+              "webhook",
+              "article",
+              "benchmark"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "workflow_id": {
+            "title": "Workflow Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "origin",
+          "category",
+          "status",
+          "created_at",
+          "finished_at",
+          "workflow_id"
+        ],
+        "title": "ResultRun",
         "type": "object"
       },
       "RunDetail": {
@@ -2299,6 +2740,29 @@
         "title": "StageResult",
         "type": "object"
       },
+      "StageSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "$ref": "#/components/schemas/StageOutcome"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/StageName"
+          },
+          "summary": {
+            "maxLength": 300,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "outcome",
+          "summary"
+        ],
+        "title": "StageSummary",
+        "type": "object"
+      },
       "StepLine": {
         "properties": {
           "line": {
@@ -2575,6 +3039,130 @@
           "description"
         ],
         "title": "WorkflowStep",
+        "type": "object"
+      },
+      "audit__domain__Classification": {
+        "description": "Step 1 output. Tags are ranked (most central first); every notation was validated\nagainst the catalog pulled from the Karakutu API \u2014 the model cannot invent one.",
+        "properties": {
+          "genre": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/audit__domain__ConceptTag"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "geographic_scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GeographicScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gist": {
+            "default": "",
+            "title": "Gist",
+            "type": "string"
+          },
+          "subject_tags": {
+            "items": {
+              "$ref": "#/components/schemas/audit__domain__ConceptTag"
+            },
+            "maxItems": 5,
+            "title": "Subject Tags",
+            "type": "array"
+          }
+        },
+        "title": "Classification",
+        "type": "object"
+      },
+      "audit__domain__ConceptTag": {
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "notation": {
+            "description": "IPTC notation, e.g. medtop:20000093 or genre:Current",
+            "title": "Notation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "notation",
+          "label"
+        ],
+        "title": "ConceptTag",
+        "type": "object"
+      },
+      "audit__record__Classification": {
+        "additionalProperties": false,
+        "properties": {
+          "genre": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/audit__record__ConceptTag"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "geographic_scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GeographicScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gist": {
+            "maxLength": 300,
+            "title": "Gist",
+            "type": "string"
+          },
+          "subject_tags": {
+            "items": {
+              "$ref": "#/components/schemas/audit__record__ConceptTag"
+            },
+            "maxItems": 5,
+            "title": "Subject Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "subject_tags",
+          "genre",
+          "geographic_scope",
+          "gist"
+        ],
+        "title": "Classification",
+        "type": "object"
+      },
+      "audit__record__ConceptTag": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "notation": {
+            "title": "Notation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "notation",
+          "label"
+        ],
+        "title": "ConceptTag",
         "type": "object"
       }
     }
@@ -3024,7 +3612,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RunDetail"
+                  "$ref": "#/components/schemas/AuditResult"
                 }
               }
             },
@@ -3132,7 +3720,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RunDetail"
+                  "$ref": "#/components/schemas/AuditResult"
                 }
               }
             },
@@ -3240,7 +3828,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RunDetail"
+                  "$ref": "#/components/schemas/AuditResult"
                 }
               }
             },
@@ -4971,7 +5559,225 @@
     },
     "/api/runs/{run_id}": {
       "get": {
-        "operationId": "run_detail_api_runs__run_id__get",
+        "operationId": "run_result_api_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafeErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafeErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafeErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafeErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafeErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafeErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafeErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafeErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Run Result"
+      }
+    },
+    "/api/runs/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancel_run_api_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafeErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafeErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafeErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafeErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafeErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafeErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafeErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafeErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Cancel Run"
+      }
+    },
+    "/api/runs/{run_id}/details": {
+      "get": {
+        "operationId": "run_detail_api_runs__run_id__details_get",
         "parameters": [
           {
             "in": "path",
@@ -5076,115 +5882,6 @@
           }
         },
         "summary": "Run Detail"
-      }
-    },
-    "/api/runs/{run_id}/cancel": {
-      "post": {
-        "operationId": "cancel_run_api_runs__run_id__cancel_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "run_id",
-            "required": true,
-            "schema": {
-              "title": "Run Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RunDetail"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SafeErrorResponse"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SafeErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SafeErrorResponse"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SafeErrorResponse"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SafeErrorResponse"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "413": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SafeErrorResponse"
-                }
-              }
-            },
-            "description": "Request Entity Too Large"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SafeErrorResponse"
-                }
-              }
-            },
-            "description": "Unprocessable Entity"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SafeErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error"
-          }
-        },
-        "summary": "Cancel Run"
       }
     },
     "/api/runs/{run_id}/export": {
@@ -5538,7 +6235,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RunDetail"
+                  "$ref": "#/components/schemas/AuditResult"
                 }
               }
             },

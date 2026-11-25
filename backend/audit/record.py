@@ -1,36 +1,40 @@
-"""Portable audit record v1; see docs/audit-record-schema.md for the contract."""
+"""Lean audit result v2; private review details stay on this service."""
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime
 import hashlib
 import html
 import json
+import math
 import re
 from urllib.parse import unquote, unquote_plus
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, ValidationError
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from audit.domain import AuditFlag, GeographicScope, StageName, StageOutcome, Verdict
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "2.0"
+# Every free-text and link field below is capped in UTF-8 bytes, so a result is bounded:
+# article URL <= 8 KiB (a longer one refuses the record), findings 2000 B, six 300 B stage
+# summaries, a 300 B gist, five 120 B tag fields, 16 evidence links of <= 512 B and five 120 B
+# reasons stay well under this hard limit. Typical results are a few KB.
+RESULT_MAX_BYTES = 32768
+ARTICLE_URL_MAX_BYTES = 8192
 NOTICE = "Machine triage record. No verdict, including POSSIBLE_CENSORSHIP, is a finding of censorship; a person decides on independent evidence."
 RecordId = Annotated[str, Field(pattern=r"^run_[0-9a-f]{32}\.r[0-9]+$")]
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-
-
+EvidenceURL = Annotated[str, Field(max_length=512)]
 RFC3339 = re.compile(r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)")
 
 
 def _rfc3339(value: str) -> str:
-    """The service writes every timestamp it owns as RFC 3339 with an explicit offset."""
     if not RFC3339.fullmatch(value):
         raise ValueError("timestamp_not_rfc3339")
-    datetime.fromisoformat(value)  # rejects impossible dates and times
+    datetime.fromisoformat(value)
     return value
 
 
 DateTime = Annotated[str, AfterValidator(_rfc3339), Field(json_schema_extra={"format": "date-time"})]
-JsonObject = dict[str, JsonValue]
 
 
 class FixedObject(BaseModel):
@@ -55,39 +59,21 @@ class Correction(FixedObject):
 Lineage = Annotated[Initial | ReAudit | Correction, Field(discriminator="kind")]
 
 
-class Article(FixedObject):
-    url: str
-    title: str
-    content: str
-    published_at: str | None
-
-
-class Request(FixedObject):
-    removed_article: Article
-    similar_articles: list[Article]
-
-
 class ArticleIdentity(FixedObject):
-    # `ref` is this service's article reference (`ka-<archive id>` or `u-<url hash>`);
-    # `archive_id` is karakutu's own article id, null when unknown.
     ref: Annotated[str, Field(min_length=1, max_length=80)] | None
     archive_id: Annotated[str, Field(min_length=1, max_length=80)] | None
     url: str
-    title: str
-    # As submitted: ISO 8601, the offset may be absent.
-    published_at: str | None
     content_sha256: Sha256
 
 
-class Run(FixedObject):
+class ResultRun(FixedObject):
     id: str
-    origin: Literal["api", "webhook", "article"]
-    category: Literal["live"]
-    status: Literal["succeeded", "failed"]
-    synthetic: bool
+    origin: Literal["api", "webhook", "article", "benchmark"]
+    category: Literal["live", "benchmark"]
+    status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
     created_at: DateTime
-    finished_at: DateTime
-    duration_ms: int = Field(ge=0)
+    finished_at: DateTime | None
+    workflow_id: str
 
 
 class ConceptTag(FixedObject):
@@ -99,25 +85,31 @@ class Classification(FixedObject):
     subject_tags: list[ConceptTag] = Field(max_length=5)
     genre: ConceptTag | None
     geographic_scope: GeographicScope | None
-    gist: str
+    gist: str = Field(max_length=300)
 
 
-class StageResult(FixedObject):
+class StageSummary(FixedObject):
     stage: StageName
     outcome: StageOutcome
-    confidence: float | None
-    explanation: str
-    skipped: bool
-    details: JsonObject | None
+    summary: str = Field(max_length=300)
 
 
-class Result(FixedObject):
-    verdict: Verdict
-    stages: list[StageResult]
-    short_circuited_at: StageName | None
-    findings: str
-    classification: Classification | None
-    flags: list[AuditFlag]
+class DeadCopy(FixedObject):
+    url: EvidenceURL
+    reason: str = Field(max_length=120)
+
+
+class Evidence(FixedObject):
+    relocated_to: EvidenceURL | None
+    old_in_new: float | None
+    new_in_old: float | None
+    covers_key_facts: bool | None
+    original_url_status: str | None
+    live_copies: list[EvidenceURL] = Field(max_length=5)
+    dead_copies: list[DeadCopy] = Field(max_length=5)
+    related_same_publisher: list[EvidenceURL] = Field(max_length=5)
+    search_queries: int | None
+    search_queries_failed: int | None
 
 
 class Error(FixedObject):
@@ -125,82 +117,21 @@ class Error(FixedObject):
     message: str
 
 
-class Usage(FixedObject):
-    prompt_tokens: Annotated[int, Field(ge=0)] | None
-    completion_tokens: Annotated[int, Field(ge=0)] | None
-    total_tokens: Annotated[int, Field(ge=0)] | None
-
-
-class ModelCall(FixedObject):
-    requested_model: str | None
-    response_model: str | None
-    response_format: str | None
-    temperature: float | None
-    max_tokens: int | None
-    system_prompt_sha256: Sha256 | None
-    user_prompt_sha256: Sha256 | None
-    request_sha256: Sha256
-    completion_sha256: Sha256 | None
-    parsed_output: JsonObject | None
-    usage: Usage | None
-    error_type: str | None
-
-
-class Step(FixedObject):
-    name: StageName
-    status: Literal["completed", "failed", "skipped"]
-    model: str | None
-    duration_ms: int = Field(ge=0)
-    input: JsonObject
-    output: JsonObject
-    model_calls: list[ModelCall]
-    evidence: list[JsonObject]
-
-
-class Prompt(FixedObject):
-    sha256: Sha256
-    text: str
-
-
-class Sources(FixedObject):
-    files: int = Field(ge=0)
-    sha256: Sha256
-
-
-class Provenance(FixedObject):
-    workflow_id: str
-    workflow_created_at: DateTime
-    format_version: int
-    models: JsonObject | None
-    prompts: dict[str, Prompt]
-    steps: list[StageName]
-    decision: str
-    settings: JsonObject
-    sources: Sources
-    dependencies: dict[str, Sha256]
-
-
-class Producer(FixedObject):
-    service: Literal["karakutu-ai-audit"]
-    serialized_at: DateTime
-
-
-class AuditRecordV1(FixedObject):
+class AuditResult(FixedObject):
     model_config = ConfigDict(populate_by_name=True)
-    schema_name: Literal["karakutu-ai-audit/audit-record"] = Field(alias="schema")
-    schema_version: str = Field(pattern=r"^1\.[0-9]+$")
-    record_id: RecordId
-    lineage: Lineage
+    schema_name: Literal["karakutu-ai-audit/audit-result"] = Field(alias="schema")
+    schema_version: Literal["2.0"]
+    record_id: RecordId | None
+    lineage: Lineage | None
     article: ArticleIdentity
-    request: Request
-    run: Run
-    result: Result
+    run: ResultRun
+    verdict: Verdict | None
+    flags: list[AuditFlag]
+    findings: str | None = Field(max_length=2000)
+    classification: Classification | None
+    stages: list[StageSummary] = Field(max_length=6)
+    evidence: Evidence | None
     error: Error | None
-    steps: list[Step] = Field(min_length=6, max_length=6)
-    provenance: Provenance
-    model: JsonObject
-    producer: Producer
-    redactions: list[Annotated[str, Field(pattern=r"^(?:/(?:[^~/]|~[01])*)*$")]]
     notice: Literal[NOTICE]
 
 
@@ -214,10 +145,6 @@ class RecordError(ValueError):
 
 def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _json_sha256(value) -> str:
-    return _sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")))
 
 
 def _lineage(run_id: str, revision: int, lineage) -> dict:
@@ -237,74 +164,12 @@ def _lineage(run_id: str, revision: int, lineage) -> dict:
     return value.model_dump()
 
 
-def _structured(output):
-    """Only validated structured answers. A free-text answer (related removals) is not copied:
-    the step output holds what was grounded from it, and `completion_sha256` fingerprints it."""
-    return output if isinstance(output, dict) else None
-
-
-def _usage(usage):
-    """Token counts only; providers attach other metadata that is not ours to vouch for."""
-    if not isinstance(usage, dict):
-        return None
-    return {key: value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
-            for key, value in ((key, usage.get(key)) for key in
-                               ("prompt_tokens", "completion_tokens", "total_tokens"))}
-
-
-def _model_call(event: dict) -> dict:
-    request = event["request"]
-
-    def prompt_hash(role):
-        message = next((m for m in request.get("messages", []) if m.get("role") == role), {})
-        content = message.get("content")
-        return _sha256(content) if content is not None else None
-
-    return {
-        "requested_model": request.get("model"), "response_model": event.get("response_model"),
-        "response_format": event.get("response_format"), "temperature": request.get("temperature"),
-        "max_tokens": request.get("max_tokens"), "system_prompt_sha256": prompt_hash("system"),
-        "user_prompt_sha256": prompt_hash("user"), "request_sha256": _json_sha256(request),
-        "completion_sha256": (_json_sha256(event["raw_completion"])
-                              if event.get("raw_completion") is not None else None),
-        "parsed_output": _structured(event.get("parsed_output")), "usage": _usage(event.get("usage")),
-        "error_type": event.get("error_type"),
-    }
-
-
-def _step(step: dict) -> dict:
-    value = deepcopy({key: step[key] for key in
-                      ("name", "status", "duration_ms", "input", "output", "evidence")})
-    value["model"] = step.get("model")
-    if "catalog" in value["input"]:
-        catalog = value["input"]["catalog"]
-        value["input"]["catalog"] = {
-            "omitted": "catalog", "sha256": _json_sha256(catalog),
-            "topics": len(catalog.get("topics", [])), "genres": len(catalog.get("genres", [])),
-        }
-    for event in value["evidence"]:
-        # Raw karakutu response bodies: karakutu holds them, and their shape is not ours to vouch
-        # for (they may carry upstream diagnostics). What the step used is in its output.
-        if event.get("type") == "archive_get" and event.get("output") is not None:
-            event["output"] = {"omitted": "archive_response", "sha256": _json_sha256(event["output"])}
-    value["model_calls"] = [_model_call(event) for event in step["model_calls"]]
-    return value
-
-
 REDACT_KEYS = {
     "authorization", "proxy_authorization", "cookie", "set_cookie", "api_key", "apikey", "x_api_key",
     "password", "passwd", "secret", "client_secret", "token", "access_token", "refresh_token",
     "id_token", "bearer", "jwk", "wallet", "wallet_json", "wallet_path", "private_key", "keyfile",
     "mnemonic", "traceback", "exception", "exc_info", "stack_trace",
 }
-# Evidence holds upstream response bodies verbatim; their error text may echo exceptions.
-# The service's own evidence events never use these keys (they record `error_type` only).
-UPSTREAM_ERROR_KEYS = {
-    "error", "errors", "message", "detail", "error_message", "error_description", "stack",
-    "stacktrace",
-}
-
-
 # Query or fragment parameters that carry credentials in URLs, matched like REDACT_KEYS.
 URL_SECRET_PARAMS = REDACT_KEYS | {
     "key", "sig", "signature", "auth", "session", "sessionid", "sid", "credential", "credentials",
@@ -372,11 +237,8 @@ def _redact(value, path=()) -> list[str]:
     for key, item in list(items):
         child = (*path, key)
         slot = int(key) if isinstance(value, list) else key
-        if len(child) == 4 and child[:2] == ("provenance", "prompts") and key == "text":
-            continue
         name = key.lower().replace("-", "_")
-        in_evidence = len(path) >= 3 and path[0] == "steps" and path[2] == "evidence"
-        if isinstance(value, dict) and (name in REDACT_KEYS or (in_evidence and name in UPSTREAM_ERROR_KEYS)):
+        if isinstance(value, dict) and name in REDACT_KEYS:
             value[slot] = "[redacted]"
             pointers.append(_pointer(child))
         elif isinstance(item, str):
@@ -428,70 +290,179 @@ def _contains_secret(value, secrets) -> bool:
     return False
 
 
+def _cap(value, limit, *, collapse=False):
+    """Cap text at `limit` UTF-8 bytes, ending a cut text with an ellipsis."""
+    if not isinstance(value, str):
+        return ""
+    if collapse:
+        value = " ".join(value.split())
+    data = value.encode("utf-8")
+    if len(data) <= limit:
+        return value
+    return data[:limit - len("…".encode("utf-8"))].decode("utf-8", "ignore") + "…"
+
+
+def _url(value):
+    return value if isinstance(value, str) and value and len(value.encode("utf-8")) <= 512 else None
+
+
+def _tag(value):
+    if not isinstance(value, dict):
+        return None
+    return {"notation": _cap(value.get("notation"), 120), "label": _cap(value.get("label"), 120)}
+
+
+def _classification(value):
+    if not isinstance(value, dict):
+        return None
+    return {"subject_tags": [t for t in map(_tag, _items(value.get("subject_tags"))) if t][:5],
+            "genre": _tag(value.get("genre")), "geographic_scope": value.get("geographic_scope"),
+            "gist": _cap(value.get("gist", ""), 300)}
+
+
+def _items(value):
+    return value if isinstance(value, list) else []
+
+
+def _urls(values):
+    return [url for value in _items(values) if (url := _url(value))][:5]
+
+
+def _share(value):
+    return value if type(value) in (int, float) and math.isfinite(value) else None
+
+
+def _count(value):
+    return value if type(value) is int and value >= 0 else None
+
+
+def _has_result(run):
+    return run.get("output") is not None or (run.get("error") or {}).get("code") == "audit_failed"
+
+
+def _recordable(run):
+    return (run["category"] == "live" and run["status"] in {"succeeded", "failed"}
+            and bool(run.get("finished_at")) and _has_result(run)
+            and (run.get("error") or {}).get("code") != "interrupted"
+            # Seed fixtures have descriptive IDs and cannot be portable records.
+            and re.fullmatch(r"run_[0-9a-f]{32}", run["id"]) is not None)
+
+
+def build_result(run, *, lineage=None, revision=0) -> dict:
+    """Project saved output only; never inspect step evidence, prompts or transcripts."""
+    article = run["input"]["removed_article"]
+    ref = run.get("article_ref")
+    # Archive-owned references encode the archive identity; URL references do not.
+    archive_id = run.get("archive_id")
+    if archive_id is None and ref and ref.startswith("ka-"):
+        archive_id = ref[3:] or None
+    output = run.get("output") or {}
+    stages = {s.get("stage"): s for s in _items(output.get("stages")) if isinstance(s, dict)}
+
+    def details(stage):
+        value = stages.get(stage, {}).get("details")
+        return value if isinstance(value, dict) else {}
+
+    web, sim, source = (details(s) for s in ("web_search", "similarity", "source"))
+    relocation = web if web.get("relocated_to") else sim
+    classification = _classification(output.get("classification"))
+    eligible = _recordable(run)
+    result = {
+        "schema": "karakutu-ai-audit/audit-result", "schema_version": SCHEMA_VERSION,
+        "record_id": f"{run['id']}.r{revision}" if eligible else None,
+        "lineage": _lineage(run["id"], revision, lineage) if eligible else None,
+        "article": {"ref": ref, "archive_id": archive_id,
+                    "url": article["url"], "content_sha256": _sha256(article["content"])},
+        "run": {key: run.get(key) for key in ("id", "origin", "category", "status",
+                                             "created_at", "finished_at", "workflow_id")},
+        "verdict": output.get("verdict"), "flags": output.get("flags") or [],
+        "findings": _cap(output["findings"], 2000) if output.get("findings") is not None else None,
+        "classification": classification,
+        "stages": [{"stage": stage.value,
+                    "outcome": stages.get(stage.value, {}).get("outcome", "inconclusive"),
+                    "summary": _cap(stages.get(stage.value, {}).get("explanation", ""),
+                                    300, collapse=True)} for stage in StageName] if output else [],
+        "evidence": {
+            "relocated_to": _url(relocation.get("relocated_to")),
+            "old_in_new": _share(relocation.get("old_in_new")),
+            "new_in_old": _share(relocation.get("new_in_old")),
+            "covers_key_facts": (web.get("covers_key_facts")
+                                 if type(web.get("covers_key_facts")) is bool else None),
+            "original_url_status": source.get("self_status"),
+            "live_copies": _urls(web.get("matches")),
+            "dead_copies": [{"url": d["url"], "reason": _cap(d.get("reason", ""), 120)}
+                            for d in _items(web.get("dead_same_story"))
+                            if isinstance(d, dict) and _url(d.get("url"))][:5],
+            "related_same_publisher": _urls(web.get("related_same_publisher")),
+            "search_queries": _count(web.get("search_queries")),
+            "search_queries_failed": _count(web.get("search_queries_failed")),
+        } if output else None,
+        "error": deepcopy(run.get("error")) if (run.get("error") or {}).get("code") == "audit_failed" else None,
+        "notice": NOTICE,
+    }
+    _redact(result)
+    # Scrubbing may expand short credential values to the redaction marker.
+    if result["evidence"]:
+        evidence = result["evidence"]
+        evidence["relocated_to"] = _url(evidence["relocated_to"])
+        for key in ("live_copies", "related_same_publisher"):
+            evidence[key] = _urls(evidence[key])
+        evidence["dead_copies"] = [d for d in evidence["dead_copies"] if _url(d["url"])]
+        for dead in evidence["dead_copies"]:
+            dead["reason"] = _cap(dead["reason"], 120)
+    result["findings"] = _cap(result["findings"], 2000) if result["findings"] is not None else None
+    for stage in result["stages"]:
+        stage["summary"] = _cap(stage["summary"], 300)
+    if result["classification"]:
+        result["classification"] = _classification(result["classification"])
+    return AuditResult.model_validate(result).model_dump(mode="json", by_alias=True)
+
+
 def build_record(run, workflow, *, article_ref=None, archive_id=None, revision=0, lineage=None,
-                 secret_values=(), serialized_at=None) -> dict:
+                 secret_values=()) -> dict:
     if run["category"] != "live":
         raise RecordError("not_live")
-    if run["status"] not in {"succeeded", "failed"} or not run.get("finished_at"):
+    if (run["status"] not in {"succeeded", "failed"} or not run.get("finished_at")
+            or (run.get("error") or {}).get("code") == "interrupted"):
         raise RecordError("not_finished")
-    if run.get("output") is None:
+    if not _has_result(run):
         raise RecordError("no_output")
     if workflow is None or workflow.get("id") != run["workflow_id"]:
         raise RecordError("workflow_mismatch")
-    if [step["name"] for step in run["steps"]] != [stage.value for stage in StageName]:
-        raise RecordError("step_order")
+    for key in ("created_at", "finished_at"):
+        try:
+            _rfc3339(run[key])
+        except (ValueError, TypeError):
+            raise RecordError("invalid_timestamp") from None
     lineage = _lineage(run["id"], revision, lineage)
-    article = run["input"]["removed_article"]
-    definition = workflow["definition"]
-    if not all(RFC3339.fullmatch(run[key]) for key in ("created_at", "finished_at")):
-        raise RecordError("invalid_timestamp")
-    created, finished = (datetime.fromisoformat(run[key]) for key in ("created_at", "finished_at"))
-    duration = finished - created
-    record = deepcopy({
-        "schema": "karakutu-ai-audit/audit-record", "schema_version": SCHEMA_VERSION,
-        "record_id": f"{run['id']}.r{revision}", "lineage": lineage,
-        "article": {"ref": article_ref if article_ref is not None else run.get("article_ref"),
-                    "archive_id": archive_id, "url": article["url"],
-                    "title": article["title"], "published_at": article["published_at"],
-                    "content_sha256": _sha256(article["content"])},
-        "request": run["input"],
-        "run": {**{key: run[key] for key in ("id", "origin", "category", "status", "synthetic",
-                                            "created_at", "finished_at")},
-                "duration_ms": round(duration.total_seconds() * 1000)},
-        "result": run["output"], "error": run["error"],
-        "steps": [_step(step) for step in run["steps"]],
-        "provenance": {
-            "workflow_id": workflow["id"], "workflow_created_at": workflow["created_at"],
-            "format_version": definition["format_version"], "models": definition.get("models"),
-            "prompts": {name: {"sha256": _sha256(text), "text": text}
-                        for name, text in definition.get("prompts", {}).items()},
-            "steps": [step["name"] for step in definition["steps"]], "decision": definition["decision"],
-            "settings": definition["settings"],
-            "sources": {"files": len(definition["sources"]), "sha256": _json_sha256(definition["sources"])},
-            "dependencies": {name: _sha256(text) for name, text in definition["dependencies"].items()},
-        },
-        "model": run["model"],
-        "producer": {"service": "karakutu-ai-audit", "serialized_at": serialized_at if serialized_at is not None
-                     else datetime.now(timezone.utc).isoformat()},
-        "redactions": [], "notice": NOTICE,
-    })
-    record["redactions"] = sorted(_redact(record))
-    # Final fail-closed pass over every string, prompt templates included (they stay byte-exact,
-    # so a credential there refuses the record instead of being redacted).
+    if not _recordable(run):
+        raise RecordError("invalid_lineage")
+    record = build_result({**run,
+                           "article_ref": article_ref if article_ref is not None else run.get("article_ref"),
+                           "archive_id": archive_id}, lineage=lineage, revision=revision)
     if any(_has_credential(text) for text in _strings(record)):
         raise RecordError("credential_detected")
     if _contains_secret(record, tuple(s for s in secret_values if s)):
         raise RecordError("secret_detected")
-    model = AuditRecordV1.model_validate(record)
-    record = model.model_dump(mode="json", by_alias=True)
     serialized = json.dumps(record, allow_nan=False, ensure_ascii=False)
     if any(secret in serialized for secret in secret_values if secret):
         raise RecordError("secret_detected")
+    if (len(record["article"]["url"].encode("utf-8")) > ARTICLE_URL_MAX_BYTES
+            or len(serialized.encode("utf-8")) > RESULT_MAX_BYTES):
+        raise RecordError("too_large")
     return record
 
 
 def record_json_schema() -> dict:
-    return {**AuditRecordV1.model_json_schema(by_alias=True),
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$id": "urn:karakutu-ai-audit:audit-record:1",
-            "title": "karakutu-ai-audit audit record v1"}
+    schema = AuditResult.model_json_schema(by_alias=True)
+    schema["properties"]["record_id"] = TypeAdapter(RecordId).json_schema()
+    schema["properties"]["lineage"] = TypeAdapter(Lineage).json_schema(ref_template="#/$defs/{model}")
+    schema["properties"]["lineage"].pop("$defs", None)
+    run = schema["$defs"]["ResultRun"]["properties"]
+    run["status"] = {"type": "string", "enum": ["succeeded", "failed"]}
+    run["category"] = {"type": "string", "const": "live"}
+    run["origin"] = {"type": "string", "enum": ["api", "webhook", "article"]}
+    run["finished_at"] = TypeAdapter(DateTime).json_schema()
+    return {**schema, "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "urn:karakutu-ai-audit:audit-record:2",
+            "title": "karakutu-ai-audit audit record v2"}

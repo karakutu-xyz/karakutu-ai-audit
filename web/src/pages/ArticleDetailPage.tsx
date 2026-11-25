@@ -74,19 +74,20 @@ export function ArticleDetailPage({ articleRef }: { articleRef: string }) {
     try {
       const result = await auditArticle(articleRef, token, current.signal);
       if (current.signal.aborted) return;
+      const accepted = result.run;
       const history: ArticleRun = {
-        id: result.id, status: result.status,
-        verdict: result.verdict, created_at: result.created_at,
-        finished_at: result.finished_at, origin: result.origin,
-        category: result.category, workflow_id: result.workflow_id,
-        label: result.label, summary: result.summary ?? null,
+        id: accepted.id, status: accepted.status,
+        verdict: result.verdict, created_at: accepted.created_at,
+        finished_at: accepted.finished_at, origin: accepted.origin,
+        category: accepted.category, workflow_id: accepted.workflow_id,
+        label: null, summary: null,
       };
       setData({
-        ...article, latest_run_id: result.id, latest_run_status: history.status,
+        ...article, latest_run_id: accepted.id, latest_run_status: history.status,
         latest_verdict: history.verdict, latest_run_at: history.created_at,
-        status: pending(result.status) ? "in_progress"
-          : result.status === "failed" || result.status === "cancelled"
-            ? result.status : "audited",
+        status: pending(accepted.status) ? "in_progress"
+          : accepted.status === "failed" || accepted.status === "cancelled"
+            ? accepted.status : "audited",
         run_count: article.run_count + 1, runs: [history, ...article.runs],
       });
       articlesCache.clear();
@@ -199,7 +200,12 @@ export function ArticleDetailPage({ articleRef }: { articleRef: string }) {
                 run={{ id: latest.id, status: run?.status ?? latest.status }}
                 onStopped={(stopped) => {
                   // Show the stopped run at once, then reload the article and its list entry.
-                  detail.setData(stopped);
+                  if (run) detail.setData({
+                    ...run, ...stopped.run, verdict: stopped.verdict,
+                    output: null, summary: null,
+                    error: null,
+                  });
+                  detail.refresh();
                   articlesCache.clear();
                   refresh();
                 }}
