@@ -32,7 +32,7 @@ class _ContractDumper(yaml.SafeDumper):
 
 def _represent_str(dumper, value):
     style = '"' if value == "" or _YAML12_NON_STRING.match(value) else None
-    return dumper.represent_scalar("tag:yaml.org,2002:str", value, style=style)
+    return dumper.represent_scalar(yaml.resolver.BaseResolver.DEFAULT_SCALAR_TAG, value, style=style)
 
 
 _ContractDumper.add_representer(str, _represent_str)
