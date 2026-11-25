@@ -121,8 +121,9 @@ of any nonzero length, appearing anywhere in any decoding state refuse the resul
 - **Fail closed for supplied secrets:** the future poster must pass every configured
   model/API key, bearer token and wallet secret to `build_record`. Any surviving value
   in the portable result refuses it. API result routes pass the service's configured
-  API token, model key and wallet material through the same builder. Wallet material
-  includes private JWK components from inline JSON or the configured wallet file.
+  API token, model key, database password and wallet material through the same builder.
+  Wallet material includes private JWK components from inline JSON or the configured wallet
+  file, resolved like archive sign-in on every check (a keyfile added after start is covered).
   The service does not read SearXNG's server secret.
 - **No raw diagnostics or transcripts by projection:** the portable result copies only
   the named stored result fields and fixed service errors. Article text, upstream bodies,

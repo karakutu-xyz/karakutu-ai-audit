@@ -21,6 +21,8 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 
+from sqlalchemy.engine import make_url
+
 from audit.config import MODEL_STEPS, Settings, canonical_request_host
 from audit.db import ArticleStoreError, PromptStoreError, Store
 from audit.domain import AuditRequest, Verdict
@@ -174,27 +176,54 @@ def seed_demo_data(database_url: str) -> bool:
     return True
 
 
-def _result_secrets(settings: Settings) -> tuple[str, ...]:
-    """Private refusal inventory; never expose settings or wallet parsing errors."""
-    values = [settings.api_auth_token, settings.model_api_key, settings.archive_wallet_path]
-    # Same source resolution as ArweaveWalletAuth: stripped inline JSON wins, else the file.
-    wallet = (settings.archive_wallet_json or "").strip()
-    if not wallet and settings.archive_wallet_path:
+def _wallet_secrets(wallet: str) -> list[str]:
+    values = [wallet]
+    try:
+        jwk = json.loads(wallet)
+    except ValueError:
+        jwk = None
+    if isinstance(jwk, dict):
+        values.extend(jwk[key] for key in ("d", "p", "q", "dp", "dq", "qi")
+                      if isinstance(jwk.get(key), str))
+    return values
+
+
+def _result_secrets(settings: Settings):
+    """Private refusal inventory; never expose settings or wallet parsing errors.
+
+    Returns a function so the wallet is resolved like ArweaveWalletAuth on every check
+    (stripped inline JSON wins, else the keyfile): a keyfile provisioned or repaired after
+    start is covered as soon as sign-in can use it. The file is re-read only when its
+    modification time or size changes.
+    """
+    static = [settings.api_auth_token, settings.model_api_key, settings.archive_wallet_path]
+    if settings.database_url:
         try:
-            wallet = Path(settings.archive_wallet_path).read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            wallet = ""
-    if wallet:
-        values.append(wallet)
-        try:
-            jwk = json.loads(wallet)
-        except ValueError:
-            jwk = None
-        if isinstance(jwk, dict):
-            values.extend(jwk[key] for key in ("d", "p", "q", "dp", "dq", "qi")
-                          if isinstance(jwk.get(key), str))
-    # SearXNG's server secret is not read by this service.
-    return tuple(value for value in values if value)
+            static.append(make_url(settings.database_url).password or "")
+        except Exception:  # an unparsable URL fails at startup elsewhere; never echo it
+            pass
+    inline = (settings.archive_wallet_json or "").strip()
+    if inline:
+        static.extend(_wallet_secrets(inline))
+    cache: dict = {"key": None, "values": []}
+
+    def secrets() -> tuple[str, ...]:
+        wallet_values = []
+        if not inline and settings.archive_wallet_path:
+            path = Path(settings.archive_wallet_path)
+            try:
+                stat = path.stat()
+                key = (stat.st_mtime_ns, stat.st_size)
+                if cache["key"] != key:
+                    cache["values"] = _wallet_secrets(path.read_text(encoding="utf-8"))
+                    cache["key"] = key
+                wallet_values = cache["values"]
+            except (OSError, UnicodeError):
+                cache["key"], cache["values"] = None, []
+        # SearXNG's server secret is not read by this service.
+        return tuple(value for value in [*static, *wallet_values] if value)
+
+    return secrets
 
 
 def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
@@ -452,7 +481,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
         previous = app.state.store.previous_record_run_id(run)
         lineage = {"kind": "re_audit", "previous_record_id": previous + ".r0"} if previous else None
         try:
-            return build_result(run, lineage=lineage, secret_values=result_secrets)
+            return build_result(run, lineage=lineage, secret_values=result_secrets())
         except RecordError as exc:
             return JSONResponse(status_code=409, content={"error": {
                 "code": "result_withheld", "reason": exc.code, "run_id": run["id"],

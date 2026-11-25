@@ -367,7 +367,8 @@ model calls. Submission returns 202 with queued metadata under `run`, `record_id
 Every result route can instead return **409** with
 `{"error": {"code": "result_withheld", "reason": "<fixed refusal code>", "run_id": "<id>"}}`.
 The shared builder scrubs and scans full projected text before truncation, using the
-configured API token, model key and wallet material. Credentials or secrets that survive
+configured API token, model key, database password and wallet material (the wallet is
+resolved like archive sign-in on every check, so a keyfile added after start is covered). Credentials or secrets that survive
 scrubbing cause `credential_detected` or `secret_detected`; oversized stored URLs,
 identities or serialized results cause `too_large`. An invalid projection causes
 `invalid_result`. These responses contain no stored prose. Withholding affects only

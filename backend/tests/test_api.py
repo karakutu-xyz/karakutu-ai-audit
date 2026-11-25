@@ -7,7 +7,7 @@ import time
 from fastapi.testclient import TestClient
 import pytest
 
-from audit.api import create_app
+from audit.api import _result_secrets, create_app
 from audit.config import Settings
 from audit.db import Store
 
@@ -1214,6 +1214,26 @@ def test_unsafe_stored_result_is_withheld_but_details_remain(tmp_path, database_
         assert details.status_code == 200
         assert details.json()["output"]["findings"] == findings
         assert client.app.state.store.run(run["id"]) == run
+
+
+def test_refusal_inventory_covers_the_database_password(tmp_path):
+    config = settings(tmp_path, database_url="postgresql+psycopg://audit:fictional%40db-pass@db.example/audit")
+    assert "fictional@db-pass" in _result_secrets(config)()
+
+
+def test_wallet_provisioned_after_start_is_refused(tmp_path, database_url):
+    wallet = tmp_path / "fictional-wallet.json"  # missing at start, as before provisioning
+    secret = "fictional-private-component"
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN,
+                      archive_wallet_path=str(wallet))
+    with TestClient(create_app(config, FakeEngine())) as client:
+        client.headers.update(AUTH)
+        run = stored_result_run(client, findings=secret)
+        assert client.get(f'/api/runs/{run["id"]}').status_code == 200
+        wallet.write_text(json.dumps({"d": secret}))
+        response = client.get(f'/api/runs/{run["id"]}')
+        assert response.status_code == 409
+        assert response.json()["error"]["reason"] == "secret_detected"
 
 
 def test_unicode_url_byte_limit_at_submission(tmp_path, database_url):
