@@ -215,3 +215,17 @@ def test_test_mode_cancels_demo_during_step_delay_and_keeps_progress(tmp_path):
         assert stopped["summary"]["verdict_label"] == "Stopped by a person"
         assert stopped["summary"]["failed_steps"] == []
         assert client.get(f"/api/runs/{run_id}/details").json() == stopped
+
+
+async def test_demo_step_inputs_never_repeat_a_body_held_in_the_title():
+    body = "Invented demo body sentence. " * 80
+    request = request_for(1)
+    request = request.model_copy(update={"removed_article": request.removed_article.model_copy(
+        update={"title": body, "content": body})})
+    engine = DemoEngine(step_delay=0)
+    await engine.start()
+    result = await engine.run(request)
+    await engine.close()
+    for step in result["steps"]:
+        assert body not in json.dumps(step["input"])
+        assert len(json.dumps(step["input"])) < 2048

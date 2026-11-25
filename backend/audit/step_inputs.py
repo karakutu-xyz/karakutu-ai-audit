@@ -8,11 +8,11 @@ from audit.workflow import relevance as relevance_step, related_removals as rela
 
 
 def article_ref(article):
-    return {'ref': 'run.input.removed_article', 'url': article.url,
+    return bounded({'ref': 'run.input.removed_article', 'url': article.url,
             'title': article.title,
             'published_at': article.published_at.isoformat() if article.published_at else None,
             'content_chars': len(article.content or ''),
-            'content_sha256': text_summary(article.content or '')['sha256']}
+            'content_sha256': text_summary(article.content or '')['sha256']})
 
 
 def catalog_summary(catalog):
