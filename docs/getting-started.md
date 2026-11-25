@@ -160,8 +160,14 @@ parts fit together, read [Architecture](architecture.md). Every variable and its
     - For unhealthy containers, inspect `docker compose -p <project> ps` and
       `docker logs <container>`. The default project is `karakutu-ai-audit`.
       A checkout created with a restrictive umask such as 077 can make copied
-      files unreadable to the API image's non-root user. Make checkout files
-      world-readable with `chmod -R a+rX .`, or clone with umask 022.
+      files unreadable to the API image's non-root user. Clone again with umask
+      022, or open up only the files git tracks, so `.env` and `data/` stay
+      private:
+
+      ```sh
+      git ls-files -z | xargs -0 chmod a+r
+      git ls-files -z | xargs -0 -n1 dirname | sort -u | xargs chmod a+rx
+      ```
     - If model discovery fails or no chat model is loaded, check LM Studio,
       its model list and the appropriate model URL in step 2. A disabled model
       shows **Disabled** in Settings and produces `AUDIT_FAILED` runs; calls can
