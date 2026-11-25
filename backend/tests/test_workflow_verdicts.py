@@ -12,6 +12,7 @@ import pytest
 
 from audit.domain import StageName, Verdict
 from audit.search.base import SearchResult
+from audit.search.rewrite import RewriteSignal
 from audit.search.fetch import DeadCandidate, FetchOutcome, LivePage, UnreadableCandidate
 from audit.workflow import pipeline, related_removals
 from audit.workflow.pipeline import (
@@ -507,3 +508,75 @@ def test_low_interest_reuses_existing_decision_with_archive_evidence(monkeypatch
     assert web.hits_searched == web.archive_candidates == 1
     assert web.live_pages_read == web.unreadable_count == 1
     assert web.reasoning == sim.reason
+
+
+@pytest.mark.parametrize(("gap", "day_text"), [(0, "on the same day"), (1, "1 day apart"), (2, "2 days apart")])
+def test_rewrite_findings_round_down_and_explain_wording(gap, day_text):
+    web = WebSearchEvidence(
+        relocated_to=RELOCATED, relocation_old_in_new=0.0999, relocation_new_in_old=0.0499,
+        relocation_rewrite=RewriteSignal(
+            title_overlap=0.4099, word_overlap=0.4999, own_words=25, date_gap_days=gap,
+        ),
+    )
+    verdict, findings = _decide(web)
+    assert verdict is Verdict.LIKELY_MOVED
+    assert "Same-publisher rewrite" in findings
+    assert "40% of the original's headline words" in findings
+    assert "49% of the original's distinctive words" in findings
+    assert f"published {day_text}." in findings
+    assert "wording differs: 9% of the original's text" in findings
+    assert "4% of the copy's text" in findings
+    assert "human auditor should compare the two pages" in findings
+
+
+def test_rewrite_signal_does_not_change_missing_key_facts_branch():
+    web = WebSearchEvidence(
+        relocated_to=RELOCATED, relocation_old_in_new=0.09, relocation_new_in_old=0.04,
+        relocation_covers_key_facts=False, omissions=["the invented spending total"],
+    )
+    baseline = _decide(web)
+    web.relocation_rewrite = RewriteSignal(
+        title_overlap=0.8, word_overlap=0.7, own_words=25, date_gap_days=1,
+    )
+    assert _decide(web) == baseline
+    assert baseline[0] is Verdict.POSSIBLE_CENSORSHIP
+    assert "materially omits: the invented spending total" in baseline[1]
+
+
+@pytest.mark.parametrize("containment", [0.0, None])
+def test_stub_rewrite_findings_do_not_quote_containment(containment):
+    web = WebSearchEvidence(
+        relocated_to=RELOCATED, relocation_old_in_new=containment,
+        relocation_new_in_old=containment,
+        relocation_rewrite=RewriteSignal(
+            title_overlap=1, word_overlap=None, own_words=0, date_gap_days=1,
+        ),
+    )
+    verdict, findings = _decide(web)
+    assert verdict is Verdict.LIKELY_MOVED
+    assert "original's text was too short to compare" in findings
+    assert "published 1 day apart" in findings
+    assert "wording differs" not in findings
+    assert "0%" not in findings.replace("100%", "")
+
+
+@pytest.mark.parametrize("partial_share", [0.50, 0.49])
+def test_low_interest_prefers_qualifying_partial_then_rewrite(partial_share):
+    partial = partial_candidate(old_in_new=partial_share)
+    rewrite = partial_candidate(
+        url="https://paper.example/rewrite", old_in_new=0.01, new_in_old=0.02,
+        rewrite=True, title_overlap=0.6, word_overlap=0.7, own_words=30, date_gap_days=2,
+    )
+    response = low_interest_response(SimilarityEvidence(
+        candidates=[partial, rewrite], rewrite=rewrite,
+    ))
+    assert response.verdict is Verdict.LIKELY_MOVED
+    if partial_share >= 0.50:
+        assert partial.url in response.findings
+        assert rewrite.url not in response.findings
+        assert "rewrite" not in response.findings
+    else:
+        assert rewrite.url in response.findings
+        assert partial.url not in response.findings
+        assert "same-publisher rewrite from the similarity step decides" in response.findings
+        assert "key-facts comparison of web search was not run" in response.findings

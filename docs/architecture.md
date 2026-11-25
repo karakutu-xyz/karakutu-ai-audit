@@ -82,7 +82,7 @@ flowchart LR
     RR -->|in scope or related pattern| O[5. Source]
     O -->|original not live| W[6. Web search]
     S -->|measured move| D[Deterministic verdict]
-    RR -->|low interest, no pattern, partial copy holds at least 50%| LM[LIKELY_MOVED]
+    RR -->|low interest, no pattern, partial copy holds at least 50% or qualifying rewrite| LM[LIKELY_MOVED]
     RR -->|low interest, no pattern, no qualifying copy| LI[LIKELY_LOW_PUBLIC_INTEREST]
     O -->|original live| D
     W --> D
@@ -91,9 +91,9 @@ flowchart LR
 | # | Step | Code | Uses | Can end the audit early |
 | --- | --- | --- | --- | --- |
 | 1 | Classification | [`classification.py`](../backend/audit/workflow/classification.py) | model, topic catalog | Only when the model is disabled (`AUDIT_FAILED`); other failures are recorded and the audit goes on |
-| 2 | Similarity | [`similarity.py`](../backend/audit/workflow/similarity.py) | archive, page fetch, text matching | Yes: a measured move to the same publisher gives `MOVED`; partial fits are retained for later decisions |
+| 2 | Similarity | [`similarity.py`](../backend/audit/workflow/similarity.py) | archive, page fetch, text matching | Yes: a measured move to the same publisher gives `MOVED`; partial fits and dated headline-and-word rewrites are retained for later decisions |
 | 3 | Relevance | [`relevance.py`](../backend/audit/workflow/relevance.py) | model | Only on model failure (`AUDIT_FAILED`) |
-| 4 | Related removals | [`related_removals.py`](../backend/audit/workflow/related_removals.py) | archive, model | Yes: low public interest and no related pattern gives `LIKELY_MOVED` if a measured same-publisher partial copy holds at least 50% of the removed text; otherwise `LIKELY_LOW_PUBLIC_INTEREST`, with a relocation note for a partial copy below the floor |
+| 4 | Related removals | [`related_removals.py`](../backend/audit/workflow/related_removals.py) | archive, model | Yes: low public interest and no related pattern gives `LIKELY_MOVED` if a measured same-publisher partial copy holds at least 50% of the removed text, or otherwise a qualifying rewrite exists; otherwise `LIKELY_LOW_PUBLIC_INTEREST`, with a relocation note for a partial copy below the floor |
 | 5 | Source | [`source.py`](../backend/audit/workflow/source.py) | page fetch, model, search | Yes: the original page is live with its text gives `NOT_REMOVED` |
 | 6 | Web search | [`web_search.py`](../backend/audit/workflow/web_search.py) | search, page fetch, model | Ends the graph; model failure gives `AUDIT_FAILED` |
 
@@ -111,7 +111,8 @@ Models find and describe evidence. They never pick the verdict. Code does:
   then dead copies of the same story; anything else is `INCONCLUSIVE`.
 - `_low_interest_response` in [`pipeline.py`](../backend/audit/workflow/pipeline.py) retains
   measured same-publisher partial copies at the low-interest exit, reusing `_decide` at or above a
-  50% containment floor and adding a relocation note below it. Key facts are not compared by
+  50% containment floor, then for a qualifying rewrite, and otherwise adding a relocation
+  note for a partial copy below the floor. Key facts are not compared by
   a model on this path; a person should compare the pages.
 - `AuditEngine.run` in [`engine.py`](../backend/audit/engine.py) delegates the low-interest
   response to the pipeline and handles failed execution (`AUDIT_FAILED`).
@@ -120,6 +121,20 @@ Models find and describe evidence. They never pick the verdict. Code does:
   for a partial match, below 0.20 both ways for a different article. Same-publisher pages are
   scored after same-site boilerplate is dropped
   ([`boilerplate.py`](../backend/audit/search/boilerplate.py)).
+- Same-publisher rewrites add headline, distinctive-word and publication-date measurements
+  ([`rewrite.py`](../backend/audit/search/rewrite.py)). At least 20 own distinctive words
+  require 35% word overlap, 35% original-headline overlap and a known gap of at most two
+  days. Shorter originals require 80% headline overlap both ways within one day
+  and at least 80% of the original headline words in the live text. Every rewrite must
+  stay at the requested page (normalized URLs and same-article variants qualify).
+  Candidate headlines use the archive title, else the URL slug; archive title/URL scores
+  never qualify a rewrite.
+  In scope the model must still match the story. A demoted rewrite is promoted only when
+  no other same-publisher match qualifies under the existing relocation rule;
+  missing key facts retain the review verdict. Only the best rewrite reaches web search;
+  every prompt keeps its original budgeted pages and appends that rewrite if absent,
+  including on smaller retries. Numeric signals stay in stage details.
+  See [the workflow guide](workflow.md).
 - Two flags can be added to a verdict: `SOURCE_DEAD` (a cited source answers 404 or 410) and
   `RELATED_REMOVALS` (a pattern of related removals). Both are defined in
   [`domain.py`](../backend/audit/domain.py#L61).
@@ -198,11 +213,11 @@ results are demo output, not audits. How to start each mode is in
 | --- | --- |
 | `NOT_REMOVED` | At audit time the original URL answered with the article text measurably intact. It may have been restored or the removal may be intermittent; never exculpatory. |
 | `MOVED` | A live page at the same publisher contains at least 99% of the original text. Says nothing about why the original URL went away. |
-| `LIKELY_MOVED` | A live same-publisher page with a partial measured fit, or a fit that could not be measured. At a low-interest exit with no related-removal pattern, only a measured partial copy holding at least 50% of the removed text qualifies; key facts have not been compared by a model. A person should compare the pages and check whether the differences matter. |
+| `LIKELY_MOVED` | A live same-publisher page with a partial measured fit, a qualifying dated headline-and-word rewrite, or a fit that could not be measured. At a low-interest exit with no related-removal pattern, a measured partial copy holding at least 50% of the removed text wins first, then a qualifying rewrite; key facts have not been compared by a model. A person should compare the pages and check whether the differences matter. |
 | `FOUND_ONLINE` | Independent copies of the article exist elsewhere. Says nothing about why it disappeared. |
 | `POSSIBLE_CENSORSHIP` | Copies of the story existed and are now gone with nothing live left, or a same-publisher copy drops key facts. A flag for human review, never a finding of censorship. |
 | `INCONCLUSIVE` | The evidence does not support any other verdict. |
-| `LIKELY_LOW_PUBLIC_INTEREST` | The model judged the article of low public interest, no related-removal pattern kept it in scope, and no live measured same-publisher partial copy held at least 50% of the removed text. A partial copy below that floor is reported in a relocation note for human comparison. |
+| `LIKELY_LOW_PUBLIC_INTEREST` | The model judged the article of low public interest, no related-removal pattern kept it in scope, and neither a live measured same-publisher partial copy holding at least 50% of the removed text nor a qualifying rewrite was found. A partial copy below that floor is reported in a relocation note for human comparison. |
 | `AUDIT_FAILED` | The audit could not be completed (model disabled or failing, invalid model output). The article was not audited and must be run again. Not a finding. |
 
 **Flags:** `SOURCE_DEAD` (a cited source is gone with 404 or 410) and `RELATED_REMOVALS`

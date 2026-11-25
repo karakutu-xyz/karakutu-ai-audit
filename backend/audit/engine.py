@@ -416,7 +416,11 @@ class AuditEngine:
             leads.append(SearchResult(url=src.live_source.url, title=src.live_source.title, snippet='', source='cited'))
         leads.extend(src.extra_hits)
         try:
-            out = await web_search.run(article, self.search, s['agents'].web_search, prefetched=prefetched, extra_hits=leads)
+            out = await web_search.run(
+                article, self.search, s['agents'].web_search,
+                prefetched=prefetched, extra_hits=leads,
+                rewrites=({normalize_url(sim.rewrite.url): sim.rewrite} if sim.rewrite else {}),
+            )
         except web_search.WebSearchModelFailure as exc:
             failed = pipeline._stage_failed(stage)
             note = web_search.search_failure_note(exc.evidence) if exc.evidence else ''
