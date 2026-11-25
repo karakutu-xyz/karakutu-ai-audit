@@ -2476,6 +2476,25 @@ test("story evidence uses stored measurements and never treats a failed probe as
   assert.equal(evidenceSummary({ name: "classification", output: {} }).length, 0);
 });
 
+test("evidence lines say why a page could not be read", () => {
+  const { evidenceSummary } = load(path.join(root, "features/steps/evidenceSummary.ts"));
+  const lines = evidenceSummary({ name: "similarity", output: { details: { candidates: [
+    { url: "https://ledger.invalid/a", status: "unreadable",
+      reason: "HTTP 403 (blocked/erroring, not gone)" },
+    { url: "https://ledger.invalid/b", status: "unreadable", reason: "ConnectError (unreachable, not provably gone)" },
+    { url: "https://ledger.invalid/c", status: "live" },
+  ] } }, evidence: [{ type: "fetch_candidates", output: {
+    dead: [{ url: "https://copy.invalid/gone", status: 404, reason: "HTTP 404" }],
+  } }] });
+  assert.ok(lines.some((line) =>
+    line.text === "ledger.invalid · HTTP 403 (blocked/erroring, not gone)"));
+  assert.ok(lines.some((line) =>
+    line.text === "ledger.invalid · ConnectError (unreachable, not provably gone)"));
+  assert.ok(lines.some((line) => line.text === "ledger.invalid"));
+  // A reason that only repeats the HTTP status is not shown twice.
+  assert.ok(lines.some((line) => line.text === "copy.invalid · HTTP 404"));
+});
+
 test("Articles clamps only fresh offsets and resets its own epoch across routes", () => {
   const harness = ledgerHarness("ArticlesPage");
   visit("https://workbench.invalid/articles?q=fictional&offset=100");

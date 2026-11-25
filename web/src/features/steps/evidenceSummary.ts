@@ -33,9 +33,13 @@ export function evidenceSummary(step: Step): EvidenceLine[] {
     if (!url) return;
     const status = typeof item.status === "number" ? ` · HTTP ${item.status}` : "";
     const measured = containment(item.old_in_new);
+    // Why a page could not be read (fetch reason), so a blocked fetch path shows in the run.
+    const reason = typeof item.reason === "string" && item.reason &&
+      !(status && item.reason.startsWith(`HTTP ${item.status}`))
+      ? ` · ${item.reason.slice(0, 120)}` : "";
     lines.push({
       url,
-      text: `${prefix}${new URL(url).host}${status}${measured ? ` · ${measured}` : ""}`,
+      text: `${prefix}${new URL(url).host}${status}${measured ? ` · ${measured}` : ""}${reason}`,
     });
   }
   const details = record(record(step.output).details);
