@@ -476,6 +476,7 @@ def _ground(raw: WebSearchResult, fetched: FetchOutcome, removed: Article,
     measurements: dict[str, Measurement] = {}
     relocation_measurement: Optional[Measurement] = None
     relocation_rewrite: Optional[RewriteSignal] = None
+    demoted: list[tuple[SearchResult, PageMatch, Measurement]] = []
 
     for m in raw.matches:
         page: Optional[LivePage] = live_by_url.get(normalize_url(m.url))
@@ -492,8 +493,10 @@ def _ground(raw: WebSearchResult, fetched: FetchOutcome, removed: Article,
         # before it may stand: one that is measurably a DIFFERENT article is demoted to
         # reviewer context, and the next same-publisher candidate gets its chance. An
         # UNMEASURABLE fit (no usable text on a side) never demotes — no evidence, no call.
-        # A dated headline-and-word rewrite signal can retain a low-shingle match;
-        # the model's same-story judgement remains required before reaching here.
+        # Complete this original selection before considering rewrites: a low-shingle
+        # rewrite must never pre-empt a later relocation, including one missing key facts.
+        # Keep demoted hits in model-match order for the fallback below; the model's
+        # same-story judgement remains required for any rewrite promotion.
         # Cross-publisher matches are never measured: different outlets legitimately rewrite.
         if (relocated_to is None and same_publisher(page.url, removed.url)
                 and (not page.final_url or same_publisher(page.final_url, removed.url))):
@@ -501,8 +504,9 @@ def _ground(raw: WebSearchResult, fetched: FetchOutcome, removed: Article,
             measurements[page.url] = measured
             o, n = measured.cleaned
             rewrite = (rewrites or {}).get(normalize_url(page.url))
-            if o is not None and max(o, n) < SIBLING_MAX and rewrite is None:
+            if o is not None and max(o, n) < SIBLING_MAX:
                 related_same_publisher.append(hit)
+                demoted.append((hit, m, measured))
                 continue   # not a same-story match, not a relocation
             relocated_to = hit
             relocation_measurement = measured
@@ -513,6 +517,23 @@ def _ground(raw: WebSearchResult, fetched: FetchOutcome, removed: Article,
             relocation_covers_key_facts = m.covers_key_facts
             omissions = [om for om in m.omissions if om.strip()]
         matches.append(hit)
+
+    # Only when the original selection found no relocation, promote the first
+    # demoted rewrite. Preserve its measurement and the model's key-facts report.
+    if relocated_to is None:
+        for hit, m, measured in demoted:
+            rewrite = (rewrites or {}).get(normalize_url(hit.url))
+            if rewrite is None:
+                continue
+            related_same_publisher.remove(hit)
+            relocated_to = hit
+            relocation_measurement = measured
+            relocation_old_in_new, relocation_new_in_old = measured.cleaned
+            relocation_covers_key_facts = m.covers_key_facts
+            omissions = [om for om in m.omissions if om.strip()]
+            relocation_rewrite = RewriteSignal(**rewrite.model_dump())
+            matches.append(hit)
+            break
 
     # Archive-sourced dead candidates never enter dead_same_story — the only basis on which
     # the service ever raises the censorship flag. Web-sourced ones keep full standing.

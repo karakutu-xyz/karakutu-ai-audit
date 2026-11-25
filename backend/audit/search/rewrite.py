@@ -11,6 +11,7 @@ from urllib.parse import unquote, urlsplit
 from pydantic import BaseModel
 
 from audit.search.textmatch import tokens
+from audit.search.urls import same_article_variant
 
 
 DISTINCTIVE_MIN_CHARS = 5
@@ -19,6 +20,8 @@ DISTINCTIVE_MIN_CHARS = 5
 # separates those reports from unrelated pages with a similar headline template.
 # Short originals lack enough vocabulary for that comparison, so they require
 # near-identical headlines in both directions and a tighter publication window.
+# The live text must also contain the headline words, and the requested page
+# must not redirect to a different article or a general landing page.
 REWRITE_TITLE_MIN = 0.40
 REWRITE_WORDS_MIN = 0.40
 REWRITE_MAX_DAYS = 2
@@ -34,6 +37,7 @@ class RewriteSignal(BaseModel):
     word_overlap: float | None
     own_words: int
     date_gap_days: int
+    headline_in_text: float | None = None
 
 
 def headline_words(title: str, url: str) -> frozenset[str]:
@@ -85,6 +89,7 @@ def date_gap_days(
 def is_rewrite(
     *, title_overlap: float | None, title_overlap_reverse: float | None,
     word_overlap: float | None, own_words: int, date_gap_days: int | None,
+    headline_in_text: float | None, requested_url: str, final_url: str | None,
 ) -> bool:
     """Inclusive bars; an unknown publication gap never establishes a rewrite."""
     if date_gap_days is None or title_overlap is None:
@@ -93,6 +98,9 @@ def is_rewrite(
         return (title_overlap >= STUB_TITLE_MIN
                 and title_overlap_reverse is not None
                 and title_overlap_reverse >= STUB_TITLE_MIN
+                and headline_in_text is not None
+                and headline_in_text >= STUB_TITLE_MIN
+                and (not final_url or same_article_variant(requested_url, final_url))
                 and date_gap_days <= STUB_MAX_DAYS)
     return (word_overlap is not None and word_overlap >= REWRITE_WORDS_MIN
             and title_overlap >= REWRITE_TITLE_MIN

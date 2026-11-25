@@ -124,8 +124,12 @@ Models find and describe evidence. They never pick the verdict. Code does:
 - Same-publisher rewrites add headline, distinctive-word and publication-date measurements
   ([`rewrite.py`](../backend/audit/search/rewrite.py)). At least 20 own distinctive words
   require 40% word overlap, 40% original-headline overlap and a known gap of at most two
-  days. Shorter originals require 80% headline overlap both ways within one day. Archive
-  title/URL scores never qualify a rewrite. In scope the model must still match the story;
+  days. Shorter originals require 80% headline overlap both ways within one day,
+  at least 80% of the original headline words in the live text, and no redirect to a
+  different page (normalized URLs and same-article variants qualify). Candidate headlines
+  use the archive title, else the URL slug; archive title/URL scores never qualify a rewrite.
+  In scope the model must still match the story. A demoted rewrite is promoted only when
+  no other same-publisher match qualifies under the existing relocation rule;
   missing key facts retain the review verdict. Rewrite pages lead web-search prompts and
   their numeric signal stays in stage details. See [the workflow guide](workflow.md).
 - Two flags can be added to a verdict: `SOURCE_DEAD` (a cited source answers 404 or 410) and

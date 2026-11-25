@@ -27,9 +27,14 @@ Same-publisher rewrite verdicts require a live page whose requested and final UR
 stay on the publisher. At least 20 own distinctive words require 40% word overlap,
 40% of the original headline words and a known publication gap of at most two days.
 Shorter originals require 80% headline overlap in both directions within one day.
+Their live page must contain at least 80% of the original headline words and must
+not redirect to a different page (normalized URLs and same-article variants qualify).
+Candidate headlines use the archive title, falling back to the URL slug only.
 Use measured vocabulary, never archive title/URL similarity scores; missing dates
-fail closed. In scope, web search must still match the same story, and missing key
-facts retain the existing review verdict. At the low-interest exit, a partial copy
+fail closed. In scope, web search must still match the same story. A demoted rewrite
+is promoted only when no other same-publisher match qualifies under the existing
+relocation rule; missing key facts retain the existing review verdict.
+At the low-interest exit, a partial copy
 holding at least 50% wins first, then a qualifying rewrite, then a below-floor note.
 Key facts are not compared on that exit; findings ask a person to compare the pages.
 Siblings remain reviewer context, and rewrites add no flags.

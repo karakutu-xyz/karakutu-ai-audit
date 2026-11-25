@@ -12,7 +12,8 @@ republication and is recorded as the relocation. A measured partial same-publish
 decide a low-interest exit as LIKELY_MOVED when it holds at least 50% of the removed text;
 a qualifying rewrite can also decide that exit, and smaller partial fits otherwise add a
 relocation note. Rewrites require headline and distinctive-word overlap within two days;
-short originals require near-identical headlines within one day. Archive similarity scores
+short originals require near-identical headlines within one day, headline words in the
+live text, and no redirect to a different page. Archive similarity scores
 never establish this signal, and an unknown date gap cannot qualify. In-scope audits leave
 partial fits and rewrites to web search's model and calibrated tiers. Everything fetched
 here is handed to step 6 (`fetched`, `hits`) so no URL is fetched twice and the archive-dead suppression rule still applies there
@@ -32,9 +33,9 @@ from audit.search.fetch import (
     FetchOutcome, LivePage, fetch_candidates, normalize_url, prose_of, same_publisher,
 )
 from audit.search.rewrite import (
-    STUB_MAX_WORDS, date_gap_days, is_rewrite, title_overlap, word_overlap,
+    STUB_MAX_WORDS, date_gap_days, headline_words, is_rewrite, title_overlap, word_overlap,
 )
-from audit.search.textmatch import MOVED_THRESHOLD, SIBLING_MAX
+from audit.search.textmatch import MOVED_THRESHOLD, SIBLING_MAX, tokens
 
 
 ARCHIVE_CANDIDATES = 5
@@ -56,6 +57,7 @@ class SimilarCandidate(BaseModel):
     boilerplate_capped: Optional[bool] = None
     title_overlap: Optional[float] = None
     title_overlap_reverse: Optional[float] = None
+    headline_in_text: Optional[float] = None
     word_overlap: Optional[float] = None
     own_words: Optional[int] = None
     date_gap_days: Optional[int] = None
@@ -112,6 +114,7 @@ async def run(removed: Article, *, client: Optional[KarakutuClient] = None) -> S
     ))
 
     own_words = own_text_words(removed_prose, boilerplate)
+    removed_headline = headline_words(removed.title, removed.url)
     candidates: List[SimilarCandidate] = []
     best: Optional[Tuple[LivePage, float, float]] = None
     for s, hit in pairs:
@@ -132,7 +135,11 @@ async def run(removed: Article, *, client: Optional[KarakutuClient] = None) -> S
                 cand.boilerplate_paragraphs = measured.boilerplate_paragraphs
                 cand.boilerplate_capped = measured.boilerplate_capped
                 cand.title_overlap, cand.title_overlap_reverse = title_overlap(
-                    removed.title, removed.url, s.title or page.title or "", hit.url,
+                    removed.title, removed.url, s.title or "", hit.url,
+                )
+                cand.headline_in_text = (
+                    len(removed_headline & set(tokens(page.text))) / len(removed_headline)
+                    if removed_headline else None
                 )
                 cand.word_overlap, cand.own_words = word_overlap(own_words, page.text)
                 cand.date_gap_days = date_gap_days(
@@ -144,6 +151,8 @@ async def run(removed: Article, *, client: Optional[KarakutuClient] = None) -> S
                     title_overlap_reverse=cand.title_overlap_reverse,
                     word_overlap=cand.word_overlap, own_words=cand.own_words,
                     date_gap_days=cand.date_gap_days,
+                    headline_in_text=cand.headline_in_text,
+                    requested_url=hit.url, final_url=page.final_url,
                 )
                 if o is not None and o >= MOVED_THRESHOLD and (best is None or o > best[1]):
                     best = (page, o, n)

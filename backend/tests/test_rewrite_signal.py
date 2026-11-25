@@ -100,7 +100,9 @@ def test_date_gap_uses_calendar_dates_then_archive(old, new, archive, expected):
 ])
 def test_text_rule_inclusive_bars(changes, expected):
     values = dict(title_overlap=0.40, title_overlap_reverse=0.1,
-                  word_overlap=0.40, own_words=20, date_gap_days=2)
+                  word_overlap=0.40, own_words=20, date_gap_days=2,
+                  headline_in_text=None, requested_url=NEW_URL,
+                  final_url="https://paper.example/")
     assert is_rewrite(**(values | changes)) is expected
 
 
@@ -113,10 +115,16 @@ def test_text_rule_inclusive_bars(changes, expected):
     ({"date_gap_days": None}, False),
     ({"own_words": 0}, True),
     ({"own_words": 20}, False),
+    ({"headline_in_text": 0.799999}, False),
+    ({"headline_in_text": None}, False),
+    ({"final_url": "https://paper.example/"}, False),
+    ({"final_url": None}, True),
+    ({"final_url": NEW_URL + "/?view=reader"}, True),
 ])
 def test_stub_rule_both_directions_and_tighter_gap(changes, expected):
     values = dict(title_overlap=0.80, title_overlap_reverse=0.80,
-                  word_overlap=None, own_words=19, date_gap_days=1)
+                  word_overlap=None, own_words=19, date_gap_days=1,
+                  headline_in_text=0.80, requested_url=NEW_URL, final_url=NEW_URL)
     assert is_rewrite(**(values | changes)) is expected
 
 
@@ -168,15 +176,13 @@ async def test_archive_date_gap_must_actually_be_sent(
     assert (evidence.rewrite is not None) is expected_rewrite
 
 
-@pytest.mark.parametrize("title_source", ["archive", "page", "slug"])
+@pytest.mark.parametrize("title_source", ["archive", "slug"])
 async def test_similarity_headline_source_order(monkeypatch, title_source):
     article = removed_article().model_copy(update={"title": "invented council budget"})
     candidate = archive_candidate(title=article.title if title_source == "archive" else "")
-    page_title = "different headline" if title_source == "archive" else (
-        article.title if title_source == "page" else ""
-    )
     result = await run_similarity(monkeypatch, [candidate],
-                                  FetchOutcome(live=[live_page(title=page_title)]), article=article)
+                                  FetchOutcome(live=[live_page(title=candidate.title)]),
+                                  article=article)
     assert result.rewrite is not None
     assert result.rewrite.title_overlap == 1
 
@@ -208,7 +214,8 @@ async def test_only_live_requested_and_final_same_publisher_pages_are_measured(m
         fetched = FetchOutcome(live=[live_page(url=url, final_url=final)])
     result = await run_similarity(monkeypatch, [candidate], fetched)
     measured = result.candidates[0]
-    for field in ("title_overlap", "title_overlap_reverse", "word_overlap", "own_words",
+    for field in ("title_overlap", "title_overlap_reverse", "headline_in_text",
+                  "word_overlap", "own_words",
                   "date_gap_days", "old_in_new", "new_in_old"):
         assert getattr(measured, field) is None
     assert measured.rewrite is False
@@ -232,9 +239,45 @@ async def test_best_stub_rewrite_ranks_headline(monkeypatch):
                                     publish_date=None) for i in range(2)]
     candidates[0].title = "Invented council reservoir budget changes"
     evidence = await run_similarity(monkeypatch, candidates, FetchOutcome(live=[
-        live_page(url=c.link) for c in candidates
+        live_page(url=c.link, final_url=c.link, text=TITLE + " " + " ".join(reversed(WORDS)))
+        for c in candidates
     ]), article=article)
     assert evidence.rewrite.url == candidates[1].link
+
+
+@pytest.mark.parametrize(("final_url", "expected"), [
+    ("", True),
+    ("https://paper.example/71001/original-slug", True),
+    ("https://www.paper.example/71001/original-slug/?view=reader", True),
+    ("https://paper.example/", False),
+    ("https://paper.example/unrelated-story", False),
+    ("https://paper.example/71001/revised-slug", True),
+    ("https://paper.example/71002/different-story", False),
+])
+async def test_stub_requires_live_headline_words_on_same_page(monkeypatch, final_url, expected):
+    article = removed_article().model_copy(update={"content": "Brief update"})
+    url = "https://paper.example/71001/original-slug"
+    result = await run_similarity(
+        monkeypatch, [archive_candidate(link=url, publish_date="2031-03-13")],
+        FetchOutcome(live=[live_page(url=url, final_url=final_url, text=TITLE)]), article=article,
+    )
+    assert result.candidates[0].headline_in_text == 1
+    assert result.candidates[0].rewrite is expected
+
+
+@pytest.mark.parametrize(("text", "share", "expected"), [
+    ("Invented council reservoir budget", 0.80, True),
+    ("Invented council reservoir", 0.60, False),
+    ("Unrelated pottery exhibition", 0, False),
+])
+async def test_stub_measures_headline_words_in_live_text(monkeypatch, text, share, expected):
+    article = removed_article().model_copy(update={"content": "Brief update"})
+    result = await run_similarity(
+        monkeypatch, [archive_candidate(publish_date="2031-03-13")],
+        FetchOutcome(live=[live_page(text=text)]), article=article,
+    )
+    assert result.candidates[0].headline_in_text == share
+    assert result.candidates[0].rewrite is expected
 
 
 async def test_prompt_prioritises_rewrite_and_retains_other_page_order(monkeypatch):
@@ -274,6 +317,46 @@ async def test_prompt_prioritises_rewrite_and_retains_other_page_order(monkeypat
     assert others[2].url not in prompts[0]
     assert result.relocated_to.url == NEW_URL
     assert result.relocation_rewrite.own_words == 30
+
+
+@pytest.mark.parametrize("reverse", [True, False])
+async def test_rewrite_fallback_uses_model_order_and_preserves_missing_facts(monkeypatch, reverse):
+    candidates = [archive_candidate(id=i, link=f"{NEW_URL}/{i}") for i in range(2)]
+    fetched = FetchOutcome(live=[live_page(url=c.link) for c in candidates])
+    sim = await run_similarity(monkeypatch, candidates, fetched)
+    order = list(reversed(candidates)) if reverse else candidates
+    result = web_search._ground(
+        web_search.WebSearchResult(matches=[
+            web_search.PageMatch(url=c.link, covers_key_facts=False,
+                                 omissions=[" ", "Invented budget amount"])
+            for c in order
+        ], reasoning="Invented rewrites"), fetched, removed_article(), 2,
+        rewrites={normalize_url(c.url): c for c in sim.candidates if c.rewrite},
+    )
+    assert result.relocated_to.url == order[0].link
+    assert result.relocation_covers_key_facts is False
+    assert result.omissions == ["Invented budget amount"]
+    assert [hit.url for hit in result.matches] == [order[0].link]
+    assert [hit.url for hit in result.related_same_publisher] == [order[1].link]
+    measured = result.same_publisher_measurements[order[0].link]
+    assert (result.relocation_old_in_new, result.relocation_new_in_old) == measured.cleaned
+    assert (result.raw_old_in_new, result.raw_new_in_old) == measured.raw
+    assert result.relocation_rewrite.word_overlap == 1
+
+
+async def test_selected_partial_copy_keeps_its_rewrite_signal(monkeypatch):
+    fetched = FetchOutcome(live=[live_page(text=" ".join(WORDS[:15] + WORDS[15:][::-1]))])
+    sim = await run_similarity(monkeypatch, [archive_candidate()], fetched)
+    assert sim.candidates[0].fit == "partial"
+    assert sim.candidates[0].rewrite is True
+    result = web_search._ground(
+        web_search.WebSearchResult(matches=[web_search.PageMatch(url=NEW_URL)],
+                                   reasoning="Invented partial rewrite"),
+        fetched, removed_article(), 1, rewrites={normalize_url(NEW_URL): sim.rewrite},
+    )
+    assert result.relocated_to.url == NEW_URL
+    assert result.relocation_rewrite.word_overlap == sim.rewrite.word_overlap
+    assert result.related_same_publisher == []
 
 
 async def test_measured_republication_takes_precedence_over_rewrite(monkeypatch):

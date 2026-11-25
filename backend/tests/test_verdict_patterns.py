@@ -210,6 +210,8 @@ def run_offline_audit(monkeypatch):
 
         def handler(request):
             body = pages.get(str(request.url))
+            if isinstance(body, httpx.Response):
+                return body
             return httpx.Response(
                 200 if body is not None else 404,
                 text=body or "",
@@ -793,6 +795,47 @@ async def test_factual_rewrite_requires_model_same_story_match(run_offline_audit
     assert result["response"]["verdict"] == "INCONCLUSIVE"
 
 
+@pytest.mark.parametrize("rewrite_first", [True, False])
+async def test_rewrite_never_preempts_partial_copy_missing_key_facts(
+    run_offline_audit, rewrite_first,
+):
+    matches = [
+        web_search.PageMatch(url=NEW_URL),
+        web_search.PageMatch(url=SECOND_URL, covers_key_facts=False,
+                             omissions=["Monthly spending statements"]),
+    ]
+    if not rewrite_first:
+        matches.reverse()
+    candidates = [dated_rewrite_candidate(), SimilarArticle(
+        id=71002, link=SECOND_URL, title=dated_budget().title,
+    )]
+    kwargs = dict(
+        pages={NEW_URL: page(REWRITE_FACTS), SECOND_URL: page(BUDGET[:1] + ORCHARD)},
+        web_result=web_search.WebSearchResult(matches=matches, reasoning="Invented copies"),
+    )
+    result = await run_offline_audit(dated_budget(), similar=candidates, **kwargs)
+    measured = details(result, "similarity")["candidates"]
+    assert measured[0]["rewrite"] is True
+    assert max(measured[0]["old_in_new"], measured[0]["new_in_old"]) < SIBLING_MAX
+    assert measured[1]["fit"] == "partial"
+    assert measured[1]["old_in_new"] >= SIBLING_MAX
+    web = details(result, "web_search")
+    assert web["relocated_to"] == SECOND_URL
+    assert web["covers_key_facts"] is False
+    assert web["omissions"] == ["Monthly spending statements"]
+    assert web["relocation_rewrite"] is None
+    assert result["response"]["verdict"] == "POSSIBLE_CENSORSHIP"
+    assert f"to {SECOND_URL}" in result["response"]["findings"]
+
+    # The same pages and model reports without a dated rewrite signal must agree.
+    candidates[0] = dated_rewrite_candidate(publish_date=None)
+    baseline = await run_offline_audit(dated_budget(), similar=candidates, **kwargs)
+    assert details(baseline, "similarity")["rewrite"] is None
+    assert details(baseline, "web_search")["relocated_to"] == SECOND_URL
+    for field in ("verdict", "findings", "flags"):
+        assert result["response"][field] == baseline["response"][field]
+
+
 async def test_template_headline_with_unrelated_words_stays_set_aside(run_offline_audit):
     result = await run_offline_audit(
         dated_budget(), similar=[dated_rewrite_candidate()],
@@ -832,7 +875,7 @@ async def test_stub_needs_near_identical_headline(run_offline_audit, same_headli
         publish_date="2031-03-13",
     )
     result = await run_offline_audit(
-        article, similar=[candidate], pages={NEW_URL: page(REWRITE_FACTS)},
+        article, similar=[candidate], pages={NEW_URL: page([article.title] + REWRITE_FACTS)},
         relevant=relevant, web_result=rewrite_match(),
     )
     response = result["response"]
@@ -846,6 +889,28 @@ async def test_stub_needs_near_identical_headline(run_offline_audit, same_headli
         assert response["verdict"] == ("INCONCLUSIVE" if relevant else "LIKELY_LOW_PUBLIC_INTEREST")
     if relevant:
         assert (details(result, "web_search")["relocated_to"] == NEW_URL) is same_headline
+
+
+@pytest.mark.parametrize("redirect", [True, False])
+async def test_stub_with_matching_archive_headline_needs_live_page_evidence(
+    run_offline_audit, redirect,
+):
+    article = dated_budget().model_copy(update={"content": "Brief update"})
+    candidate = dated_rewrite_candidate(title=article.title, publish_date="2031-03-13")
+    pages = {NEW_URL: page(POTTERY)}
+    if redirect:
+        home = "https://dusulke.example/"
+        pages = {
+            NEW_URL: httpx.Response(302, headers={"location": home}),
+            home: page(POTTERY),
+        }
+    result = await run_offline_audit(article, similar=[candidate], pages=pages, relevant=False)
+    measured = details(result, "similarity")["candidates"][0]
+    assert measured["status"] == "live"
+    assert measured["title_overlap"] == 1
+    assert measured["headline_in_text"] == 0
+    assert measured["rewrite"] is False
+    assert result["response"]["verdict"] == "LIKELY_LOW_PUBLIC_INTEREST"
 
 
 async def test_factual_rewrite_without_any_archive_date_fails_closed(run_offline_audit):
