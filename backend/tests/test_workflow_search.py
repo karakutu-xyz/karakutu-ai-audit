@@ -90,6 +90,32 @@ async def test_failure_without_candidates_does_not_call_model():
     assert findings.startswith(web_search.search_failure_note(evidence))
 
 
+async def test_unresponsive_engines_use_existing_search_failure_note():
+    calls = []
+
+    def route(request):
+        calls.append(request)
+        return httpx.Response(200, json={
+            'results': [], 'unresponsive_engines': [
+                ['brave', 'fabricated private rate-limit reason'],
+                ['duckduckgo', 'fabricated private CAPTCHA reason'],
+            ],
+        })
+
+    async def forbidden(*_args, **_kwargs):
+        pytest.fail('No pages to judge')
+
+    search = Search('https://search.example', transport=httpx.MockTransport(route))
+    evidence = await web_search.run(article(), search, SimpleNamespace(run=forbidden))
+    assert len(calls) == evidence.search_queries == evidence.search_queries_failed == 3
+    assert search.state == 'degraded'
+    assert evidence.web_hits == evidence.hits_searched == 0
+    assert evidence.reasoning.startswith(
+        'Web search failed: all 3 search queries failed, so the web was not searched. ')
+    assert evidence.reasoning.startswith(web_search.search_failure_note(evidence))
+    assert 'fabricated private' not in evidence.reasoning
+
+
 async def test_default_checked_provider_and_independent_archive_upgrade():
     lead = hit('archive', 'archive')
 

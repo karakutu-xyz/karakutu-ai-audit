@@ -287,12 +287,13 @@ The run-list metadata schema is named `RunSummary`; its existing fields are unch
 
 ### Search status and evidence
 
-Status `search` is one of `disabled`, `unchecked`, `ok`, `unreachable`, or
+Status `search` is one of `disabled`, `unchecked`, `ok`, `degraded`, `unreachable`, or
 `rejected`, with no URL or upstream error text. Test mode always reports
 `disabled` offline. Live status probes `/healthz` with a two-second bound and a
-30-second cache. Any HTTP answer proves reachability but cannot clear rejection
-learned from a real search query. Settings explains unreachable search in terms
+30-second cache. Any HTTP answer proves reachability but cannot clear degradation
+or rejection learned from a real search query. Settings explains unreachable search in terms
 of the configured SEARXNG_URL and rejected search in terms of JSON output.
+`degraded` means a query returned no usable hits and reported unresponsive engines; only engine names are retained, never upstream reasons.
 
 New web-search evidence and step `details` include `search_queries` (web queries
 attempted), `search_queries_failed`, `web_hits`, `archive_candidates`, and

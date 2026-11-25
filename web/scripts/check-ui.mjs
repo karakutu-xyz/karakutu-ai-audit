@@ -1549,6 +1549,7 @@ test("Settings waits for service and workflow content, or ends on either error",
     ok: "SearXNG · reachable",
     unreachable: "SearXNG · unreachable at the configured SEARXNG_URL",
     rejected: "SearXNG · refused the request (is JSON output enabled?)",
+    degraded: "SearXNG · reachable, but its search engines are not answering (blocked or rate-limited)",
   })) {
     status = { mode: "live", search_provider: "searxng", search };
     const html = renderToStaticMarkup(runtime.render(() => page.SettingsPage()));
