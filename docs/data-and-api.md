@@ -286,6 +286,26 @@ Unreached steps are `pending`. Test-mode cancellation interrupts the demo step
 delay and keeps already-emitted steps; the seed includes one cancelled example.
 The run-list metadata schema is named `RunSummary`; its existing fields are unchanged.
 
+### Private step records
+
+Run details and export retain permissive step input/evidence JSON, accepting both
+historical cumulative records and new lean inputs by name. Article-reading inputs
+refer to `run.input.removed_article`, with URL, title, publication date, character
+count and content SHA-256. Classification stores a catalog count/byte/hash summary;
+other steps record only their own dependencies, never full earlier stage objects.
+Skipped inputs carry the reason. See [the step contract](workflow.md#exact-review-record).
+
+By default archive outputs are byte/hash summaries plus item counts or article
+identity and text length/hash. Fetch events retain requested URLs and page metadata,
+text lengths/hashes and dead/unreadable reasons. Search events remain unchanged.
+`RECORD_FULL_EVIDENCE=true` restores full private archive/fetch evidence bodies;
+inputs stay lean. Exact model requests/messages, parsed output and usage are always
+retained. The review panel shows Step input beside exact system/user messages.
+Article text stays in the run request and exact model prompts, without extra copies
+in default step inputs, evidence or details. No database migration or response
+schema change is needed; historical runs keep their saved shape. The portable audit
+record and computed run story continue reading output fields, not step input state.
+
 ### Search status and evidence
 
 Status `search` is one of `disabled`, `unchecked`, `ok`, `degraded`, `unreachable`, or

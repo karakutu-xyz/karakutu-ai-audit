@@ -498,3 +498,21 @@ async def test_result_checks_serialized_size_after_json_escaping(finished_run):
     run["input"]["removed_article"]["url"] = "https://news.example/" + "\x01" * 6000
     with pytest.raises(RecordError, match="^too_large$"):
         build_result(run)
+
+
+async def test_legacy_and_lean_step_inputs_have_identical_projections(finished_run):
+    from audit.run_summary import summarize_run
+    from audit.schemas import RunStep
+
+    lean, workflow = finished_run
+    legacy = deepcopy(lean)
+    for index, step in enumerate(legacy['steps']):
+        step['input'] = {'article': legacy['input']['removed_article'],
+                         'prior_stages': [s['output'] for s in legacy['steps'][:index]],
+                         'similarity': {'fetched': {'live': [{'text': 'Invented legacy page.'}]}}}
+        step['evidence'] = [{'type': 'archive_get', 'path': '/articles',
+                             'output': {'news_text': 'Invented legacy archive body.'}}]
+        RunStep.model_validate(step)
+    assert build_result(legacy) == build_result(lean)
+    assert build_record(legacy, workflow) == build_record(lean, workflow)
+    assert summarize_run(legacy) == summarize_run(lean)

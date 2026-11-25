@@ -69,8 +69,12 @@ def test_counts_and_domain_contracts(seeded):
         if detail.output:
             assert [s.output for s in detail.steps] == [s.model_dump(mode="json") for s in detail.output.stages]
         for index, step in enumerate(detail.steps):
-            assert step.input["article"] == row["input"]["removed_article"]
-            assert step.input["prior_stages"] == [s["output"] for s in row["steps"][:index]]
+            assert 'prior_stages' not in step.input
+            if step.status == 'skipped':
+                assert 'skipped_because' in step.input
+            elif 'article' in step.input:
+                assert step.input['article']['ref'] == 'run.input.removed_article'
+                assert 'content' not in step.input['article']
         if detail.verdict == Verdict.POSSIBLE_CENSORSHIP:
             assert "not a finding of censorship" in detail.output.findings
     for version, accuracy in ((1, 3), (2, 4), (3, 5)):

@@ -116,6 +116,9 @@ class RelatedRemovalsEvidence(BaseModel):
     reason: str = ""
     anchor_ts: Optional[int] = None
     anchor_source: str = ""                  # first_dead_check | now
+    # The publish date the model prompt carried. Recording only: excluded from dumps, so
+    # stage details and the audit response stay as they were.
+    prompt_publish_date: str = Field(default="", exclude=True)
     window_days: int = WINDOW_DAYS
     window_size: int = 0                     # candidate audits in the window (after self-exclusion)
     entities: List[str] = Field(default_factory=list)
@@ -370,6 +373,8 @@ async def run(removed: Article, agent: Optional[Agent], *, client: Optional[Kara
         return ev
     publish_date = (record.publish_date if record is not None and record.publish_date else None)
     prompt = build_prompt(removed, ev.prefiltered, gist=gist, publish_date=publish_date, text=prose)
+    ev.prompt_publish_date = str(publish_date or (
+        removed.published_at.date().isoformat() if removed.published_at else "?"))[:10]
     try:
         # temperature 0: the same list must give the same answer run to run (at the default
         # temperature a member can drop in and out between otherwise identical calls)

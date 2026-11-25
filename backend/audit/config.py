@@ -200,6 +200,7 @@ class Settings:
     data_dir: Path = field(default_factory=lambda: Path("data"))
     database_url: str = ""
     model_enabled: bool = False
+    record_full_evidence: bool = False
     model_base_url: str = "http://127.0.0.1:1234/v1"
     model_name: str = "auto"
     model_api_key: str = "lm-studio"
@@ -308,7 +309,7 @@ class Settings:
             "model_enabled", "model_base_url", "model_name", "model_api_key", "model_timeout",
             "max_tokens", "temperature", "thinking_control", "model_provider", "response_format",
             *("model_name_" + step for step in MODEL_STEPS), "search_provider", "searxng_url",
-            "archive_base_url", "archive_wallet_path", "archive_wallet_json",
+            "archive_base_url", "archive_wallet_path", "archive_wallet_json", "record_full_evidence",
         )}
 
     @classmethod
@@ -333,6 +334,7 @@ class Settings:
             data_dir=Path(os.getenv("DATA_DIR", "data")),
             database_url=os.getenv("DATABASE_URL", ""),
             model_enabled=_bool("MODEL_ENABLED"),
+            record_full_evidence=_bool("RECORD_FULL_EVIDENCE"),
             model_base_url=os.getenv("MODEL_BASE_URL", "http://127.0.0.1:1234/v1"),
             model_name=os.getenv("MODEL_NAME", "auto"),
             model_api_key=os.getenv("MODEL_API_KEY", "lm-studio"),

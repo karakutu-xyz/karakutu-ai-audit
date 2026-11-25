@@ -89,6 +89,6 @@ Run focused tests, then `uv run pytest -q`, `uv run ruff check .`, `npm --prefix
   Epoch changes reset paging; out-of-range offsets replace to the last valid page.
   Retained data shows refresh errors with retry. Reset drafts explicitly on
   service epochs without remounting read views.
-- Expanded steps show exact input/output JSON directly, in two columns from
-  1000px and stacked below. Use labelled chevron buttons with `aria-expanded`
+- Expanded steps show Step input beside exact system/user model messages, in two
+  columns from 1000px and stacked below, followed by exact output JSON. Use labelled chevron buttons with `aria-expanded`
   and `aria-controls`; keep evidence and model calls in disclosures.

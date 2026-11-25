@@ -120,7 +120,7 @@ definition, so changing the engine set gives new runs a new workflow ID.
 
 Open a run from the Runs ledger (`/runs/<id>`). The page puts the saved prediction and its findings first, then the run facts, the six workflow steps and an append-only human reaction (**Human review**). Reviewer identity is required; the note and expected verdict are optional.
 
-Each step row opens to its recorded explanation, the exact input and output JSON, and **Evidence** and **Model calls** (prompts, model responses and fetch/search/archive evidence). **Article and records** shows the submitted text, with the exact run input and output on demand. **Saved workflow** opens the run's preserved definition, not the currently configured workflow. These are presentation changes only; stored runs and verdict rules are unchanged.
+Each step row opens to its recorded explanation, the **Step input** beside the exact system/user messages of each model call, output JSON, and **Evidence** and **Model calls** (prompts, model responses and fetch/search/archive evidence). **Article and records** shows the submitted text, with the exact run input and output on demand. **Saved workflow** opens the run's preserved definition, not the currently configured workflow. These are presentation changes only; stored runs and verdict rules are unchanged.
 
 ## Run lifecycle and operator controls
 
@@ -154,11 +154,37 @@ running and service-interrupted examples.
 
 ## Exact review record
 
-Each completed/skipped step stores its input state, output, duration, model calls and evidence events. A model call includes the actual system/user messages, response schema, sampling controls and token limit, the unmodified successful completion envelope, parsed result, returned model name and usage. Failed parsing retains the raw completion; transport errors retain an exception type only, never an upstream error body. Authentication headers and wallet material are excluded.
+Each step stores lean inputs by name, output, duration, model calls and evidence events.
+Article-reading steps record `article.ref: "run.input.removed_article"` with URL,
+title, publication date, content character count and SHA-256, without article text.
+Classification adds catalog topic/genre counts, serialized bytes and SHA-256;
+similarity adds archive availability; relevance adds the prose head length.
+Related removals adds the classification gist, relevance flag, text head lengths,
+the actual archive anchor/window when available, and the publish date its model prompt
+carried (the archive's date when its record was valid, otherwise the submitted one).
+Source reads only the article.
+Web search records lead URLs/titles, prefetched page counts, the best rewrite URL
+and the cited dead-source URL. Skipped steps record their reason.
+Earlier stage objects and the catalog are never copied into a step input.
 
-Search events retain query, provider results and failure type. Fetch events retain requested candidates and fetched/parsed evidence, including measured text. Archive events retain the GET path, query, status and decoded response. These private records exist for human review in the ignored local database. They are not log output. Network/SDK diagnostic logs are redacted; LangSmith tracing is explicitly disabled.
+A model call includes the actual system/user messages, response schema, sampling controls and token limit, the unmodified successful completion envelope, parsed result, returned model name and usage. Failed parsing retains the raw completion; transport errors retain an exception type only, never an upstream error body. Authentication headers and wallet material are excluded.
 
-The run's input is the submitted audit request. Each step's actual bounded model input is also retained: this makes truncation and retry ladders visible. Evidence captures the text used by the workflow, not byte-for-byte copies of all HTTP wire traffic. Error response bodies and secrets are deliberately excluded.
+Search events retain query, provider results and failure type unchanged. Fetch events
+retain requested URLs and per-page URL, final URL, status, title, text character count
+and SHA-256, or the dead/unreadable reason. Archive events retain GET path, params,
+status, retry status and error type; output becomes `{"summary": {...}}` with bytes
+and SHA-256, audit-list item counts or article identity and text length/hash where
+available. Hashes of text use UTF-8; JSON byte counts/hashes use compact, sorted,
+non-ASCII-preserving UTF-8 JSON with non-finite numbers normalized to null.
+Prefiltered related headlines remain in stage details and prompts only.
+`RECORD_FULL_EVIDENCE=true` restores full archive/fetch bodies for explicit local
+debugging; step inputs remain lean. The default is false. These private records exist for human review in the ignored local database. They are not log output. Network/SDK diagnostic logs are redacted; LangSmith tracing is explicitly disabled.
+
+The run's input stores the submitted audit request once. Article text is not repeated
+in step inputs, default evidence or details. Exact model prompts remain in
+`model_calls`, making truncation and retry ladders visible. Neither recording mode
+changes computation or prompts. Historical cumulative inputs and full evidence
+remain readable without rewriting stored records or migrating the database. Error response bodies and secrets are deliberately excluded.
 
 ## Change a prompt or rule
 

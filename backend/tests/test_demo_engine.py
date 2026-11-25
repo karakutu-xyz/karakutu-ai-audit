@@ -86,7 +86,12 @@ async def test_demo_contract_and_deterministic_verdict(number, verdict):
         assert step["model"] == ("demo-model (offline)" if step["model_calls"] else None)
         assert step["status"] in {"completed", "skipped"}
         assert step["output"] == response.stages[index].model_dump(mode="json")
-        assert step["input"]["prior_stages"] == result["response"]["stages"][:index]
+        assert 'prior_stages' not in step['input']
+        if step['status'] == 'skipped':
+            assert 'skipped_because' in step['input']
+        else:
+            assert step['input']['article']['ref'] == 'run.input.removed_article'
+            assert 'content' not in step['input']['article']
         assert step["duration_ms"] >= 0
     assert observed[0]["model_calls"][0]["demo"] is True
     assert observed[0]["model_calls"][0]["request"]["messages"]
@@ -210,3 +215,17 @@ def test_test_mode_cancels_demo_during_step_delay_and_keeps_progress(tmp_path):
         assert stopped["summary"]["verdict_label"] == "Stopped by a person"
         assert stopped["summary"]["failed_steps"] == []
         assert client.get(f"/api/runs/{run_id}/details").json() == stopped
+
+
+async def test_demo_step_inputs_never_repeat_a_body_held_in_the_title():
+    body = "Invented demo body sentence. " * 80
+    request = request_for(1)
+    request = request.model_copy(update={"removed_article": request.removed_article.model_copy(
+        update={"title": body, "content": body})})
+    engine = DemoEngine(step_delay=0)
+    await engine.start()
+    result = await engine.run(request)
+    await engine.close()
+    for step in result["steps"]:
+        assert body not in json.dumps(step["input"])
+        assert len(json.dumps(step["input"])) < 2048
