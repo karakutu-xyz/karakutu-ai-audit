@@ -8,3 +8,9 @@ search:
   formats: [html, json]
   default_lang: auto
   safe_search: 0
+# Engines: the image's default set stays on (most of it refuses this machine today). mwmbl is
+# added because it answers. Audit queries describe removed news, so no big-provider engines
+# (Yandex, Bing and the like) are enabled here; see docs/workflow.md, "Web search engines".
+engines:
+  - name: mwmbl
+    disabled: false
