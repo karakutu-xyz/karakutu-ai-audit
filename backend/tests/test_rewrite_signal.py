@@ -97,12 +97,16 @@ def test_date_gap_uses_calendar_dates_then_archive(old, new, archive, expected):
     ({"word_overlap": None}, False),
     ({"own_words": 19}, False),
     ({"title_overlap_reverse": None}, True),
+    ({"final_url": "https://paper.example/"}, False),
+    ({"final_url": "https://paper.example/section"}, False),
+    ({"final_url": None}, True),
+    ({"final_url": NEW_URL + "/?view=reader"}, True),
 ])
 def test_text_rule_inclusive_bars(changes, expected):
     values = dict(title_overlap=0.40, title_overlap_reverse=0.1,
                   word_overlap=0.40, own_words=20, date_gap_days=2,
                   headline_in_text=None, requested_url=NEW_URL,
-                  final_url="https://paper.example/")
+                  final_url=NEW_URL)
     assert is_rewrite(**(values | changes)) is expected
 
 
@@ -224,7 +228,7 @@ async def test_only_live_requested_and_final_same_publisher_pages_are_measured(m
 
 async def test_best_rewrite_ranks_words_then_headline(monkeypatch):
     candidates = [archive_candidate(id=i, link=f"{NEW_URL}/{i}") for i in range(3)]
-    pages = [live_page(url=c.link, text=" ".join(reversed(WORDS[:count])))
+    pages = [live_page(url=c.link, final_url=c.link, text=" ".join(reversed(WORDS[:count])))
              for c, count in zip(candidates, [15, 24, 24])]
     candidates[1].title = "Invented council reservoir other headline"
     evidence = await run_similarity(monkeypatch, candidates, FetchOutcome(live=pages))
@@ -280,17 +284,31 @@ async def test_stub_measures_headline_words_in_live_text(monkeypatch, text, shar
     assert result.candidates[0].rewrite is expected
 
 
-async def test_prompt_prioritises_rewrite_and_retains_other_page_order(monkeypatch):
+@pytest.mark.parametrize("rewrite_index", [0, 2, 4])
+async def test_prompt_keeps_budgeted_pages_and_adds_rewrite_on_each_retry(
+    monkeypatch, rewrite_index,
+):
     candidate = similarity.SimilarCandidate(
         url=NEW_URL, rewrite=True, title_overlap=0.5, word_overlap=0.6,
         own_words=30, date_gap_days=1,
     )
     others = [live_page(url=f"https://paper.example/unrelated/{i}") for i in range(4)]
-    fetched = FetchOutcome(live=others + [live_page()])
+    pages = list(others)
+    pages.insert(rewrite_index, live_page())
+    fetched = FetchOutcome(live=pages)
     prompts = []
 
     async def agent_run(prompt, model_settings):
         prompts.append(prompt)
+        budget, _ = web_search._PROMPT_BUDGETS[len(prompts) - 1]
+        expected = pages[:budget]
+        if not any(p.url == NEW_URL for p in expected):
+            expected.append(pages[rewrite_index])
+        assert [line for line in prompt.splitlines() if line.startswith("- ")] == [
+            f"- {p.title} ({p.url})" for p in expected
+        ]
+        assert len(expected) <= budget + 1
+        assert NEW_URL in prompt
         if len(prompts) < 3:
             raise ValueError("Invented retry")
         return SimpleNamespace(data=web_search.WebSearchResult(
@@ -310,11 +328,7 @@ async def test_prompt_prioritises_rewrite_and_retains_other_page_order(monkeypat
         rewrites={normalize_url(NEW_URL): candidate},
     )
     assert len(prompts) == 3
-    for prompt in prompts:
-        assert NEW_URL in prompt
-    assert prompts[0].index(NEW_URL) < prompts[0].index(others[0].url)
-    assert prompts[0].index(others[0].url) < prompts[0].index(others[1].url)
-    assert others[2].url not in prompts[0]
+    assert fetched.live == pages
     assert result.relocated_to.url == NEW_URL
     assert result.relocation_rewrite.own_words == 30
 
@@ -322,7 +336,7 @@ async def test_prompt_prioritises_rewrite_and_retains_other_page_order(monkeypat
 @pytest.mark.parametrize("reverse", [True, False])
 async def test_rewrite_fallback_uses_model_order_and_preserves_missing_facts(monkeypatch, reverse):
     candidates = [archive_candidate(id=i, link=f"{NEW_URL}/{i}") for i in range(2)]
-    fetched = FetchOutcome(live=[live_page(url=c.link) for c in candidates])
+    fetched = FetchOutcome(live=[live_page(url=c.link, final_url=c.link) for c in candidates])
     sim = await run_similarity(monkeypatch, candidates, fetched)
     order = list(reversed(candidates)) if reverse else candidates
     result = web_search._ground(

@@ -2,6 +2,7 @@
 
 These signals supplement sentence-level containment; they do not establish that
 key facts survived. Callers must first verify a readable same-publisher page.
+Every rewrite must stay at the requested page or a same-article URL variant.
 """
 
 import re
@@ -20,8 +21,8 @@ DISTINCTIVE_MIN_CHARS = 5
 # separates those reports from unrelated pages with a similar headline template.
 # Short originals lack enough vocabulary for that comparison, so they require
 # near-identical headlines in both directions and a tighter publication window.
-# The live text must also contain the headline words, and the requested page
-# must not redirect to a different article or a general landing page.
+# Short originals' live text must also contain the headline words. For BOTH rules,
+# the requested page must not redirect to a different article or a landing page.
 REWRITE_TITLE_MIN = 0.40
 REWRITE_WORDS_MIN = 0.40
 REWRITE_MAX_DAYS = 2
@@ -94,13 +95,14 @@ def is_rewrite(
     """Inclusive bars; an unknown publication gap never establishes a rewrite."""
     if date_gap_days is None or title_overlap is None:
         return False
+    if final_url and not same_article_variant(requested_url, final_url):
+        return False
     if own_words < STUB_MAX_WORDS:
         return (title_overlap >= STUB_TITLE_MIN
                 and title_overlap_reverse is not None
                 and title_overlap_reverse >= STUB_TITLE_MIN
                 and headline_in_text is not None
                 and headline_in_text >= STUB_TITLE_MIN
-                and (not final_url or same_article_variant(requested_url, final_url))
                 and date_gap_days <= STUB_MAX_DAYS)
     return (word_overlap is not None and word_overlap >= REWRITE_WORDS_MIN
             and title_overlap >= REWRITE_TITLE_MIN

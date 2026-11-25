@@ -12,9 +12,10 @@ republication and is recorded as the relocation. A measured partial same-publish
 decide a low-interest exit as LIKELY_MOVED when it holds at least 50% of the removed text;
 a qualifying rewrite can also decide that exit, and smaller partial fits otherwise add a
 relocation note. Rewrites require headline and distinctive-word overlap within two days;
-short originals require near-identical headlines within one day, headline words in the
-live text, and no redirect to a different page. Archive similarity scores
-never establish this signal, and an unknown date gap cannot qualify. In-scope audits leave
+short originals require near-identical headlines within one day and headline words in
+the live text. Every rewrite must stay at the requested page or a same-article URL variant.
+Archive similarity scores never establish this signal, and an unknown date gap cannot qualify.
+In-scope audits leave
 partial fits and rewrites to web search's model and calibrated tiers. Everything fetched
 here is handed to step 6 (`fetched`, `hits`) so no URL is fetched twice and the archive-dead suppression rule still applies there
 (archive candidates keep `source="archive"`).

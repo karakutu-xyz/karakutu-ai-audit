@@ -13,7 +13,7 @@ from audit.engine import AuditEngine
 from audit.search import fetch as fetch_module
 from audit.search.base import BaseSearchProvider, SearchResult
 from audit.search.boilerplate import build_boilerplate, measure as measure_cleaned
-from audit.search.fetch import FetchOutcome, LivePage, html_to_text
+from audit.search.fetch import FetchOutcome, LivePage, html_to_text, normalize_url
 from audit.search.rewrite import distinctive_words, word_overlap
 from audit.search.textmatch import MOVED_THRESHOLD, SIBLING_MAX, directional_containments
 from audit.search.urls import is_public_web_url
@@ -203,7 +203,7 @@ def run_offline_audit(monkeypatch):
 
     async def run(
         article, *, similar=(), pages=None, relevant=True, source_result=None,
-        web_result=None,
+        web_result=None, web_agent=None,
     ):
         pages = pages or {}
         assert all(is_public_web_url(url) for url in [article.url, *pages])
@@ -242,7 +242,7 @@ def run_offline_audit(monkeypatch):
             ),
             related_removals=FakeAgent("NONE"),
             source=FakeAgent(source_result or source.SourceResult()),
-            web_search=FakeAgent(
+            web_search=web_agent or FakeAgent(
                 web_result or web_search.WebSearchResult(
                     reasoning="No invented match selected",
                 )
@@ -836,6 +836,72 @@ async def test_rewrite_never_preempts_partial_copy_missing_key_facts(
         assert result["response"][field] == baseline["response"][field]
 
 
+async def test_prompt_keeps_third_partial_copy_and_appends_fourth_rewrite(run_offline_audit):
+    unrelated = [f"https://dusulke.example/unrelated/{i}" for i in range(2)]
+    urls = [*unrelated, SECOND_URL, NEW_URL]
+    candidates = [
+        SimilarArticle(id=72000 + i, link=url, title="Invented unrelated headline")
+        for i, url in enumerate(unrelated)
+    ] + [
+        SimilarArticle(id=71002, link=SECOND_URL, title=dated_budget().title),
+        dated_rewrite_candidate(),
+    ]
+    prompts = []
+
+    async def judge(prompt, **kwargs):
+        prompts.append(prompt)
+        assert all(url in prompt for url in urls)
+        assert [line.split(" (")[1].removesuffix(")") for line in prompt.splitlines()
+                if line.startswith("- ")] == urls
+        return SimpleNamespace(data=web_search.WebSearchResult(
+            matches=[match for match in [
+                web_search.PageMatch(url=NEW_URL),
+                web_search.PageMatch(url=SECOND_URL, covers_key_facts=False,
+                                     omissions=["Monthly spending statements"]),
+            ] if match.url in prompt], reasoning="Invented pages shown in the prompt",
+        ))
+
+    result = await run_offline_audit(
+        dated_budget(), similar=candidates, web_agent=SimpleNamespace(run=judge),
+        pages={unrelated[0]: page(ORCHARD), unrelated[1]: page(POTTERY),
+               SECOND_URL: page(BUDGET[:1] + ORCHARD), NEW_URL: page(REWRITE_FACTS)},
+    )
+    assert len(prompts) == 1
+    assert details(result, "similarity")["rewrite"]["url"] == NEW_URL
+    web = details(result, "web_search")
+    assert web["relocated_to"] == SECOND_URL
+    assert web["covers_key_facts"] is False
+    assert web["omissions"] == ["Monthly spending statements"]
+    assert result["response"]["verdict"] == "POSSIBLE_CENSORSHIP"
+    assert f"to {SECOND_URL}" in result["response"]["findings"]
+
+
+async def test_engine_hands_only_best_rewrite_to_web_search(run_offline_audit, monkeypatch):
+    original_run = web_search.run
+    forwarded = []
+
+    async def inspect_rewrites(*args, **kwargs):
+        forwarded.append(kwargs["rewrites"])
+        return await original_run(*args, **kwargs)
+
+    monkeypatch.setattr(web_search, "run", inspect_rewrites)
+    result = await run_offline_audit(
+        dated_budget(), similar=[
+            dated_rewrite_candidate(),
+            dated_rewrite_candidate(id=71002, link=SECOND_URL),
+        ], pages={NEW_URL: page(REWRITE_FACTS), SECOND_URL: page(REWRITE_FACTS)},
+        web_result=web_search.WebSearchResult(matches=[
+            web_search.PageMatch(url=SECOND_URL), web_search.PageMatch(url=NEW_URL),
+        ], reasoning="Invented rewrites"),
+    )
+    sim = details(result, "similarity")
+    assert all(c["rewrite"] for c in sim["candidates"])
+    assert sim["rewrite"]["url"] == NEW_URL
+    assert len(forwarded) == 1
+    assert list(forwarded[0]) == [normalize_url(NEW_URL)]
+    assert details(result, "web_search")["relocated_to"] == NEW_URL
+
+
 async def test_template_headline_with_unrelated_words_stays_set_aside(run_offline_audit):
     result = await run_offline_audit(
         dated_budget(), similar=[dated_rewrite_candidate()],
@@ -911,6 +977,33 @@ async def test_stub_with_matching_archive_headline_needs_live_page_evidence(
     assert measured["headline_in_text"] == 0
     assert measured["rewrite"] is False
     assert result["response"]["verdict"] == "LIKELY_LOW_PUBLIC_INTEREST"
+
+
+@pytest.mark.parametrize(("destination", "expected_rewrite", "verdict"), [
+    ("https://dusulke.example/", False, "LIKELY_LOW_PUBLIC_INTEREST"),
+    ("https://dusulke.example/section", False, "LIKELY_LOW_PUBLIC_INTEREST"),
+    ("https://dusulke.example/haber/71001/changed-slug", True, "LIKELY_MOVED"),
+])
+async def test_long_rewrite_redirect_must_stay_on_same_article(
+    run_offline_audit, destination, expected_rewrite, verdict,
+):
+    result = await run_offline_audit(
+        dated_budget(), similar=[dated_rewrite_candidate()], relevant=False,
+        pages={NEW_URL: httpx.Response(302, headers={"location": destination}),
+               destination: page(REWRITE_FACTS)},
+    )
+    sim = details(result, "similarity")
+    measured = sim["candidates"][0]
+    assert measured["status"] == "live"
+    assert measured["final_url"] == destination
+    assert measured["own_words"] >= 20
+    assert measured["title_overlap"] >= 0.40
+    assert measured["word_overlap"] >= 0.40
+    assert measured["date_gap_days"] == 2
+    assert max(measured["old_in_new"], measured["new_in_old"]) < SIBLING_MAX
+    assert measured["rewrite"] is expected_rewrite
+    assert (sim["rewrite"] is not None) is expected_rewrite
+    assert result["response"]["verdict"] == verdict
 
 
 async def test_factual_rewrite_without_any_archive_date_fails_closed(run_offline_audit):

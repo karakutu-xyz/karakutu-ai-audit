@@ -46,7 +46,8 @@ PLACEHOLDER_WEB_SEARCH_PROMPT = prompts.WEB_SEARCH_PROMPT
 # EMPTY response when this prompt gets large, and it is the biggest prompt the service sends.
 # START SMALL: a large first rung tends to come back empty on Turkish articles, burning a
 # long doomed call before the ladder shrinks — the worst prompt would be tried FIRST. The first rung is now sized to usually SUCCEED (3 pages for coverage, but 500 chars),
-# and the rungs shrink from there. Each rung is a genuinely smaller ask.
+# and the rungs shrink from there. Each rung may add the single best rewrite
+# without displacing its budgeted pages.
 _PROMPT_BUDGETS = [
     (MAX_PAGES_IN_PROMPT, 500),   # 3 pages x 500
     (2, 400),
@@ -56,7 +57,7 @@ _PROMPT_BUDGETS = [
 # model's loaded context, and a human rarely needs more than a few leads.
 MAX_DEAD_IN_PROMPT = 3
 MAX_DEAD_SNIPPET_CHARS = 200
-# Output cap per model call (merged over the provider default). A correct answer — up to 3
+# Output cap per model call (merged over the provider default). A correct answer — up to 4
 # matches with omissions plus two sentences of reasoning — is ~100–250 tokens. A runaway rung can
 # otherwise run to the provider's token cap and take minutes before the next rung answers
 # quickly. The ladder is the fix; the cap just makes the doomed rung cheap.
@@ -208,6 +209,7 @@ async def run(removed: Article, search_provider: BaseSearchProvider,
     `prefetched` is what those steps already fetched; nothing in it is fetched again, and its
     archive-sourced dead candidates are upgraded to `source="web"` when a web pass here
     independently returns the same URL (their 404 then keeps full evidentiary standing).
+    `rewrites` contains only similarity's best rewrite, keyed by normalized URL.
     """
     hits, queries, failed = await _gather_hits(
         removed, search_provider, leads=list(extra_hits or []),
@@ -236,8 +238,6 @@ async def run(removed: Article, search_provider: BaseSearchProvider,
                              await _fetch_new(hits, prefetched or FetchOutcome(), removed.url),
                              hits)
 
-    # Stable priority keeps measured rewrite leads inside every prompt budget.
-    fetched.live.sort(key=lambda p: normalize_url(p.url) not in (rewrites or {}))
     web_dead = [d for d in fetched.dead if d.source != "archive"]
     if not fetched.live and not web_dead:
         # Nothing to read and nothing demonstrably gone. (Archive-sourced dead links do not
@@ -260,12 +260,16 @@ async def run(removed: Article, search_provider: BaseSearchProvider,
         ))
 
     # The model call is the one thing here that actually breaks: a local model handed the full
-    # prompt (removed article + up to 3 fetched pages) returns an EMPTY response and pydantic-ai
+    # prompt (removed article + fetched pages) returns an EMPTY response and pydantic-ai
     # raises. It is prompt-size driven, so retry progressively smaller before giving up.
     last_exc: Optional[Exception] = None
+    rewrite = next(iter((rewrites or {}).values()), None)
     for attempt, (pages, page_chars) in enumerate(_PROMPT_BUDGETS, start=1):
         try:
-            prompt = _build_prompt(removed, fetched, max_pages=pages, page_chars=page_chars)
+            prompt = _build_prompt(
+                removed, fetched, max_pages=pages, page_chars=page_chars,
+                rewrite_url=rewrite.url if rewrite else None,
+            )
             result = await agent.run(prompt, model_settings={"max_tokens": WEB_SEARCH_MAX_TOKENS})
             return explain(_ground(result.data, fetched, removed, len(hits), rewrites=rewrites))
         except Exception as exc:  # noqa: BLE001 — empty response, protocol error, timeout…
@@ -406,11 +410,21 @@ def _merge_fetched(prefetched: FetchOutcome, fresh: FetchOutcome, hits: List[Sea
 
 def _build_prompt(removed: Article, fetched: FetchOutcome,
                   max_pages: int = MAX_PAGES_IN_PROMPT,
-                  page_chars: int = MAX_PAGE_CHARS) -> str:
-    """Render the removed article, live pages, and dead links into the model prompt."""
+                  page_chars: int = MAX_PAGE_CHARS,
+                  rewrite_url: Optional[str] = None) -> str:
+    """Keep the original page budget, adding the best rewrite only if outside it."""
+    pages = fetched.live[:max_pages]
+    if rewrite_url is not None:
+        key = normalize_url(rewrite_url)
+        if not any(normalize_url(p.url) == key for p in pages):
+            rewrite_page = next(
+                (p for p in fetched.live[max_pages:] if normalize_url(p.url) == key), None,
+            )
+            if rewrite_page is not None:
+                pages.append(rewrite_page)
     live_text = "\n\n".join(
         f"- {p.title} ({p.url})\n  TEXT: {p.text[:page_chars]}"
-        for p in fetched.live[:max_pages]
+        for p in pages
     ) or "(none)"
 
     # Only WEB-sourced dead links are shown: an archive-sourced dead link can never become

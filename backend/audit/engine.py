@@ -392,7 +392,7 @@ class AuditEngine:
             out = await web_search.run(
                 article, self.search, s['agents'].web_search,
                 prefetched=prefetched, extra_hits=leads,
-                rewrites={normalize_url(c.url): c for c in sim.candidates if c.rewrite},
+                rewrites=({normalize_url(sim.rewrite.url): sim.rewrite} if sim.rewrite else {}),
             )
         except web_search.WebSearchModelFailure as exc:
             failed = pipeline._stage_failed(stage)

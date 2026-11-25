@@ -9,7 +9,7 @@
 | 3. Relevance | Title and the first 2,000 characters of the article prose (archive HTML is reduced to its paragraphs first, as in the other steps). | Public-affairs judgment: laws, votes, budgets, public services, elections, rights and the use of power are in scope with or without an allegation of wrongdoing; private matters of influential people are out unless the story shows a public stake. A failed model call is `AUDIT_FAILED`; a low-interest judgment waits for step 4 before exiting as `LIKELY_MOVED` or `LIKELY_LOW_PUBLIC_INTEREST`. |
 | 4. Related removals | Archive removal window (±14 days), same-subject model matching. | At least three confirmed related items across at least two publishers, or a related item already marked censored by a human auditor, raise `RELATED_REMOVALS`, keeping an otherwise low-interest item in scope. Without a pattern, a measured same-publisher partial copy holding at least 50% of the original text gives `LIKELY_MOVED`; otherwise a qualifying same-publisher rewrite gives `LIKELY_MOVED`, then a below-floor partial copy adds a relocation note to `LIKELY_LOW_PUBLIC_INTEREST`. Missing archive evidence does not manufacture a pattern. Strong key terms are lone acronyms (not all-caps header runs or labels) and two-word names (not company or legal-form pairs such as "Anonim Şirketi"); a name matches only from a word start. |
 | 5. Source | Original URL, article citations, source search. | A live original with measured text overlap ends as `NOT_REMOVED`. A cited-source 404/410 may supply `SOURCE_DEAD`; access blocks and fetch refusals cannot. A live cited page counts as the same story, and becomes a web-search lead, only when it holds at least 20% of the archived text (the sibling line); below that it is reported as not shown to be the same story. |
-| 6. Web search | Search queries, archive/source leads, fetched page evidence and structured model outputs. | Rewrite candidates lead the live-page prompt list. Models identify candidate matches; measured grounding first applies the existing relocation rule, promoting a demoted rewrite only if no other same-publisher match qualifies. The deterministic decision function selects the verdict. All failed model attempts mean `AUDIT_FAILED`. |
+| 6. Web search | Search queries, archive/source leads, fetched page evidence and structured model outputs. | Prompts preserve the first budgeted live pages and append the best rewrite if absent. Models identify candidate matches; measured grounding first applies the existing relocation rule, promoting a demoted rewrite only if no other same-publisher match qualifies. The deterministic decision function selects the verdict. All failed model attempts mean `AUDIT_FAILED`. |
 
 `workflow/pipeline.py::_decide` maps substantive evidence to `NOT_REMOVED`, `MOVED`,
 `LIKELY_MOVED`, `FOUND_ONLINE`, `POSSIBLE_CENSORSHIP`, or `INCONCLUSIVE`. The pipeline
@@ -37,9 +37,9 @@ These words are looked for throughout the candidate page. For at least 20 own wo
 a rewrite needs at least 40% of those words, at least 40% of the original headline
 words and a publication gap of at most two days. Shorter originals instead need
 at least 80% headline overlap in both directions within one day, with at least 80%
-of the original headline words present in the live page's text. The page must not
-redirect to a different page: a final URL, when present, must normalize to the
-requested URL or identify the same article variant. All bars include
+of the original headline words present in the live page's text. For both rules, the
+page must not redirect to a different page: a final URL, when present, must normalize
+to the requested URL or identify the same article variant. All bars include
 the boundary. A missing title falls back to the URL's final path segment, dropping
 all-digit slug tokens. The candidate uses its archive title, else the URL slug.
 Dates use the two publication dates when parseable, comparing calendar
@@ -48,8 +48,11 @@ counts. Missing dates fail closed. Archive title and URL similarity scores are n
 used, and verbatim copies remain republications rather than rewrites.
 
 Similarity retains the best rewrite by word overlap, then headline overlap (headline
-for short originals), unless a measured republication was found. It hands all rewrite
-candidates to web search and puts their live pages first in the bounded prompts.
+for short originals), unless a measured republication was found. It hands only that
+best rewrite to web search. Each prompt preserves the first `max_pages` live pages
+in their unchanged order and appends the rewrite page only if absent, giving at
+most `max_pages + 1` pages. This also applies to every smaller prompt retry, so a
+rewrite never pushes an otherwise-visible partial copy out of the prompt.
 In scope, the model must still identify the page as the same story. Grounding first
 applies the existing relocation rule in model-match order, demoting same-publisher
 hits whose shingle containments are both below 20%. Only if that selection found no
