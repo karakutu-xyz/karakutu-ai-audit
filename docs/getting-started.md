@@ -176,9 +176,11 @@ parts fit together, read [Architecture](architecture.md). Every variable and its
       also fail after startup even when status says it is enabled.
     - If every candidate page from one publisher reads as unreadable with
       `HTTP 403` inside Docker while the pages open normally in a browser, the
-      API container is likely running an old image. The image is built on Debian
-      trixie because the older bookworm image drew bot challenges from some
-      publishers; run `make live` again to rebuild it. See
+      publisher is refusing the API's fetches, not removing its articles. One
+      known cause is an old API image: the image is now built on Debian trixie
+      because the older bookworm image drew bot challenges from some publishers,
+      so run `make live` again to rebuild it. If the 403s persist on the current
+      image, the publisher is blocking this fetch environment itself. See
       [Outbound fetches and bot challenges](deploy-docker.md#outbound-fetches-and-bot-challenges).
     - For degraded search, see step 9. For an unreachable search service, check
       SearXNG and its configured URL; a refused request may mean JSON output is off.
