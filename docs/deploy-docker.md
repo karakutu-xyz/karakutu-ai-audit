@@ -184,6 +184,17 @@ Do not start the newer version on the restored data in between: it would migrate
 forward again, and the older code refuses a newer schema. Check health and the workflow again.
 Restoring discards data written since the backup.
 
+## Outbound fetches and bot challenges
+
+The API image is built on Debian trixie (`python:3.11-slim-trixie`). Some publishers behind
+Cloudflare answer the older bookworm image's OpenSSL 3.0 TLS handshake with a bot challenge
+(HTTP 403, `cf-mitigated: challenge`) while serving the same request from a newer OpenSSL. Every page
+of such an outlet then reads as unreadable inside the container only, and audits lose that
+evidence. Keep the base image current. When a run shows a publisher's candidates as unreadable,
+the reason on each candidate says why (for example `HTTP 403 (blocked/erroring, not gone)` or a
+connection error class); a whole outlet with the same 403 points at the fetch environment, not
+at the articles.
+
 ## One API process
 
 The run queue is in process. Do not scale the API service or add worker processes: they cannot

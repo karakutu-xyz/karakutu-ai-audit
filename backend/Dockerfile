@@ -1,5 +1,8 @@
 FROM ghcr.io/astral-sh/uv:0.12.2 AS uv
-FROM python:3.11-slim-bookworm
+# Debian trixie, not bookworm: bookworm's OpenSSL 3.0 TLS handshake draws a Cloudflare bot
+# challenge (HTTP 403, cf-mitigated: challenge) from publishers that serve the same request
+# from a newer OpenSSL, so whole outlets read as unreadable inside the container only.
+FROM python:3.11-slim-trixie
 
 COPY --from=uv /uv /uvx /usr/local/bin/
 WORKDIR /app

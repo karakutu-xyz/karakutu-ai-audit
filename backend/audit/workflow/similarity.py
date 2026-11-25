@@ -49,6 +49,11 @@ class SimilarCandidate(BaseModel):
     same_publisher: bool = False
     status: str = "unfetched"           # live | dead | unreadable | excluded_self | excluded_variant | excluded_redirect_self
     final_url: Optional[str] = None
+    # Why a dead or unreadable candidate could not be read, from the fetch layer: an HTTP
+    # status ("HTTP 403 (blocked/erroring, not gone)") or an exception class name, never
+    # exception text. A whole run of "HTTP 403" from one publisher points at the fetch
+    # environment (for example a bot challenge), not at the articles.
+    reason: Optional[str] = None
     old_in_new: Optional[float] = None  # measured for live same-publisher candidates only
     new_in_old: Optional[float] = None
     raw_old_in_new: Optional[float] = None
@@ -98,8 +103,8 @@ async def run(removed: Article, *, client: Optional[KarakutuClient] = None) -> S
     fetched = await fetch_candidates(hits, exclude_url=removed.url)
 
     live: Dict[str, LivePage] = {normalize_url(p.url): p for p in fetched.live}
-    dead = {normalize_url(d.url) for d in fetched.dead}
-    unreadable = {normalize_url(u.url) for u in fetched.unreadable}
+    dead = {normalize_url(d.url): d.reason for d in fetched.dead}
+    unreadable = {normalize_url(u.url): u.reason for u in fetched.unreadable}
     excluded = {}
     for status, urls in (("excluded_self", fetched.excluded_self),
                          ("excluded_variant", fetched.excluded_variant),
@@ -158,9 +163,9 @@ async def run(removed: Article, *, client: Optional[KarakutuClient] = None) -> S
                 if o is not None and o >= MOVED_THRESHOLD and (best is None or o > best[1]):
                     best = (page, o, n)
         elif key in dead:
-            cand.status = "dead"
+            cand.status, cand.reason = "dead", dead[key][:120]
         elif key in unreadable:
-            cand.status = "unreadable"
+            cand.status, cand.reason = "unreadable", unreadable[key][:120]
         elif key in excluded:
             cand.status = excluded[key]
         candidates.append(cand)

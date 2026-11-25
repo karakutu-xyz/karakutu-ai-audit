@@ -2476,6 +2476,51 @@ test("story evidence uses stored measurements and never treats a failed probe as
   assert.equal(evidenceSummary({ name: "classification", output: {} }).length, 0);
 });
 
+test("evidence lines say why a page could not be read", () => {
+  const { evidenceSummary } = load(path.join(root, "features/steps/evidenceSummary.ts"));
+  const lines = evidenceSummary({ name: "similarity", output: { details: { candidates: [
+    { url: "https://ledger.invalid/a", status: "unreadable",
+      reason: "HTTP 403 (blocked/erroring, not gone)" },
+    { url: "https://ledger.invalid/b", status: "unreadable", reason: "ConnectError (unreachable, not provably gone)" },
+    { url: "https://ledger.invalid/c", status: "live" },
+  ] } }, evidence: [{ type: "fetch_candidates", output: {
+    dead: [{ url: "https://copy.invalid/gone", status: 404, reason: "HTTP 404" }],
+  } }] });
+  assert.ok(lines.some((line) =>
+    line.text === "ledger.invalid · HTTP 403 (blocked/erroring, not gone)"));
+  assert.ok(lines.some((line) =>
+    line.text === "ledger.invalid · ConnectError (unreachable, not provably gone)"));
+  assert.ok(lines.some((line) => line.text === "ledger.invalid"));
+  // A reason that only repeats the HTTP status is not shown twice.
+  assert.ok(lines.some((line) => line.text === "copy.invalid · HTTP 404"));
+  assert.ok(!lines.some((line) => line.text.includes("HTTP 404 · HTTP 404")));
+  // An older run keeps the reason only in the fetch trace: one line per page, with the reason.
+  const older = evidenceSummary({ name: "similarity", output: { details: { candidates: [
+    { url: "https://ledger.invalid/a", status: "unreadable" },
+  ] } }, evidence: [{ type: "fetch_candidates", output: { unreadable: [
+    { url: "https://ledger.invalid/a", reason: "HTTP 403 (blocked/erroring, not gone)" },
+  ] } }] });
+  assert.equal(older.map((line) => line.text).join("\n"),
+    "ledger.invalid · HTTP 403 (blocked/erroring, not gone)");
+  // Older traces stored the response's own content type: never shown, only "not HTML".
+  // Unknown reason text is dropped. A live page keeps both its status and its measurement.
+  const mixed = evidenceSummary({ name: "similarity", output: { details: { candidates: [
+    { url: "https://ledger.invalid/live", status: "live", old_in_new: 0.35 },
+  ] } }, evidence: [{ type: "fetch_candidates", output: {
+    live: [{ url: "https://ledger.invalid/live", status: 200 }],
+    unreadable: [
+      { url: "https://ledger.invalid/doc", reason: "not HTML (application/fabricated-private-words)" },
+      { url: "https://ledger.invalid/odd", reason: "fabricated private upstream words" },
+    ],
+  } }] });
+  const texts = mixed.map((line) => line.text).join("\n");
+  assert.ok(!texts.includes("fabricated"), texts);
+  assert.ok(texts.includes("ledger.invalid · not HTML"), texts);
+  assert.equal(mixed.filter((line) => line.url === "https://ledger.invalid/live").length, 1);
+  const live = mixed.find((line) => line.url === "https://ledger.invalid/live").text;
+  assert.ok(live.includes("HTTP 200") && live.includes("containment"), live);
+});
+
 test("Articles clamps only fresh offsets and resets its own epoch across routes", () => {
   const harness = ledgerHarness("ArticlesPage");
   visit("https://workbench.invalid/articles?q=fictional&offset=100");

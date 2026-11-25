@@ -226,6 +226,25 @@ async def test_only_live_requested_and_final_same_publisher_pages_are_measured(m
     assert result.rewrite is None
 
 
+async def test_candidates_record_why_a_page_could_not_be_read(monkeypatch):
+    urls = [f"{NEW_URL}/{i}" for i in range(4)]
+    fetched = FetchOutcome(
+        unreadable=[UnreadableCandidate(url=urls[0], title=TITLE,
+                                        reason="HTTP 403 (blocked/erroring, not gone)"),
+                    UnreadableCandidate(url=urls[1], title=TITLE, reason="x" * 300)],
+        dead=[DeadCandidate(url=urls[2], title=TITLE, snippet="", status=404, reason="HTTP 404")],
+        live=[live_page(url=urls[3], final_url=urls[3])],
+    )
+    result = await run_similarity(
+        monkeypatch, [archive_candidate(id=i, link=u) for i, u in enumerate(urls)], fetched)
+    by_url = {c.url: c for c in result.candidates}
+    assert (by_url[urls[0]].status, by_url[urls[0]].reason) == (
+        "unreadable", "HTTP 403 (blocked/erroring, not gone)")
+    assert by_url[urls[1]].reason == "x" * 120
+    assert (by_url[urls[2]].status, by_url[urls[2]].reason) == ("dead", "HTTP 404")
+    assert by_url[urls[3]].status == "live" and by_url[urls[3]].reason is None
+
+
 async def test_best_rewrite_ranks_words_then_headline(monkeypatch):
     candidates = [archive_candidate(id=i, link=f"{NEW_URL}/{i}") for i in range(3)]
     pages = [live_page(url=c.link, final_url=c.link, text=" ".join(reversed(WORDS[:count])))

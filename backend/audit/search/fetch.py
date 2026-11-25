@@ -445,6 +445,17 @@ def markdown_to_text(md: str) -> str:
 _DNS_REFUSAL = "ssrf-guard: refused"
 
 
+def _non_html_kind(content_type: str) -> str:
+    """A fixed word for a non-HTML response: the header itself is upstream text and is
+    never kept in a reason."""
+    if content_type == "application/pdf":
+        return "PDF"
+    for prefix, kind in (("image/", "image"), ("video/", "video"), ("audio/", "audio")):
+        if content_type.startswith(prefix):
+            return kind
+    return "another content type"
+
+
 class GuardedNetworkBackend(httpcore.AsyncNetworkBackend):  # `timeout` params: httpcore interface
     """An httpcore network backend that only connects to public unicast addresses."""
 
@@ -577,7 +588,7 @@ async def _fetch_one(client: httpx.AsyncClient, hit: SearchResult) -> object:
             if content_type and not content_type.startswith(_READABLE_TYPES):
                 # A PDF or an image answered 200. Not a dead article — just not an article.
                 return UnreadableCandidate(url=hit.url, title=hit.title,
-                                           reason=f"not HTML ({content_type})")
+                                           reason=f"not HTML ({_non_html_kind(content_type)})")
 
             # HTML: read the body, but cap it — a news page is small, and this bounds the
             # cost of a mislabelled giant response.
