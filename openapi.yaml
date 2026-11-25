@@ -9,7 +9,7 @@ components:
           anyOf:
           - format: date-time
             type: string
-          - type: 'null'
+          - type: "null"
           title: Published At
         title:
           title: Title
@@ -29,7 +29,7 @@ components:
         archive_id:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Archive Id
         category:
           enum:
@@ -46,17 +46,17 @@ components:
         language:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Language
         latest_run_at:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Latest Run At
         latest_run_id:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Latest Run Id
         latest_run_status:
           anyOf:
@@ -67,18 +67,18 @@ components:
             - failed
             - cancelled
             type: string
-          - type: 'null'
+          - type: "null"
           title: Latest Run Status
         latest_verdict:
           anyOf:
           - $ref: '#/components/schemas/Verdict'
-          - type: 'null'
+          - type: "null"
         links:
           $ref: '#/components/schemas/ArticleLinks'
         published_at:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Published At
         ref:
           title: Ref
@@ -89,7 +89,7 @@ components:
         removed_at:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Removed At
         run_count:
           title: Run Count
@@ -104,12 +104,12 @@ components:
           - additionalProperties:
               $ref: '#/components/schemas/JsonValue'
             type: object
-          - type: 'null'
+          - type: "null"
           title: Snapshot
         source:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Source
         status:
           enum:
@@ -158,7 +158,7 @@ components:
           - maxLength: 512
             minLength: 1
             type: string
-          - type: 'null'
+          - type: "null"
           title: Archive Id
         content_sha256:
           pattern: ^[0-9a-f]{64}$
@@ -169,7 +169,7 @@ components:
           - maxLength: 512
             minLength: 1
             type: string
-          - type: 'null'
+          - type: "null"
           title: Ref
         url:
           title: Url
@@ -210,7 +210,7 @@ components:
           anyOf:
           - format: date-time
             type: string
-          - type: 'null'
+          - type: "null"
           title: Published At
         title:
           maxLength: 2000
@@ -233,7 +233,7 @@ components:
         archive_url:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Archive Url
         original_url:
           title: Original Url
@@ -280,7 +280,7 @@ components:
         finished_at:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Finished At
         id:
           title: Id
@@ -288,7 +288,7 @@ components:
         label:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Label
         origin:
           enum:
@@ -310,11 +310,11 @@ components:
         summary:
           anyOf:
           - $ref: '#/components/schemas/RunStory'
-          - type: 'null'
+          - type: "null"
         verdict:
           anyOf:
           - $ref: '#/components/schemas/Verdict'
-          - type: 'null'
+          - type: "null"
         workflow_id:
           title: Workflow Id
           type: string
@@ -345,12 +345,12 @@ components:
         latest_run_at:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Latest Run At
         latest_run_id:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Latest Run Id
         latest_run_status:
           anyOf:
@@ -361,16 +361,16 @@ components:
             - failed
             - cancelled
             type: string
-          - type: 'null'
+          - type: "null"
           title: Latest Run Status
         latest_verdict:
           anyOf:
           - $ref: '#/components/schemas/Verdict'
-          - type: 'null'
+          - type: "null"
         published_at:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Published At
         ref:
           title: Ref
@@ -381,7 +381,7 @@ components:
         removed_at:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Removed At
         run_count:
           title: Run Count
@@ -389,7 +389,7 @@ components:
         source:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Source
         status:
           enum:
@@ -450,7 +450,7 @@ components:
         classification:
           anyOf:
           - $ref: '#/components/schemas/audit__domain__Classification'
-          - type: 'null'
+          - type: "null"
         findings:
           title: Findings
           type: string
@@ -462,7 +462,7 @@ components:
         short_circuited_at:
           anyOf:
           - $ref: '#/components/schemas/StageName'
-          - type: 'null'
+          - type: "null"
         stages:
           items:
             $ref: '#/components/schemas/StageResult'
@@ -484,20 +484,20 @@ components:
         classification:
           anyOf:
           - $ref: '#/components/schemas/audit__record__Classification'
-          - type: 'null'
+          - type: "null"
         error:
           anyOf:
           - $ref: '#/components/schemas/Error'
-          - type: 'null'
+          - type: "null"
         evidence:
           anyOf:
           - $ref: '#/components/schemas/Evidence'
-          - type: 'null'
+          - type: "null"
         findings:
           anyOf:
           - maxLength: 2000
             type: string
-          - type: 'null'
+          - type: "null"
           title: Findings
         flags:
           items:
@@ -516,7 +516,7 @@ components:
             - $ref: '#/components/schemas/Initial'
             - $ref: '#/components/schemas/ReAudit'
             - $ref: '#/components/schemas/Correction'
-          - type: 'null'
+          - type: "null"
           title: Lineage
         notice:
           const: Machine triage record. No verdict, including POSSIBLE_CENSORSHIP, is a finding of censorship;
@@ -527,7 +527,7 @@ components:
           anyOf:
           - pattern: ^run_[0-9a-f]{32}\.r[0-9]+$
             type: string
-          - type: 'null'
+          - type: "null"
           title: Record Id
         run:
           $ref: '#/components/schemas/ResultRun'
@@ -536,7 +536,7 @@ components:
           title: Schema
           type: string
         schema_version:
-          const: '2.0'
+          const: "2.0"
           title: Schema Version
           type: string
         stages:
@@ -548,7 +548,7 @@ components:
         verdict:
           anyOf:
           - $ref: '#/components/schemas/Verdict'
-          - type: 'null'
+          - type: "null"
       required:
       - schema
       - schema_version
@@ -626,7 +626,7 @@ components:
         covers_key_facts:
           anyOf:
           - type: boolean
-          - type: 'null'
+          - type: "null"
           title: Covers Key Facts
         dead_copies:
           items:
@@ -644,17 +644,17 @@ components:
         new_in_old:
           anyOf:
           - type: number
-          - type: 'null'
+          - type: "null"
           title: New In Old
         old_in_new:
           anyOf:
           - type: number
-          - type: 'null'
+          - type: "null"
           title: Old In New
         original_url_status:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Original Url Status
         related_same_publisher:
           items:
@@ -667,17 +667,17 @@ components:
           anyOf:
           - maxLength: 512
             type: string
-          - type: 'null'
+          - type: "null"
           title: Relocated To
         search_queries:
           anyOf:
           - type: integer
-          - type: 'null'
+          - type: "null"
           title: Search Queries
         search_queries_failed:
           anyOf:
           - type: integer
-          - type: 'null'
+          - type: "null"
           title: Search Queries Failed
       required:
       - relocated_to
@@ -740,7 +740,7 @@ components:
         override:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Override
         source:
           const: api
@@ -774,7 +774,7 @@ components:
           anyOf:
           - const: models_unavailable
             type: string
-          - type: 'null'
+          - type: "null"
           title: Error
         steps:
           additionalProperties:
@@ -800,10 +800,10 @@ components:
           anyOf:
           - maxLength: 200
             type: string
-          - type: 'null'
+          - type: "null"
           title: Model
         note:
-          default: ''
+          default: ""
           maxLength: 2000
           title: Note
           type: string
@@ -826,7 +826,7 @@ components:
         override:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Override
         source:
           enum:
@@ -849,7 +849,7 @@ components:
           title: Author
           type: string
         note:
-          default: ''
+          default: ""
           maxLength: 2000
           title: Note
           type: string
@@ -926,7 +926,7 @@ components:
           title: Author
           type: string
         note:
-          default: ''
+          default: ""
           maxLength: 2000
           title: Note
           type: string
@@ -1076,7 +1076,7 @@ components:
           title: Author
           type: string
         note:
-          default: ''
+          default: ""
           maxLength: 2000
           title: Note
           type: string
@@ -1196,7 +1196,7 @@ components:
         expected_verdict:
           anyOf:
           - $ref: '#/components/schemas/Verdict'
-          - type: 'null'
+          - type: "null"
         id:
           title: Id
           type: string
@@ -1236,9 +1236,9 @@ components:
         expected_verdict:
           anyOf:
           - $ref: '#/components/schemas/Verdict'
-          - type: 'null'
+          - type: "null"
         note:
-          default: ''
+          default: ""
           maxLength: 4000
           title: Note
           type: string
@@ -1276,7 +1276,7 @@ components:
           anyOf:
           - format: date-time
             type: string
-          - type: 'null'
+          - type: "null"
           title: Finished At
         id:
           title: Id
@@ -1316,7 +1316,7 @@ components:
         article_ref:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Article Ref
         article_title:
           title: Article Title
@@ -1334,15 +1334,15 @@ components:
         error:
           anyOf:
           - $ref: '#/components/schemas/RunError'
-          - type: 'null'
+          - type: "null"
         expected_verdict:
           anyOf:
           - $ref: '#/components/schemas/Verdict'
-          - type: 'null'
+          - type: "null"
         finished_at:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Finished At
         id:
           title: Id
@@ -1352,7 +1352,7 @@ components:
         label:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Label
         model:
           additionalProperties:
@@ -1370,7 +1370,7 @@ components:
         output:
           anyOf:
           - $ref: '#/components/schemas/AuditResponse'
-          - type: 'null'
+          - type: "null"
         reactions:
           items:
             $ref: '#/components/schemas/Reaction'
@@ -1393,14 +1393,14 @@ components:
         summary:
           anyOf:
           - $ref: '#/components/schemas/RunStory'
-          - type: 'null'
+          - type: "null"
         synthetic:
           title: Synthetic
           type: boolean
         verdict:
           anyOf:
           - $ref: '#/components/schemas/Verdict'
-          - type: 'null'
+          - type: "null"
         workflow_id:
           title: Workflow Id
           type: string
@@ -1450,12 +1450,12 @@ components:
         expected_verdict:
           anyOf:
           - $ref: '#/components/schemas/Verdict'
-          - type: 'null'
+          - type: "null"
         label:
           anyOf:
           - maxLength: 200
             type: string
-          - type: 'null'
+          - type: "null"
           title: Label
         removed_article:
           $ref: '#/components/schemas/ArticleInput'
@@ -1507,7 +1507,7 @@ components:
         model:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Model
         model_calls:
           items:
@@ -1553,7 +1553,7 @@ components:
         human_review_note:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Human Review Note
         sentences:
           items:
@@ -1573,7 +1573,7 @@ components:
         verdict:
           anyOf:
           - $ref: '#/components/schemas/Verdict'
-          - type: 'null'
+          - type: "null"
         verdict_label:
           title: Verdict Label
           type: string
@@ -1606,7 +1606,7 @@ components:
         finished_at:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Finished At
         id:
           title: Id
@@ -1614,7 +1614,7 @@ components:
         label:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Label
         origin:
           enum:
@@ -1644,7 +1644,7 @@ components:
         verdict:
           anyOf:
           - $ref: '#/components/schemas/Verdict'
-          - type: 'null'
+          - type: "null"
         workflow_id:
           title: Workflow Id
           type: string
@@ -1673,19 +1673,19 @@ components:
           - items:
               type: string
             type: array
-          - type: 'null'
+          - type: "null"
           title: Codes
         correlation_id:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Correlation Id
         fields:
           anyOf:
           - items:
               $ref: '#/components/schemas/ValidationField'
             type: array
-          - type: 'null'
+          - type: "null"
           title: Fields
         reason:
           anyOf:
@@ -1713,12 +1713,12 @@ components:
             type: string
           - const: not_configured
             type: string
-          - type: 'null'
+          - type: "null"
           title: Reason
         run_id:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Run Id
       required:
       - code
@@ -1842,13 +1842,13 @@ components:
         confidence:
           anyOf:
           - type: number
-          - type: 'null'
+          - type: "null"
           title: Confidence
         details:
           anyOf:
           - additionalProperties: true
             type: object
-          - type: 'null'
+          - type: "null"
           title: Details
         explanation:
           title: Explanation
@@ -1889,7 +1889,7 @@ components:
         line:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Line
         name:
           $ref: '#/components/schemas/StageName'
@@ -1900,7 +1900,7 @@ components:
             - fail
             - inconclusive
             type: string
-          - type: 'null'
+          - type: "null"
           title: Outcome
         status:
           enum:
@@ -1991,7 +1991,7 @@ components:
         models:
           anyOf:
           - $ref: '#/components/schemas/WorkflowModels'
-          - type: 'null'
+          - type: "null"
         prompts:
           additionalProperties:
             type: string
@@ -2093,13 +2093,13 @@ components:
         genre:
           anyOf:
           - $ref: '#/components/schemas/audit__domain__ConceptTag'
-          - type: 'null'
+          - type: "null"
         geographic_scope:
           anyOf:
           - $ref: '#/components/schemas/GeographicScope'
-          - type: 'null'
+          - type: "null"
         gist:
-          default: ''
+          default: ""
           title: Gist
           type: string
         subject_tags:
@@ -2130,11 +2130,11 @@ components:
         genre:
           anyOf:
           - $ref: '#/components/schemas/audit__record__ConceptTag'
-          - type: 'null'
+          - type: "null"
         geographic_scope:
           anyOf:
           - $ref: '#/components/schemas/GeographicScope'
-          - type: 'null'
+          - type: "null"
         gist:
           maxLength: 300
           title: Gist
@@ -2187,7 +2187,7 @@ paths:
             - failed
             - cancelled
             type: string
-          - type: 'null'
+          - type: "null"
           title: Status
       - in: query
         name: verdict
@@ -2195,7 +2195,7 @@ paths:
         schema:
           anyOf:
           - $ref: '#/components/schemas/Verdict'
-          - type: 'null'
+          - type: "null"
           title: Verdict
       - in: query
         name: category
@@ -2206,7 +2206,7 @@ paths:
             - benchmark
             - live
             type: string
-          - type: 'null'
+          - type: "null"
           title: Category
       - in: query
         name: q
@@ -2215,7 +2215,7 @@ paths:
           anyOf:
           - maxLength: 200
             type: string
-          - type: 'null'
+          - type: "null"
           title: Q
       - in: query
         name: limit
@@ -2235,55 +2235,55 @@ paths:
           title: Offset
           type: integer
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ArticleList'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -2304,55 +2304,55 @@ paths:
           title: Days
           type: integer
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ArticleImported'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -2370,55 +2370,55 @@ paths:
           title: Ref
           type: string
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ArticleDetail'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -2436,56 +2436,56 @@ paths:
           title: Ref
           type: string
       responses:
-        '202':
+        "202":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AuditResult'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Result withheld; the saved run and its details remain available. Submissions remain
             queued and cancellations remain effective.
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -2502,56 +2502,56 @@ paths:
               $ref: '#/components/schemas/RunInput'
         required: true
       responses:
-        '202':
+        "202":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AuditResult'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Result withheld; the saved run and its details remain available. Submissions remain
             queued and cancellations remain effective.
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -2568,56 +2568,56 @@ paths:
               $ref: '#/components/schemas/RunInput'
         required: true
       responses:
-        '202':
+        "202":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AuditResult'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Result withheld; the saved run and its details remain available. Submissions remain
             queued and cancellations remain effective.
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -2628,55 +2628,55 @@ paths:
     get:
       operationId: models_list_api_models_get
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ModelList'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -2693,55 +2693,55 @@ paths:
               $ref: '#/components/schemas/ModelStepInput'
         required: true
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ModelAssigned'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -2752,55 +2752,55 @@ paths:
     get:
       operationId: prompts_list_api_prompts_get
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PromptList'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -2818,55 +2818,55 @@ paths:
           title: Name
           type: string
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PromptDetail'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -2890,55 +2890,55 @@ paths:
               $ref: '#/components/schemas/PromptActivateInput'
         required: true
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PromptActivated'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -2968,55 +2968,55 @@ paths:
           title: To
           type: integer
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PromptDiff'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -3040,55 +3040,55 @@ paths:
               $ref: '#/components/schemas/PromptAuthorInput'
         required: true
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PromptActivated'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -3112,55 +3112,55 @@ paths:
               $ref: '#/components/schemas/PromptVersionInput'
         required: true
       responses:
-        '201':
+        "201":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PromptVersion'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -3184,55 +3184,55 @@ paths:
           title: Version
           type: integer
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PromptVersion'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -3243,55 +3243,55 @@ paths:
     get:
       operationId: queue_api_queue_get
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/QueueState'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -3310,55 +3310,55 @@ paths:
           title: Include Running
           type: boolean
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/QueueCancelled'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -3369,55 +3369,55 @@ paths:
     post:
       operationId: pause_queue_api_queue_pause_post
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/QueueState'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -3428,55 +3428,55 @@ paths:
     post:
       operationId: resume_queue_api_queue_resume_post
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/QueueState'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -3496,7 +3496,7 @@ paths:
             - benchmark
             - live
             type: string
-          - type: 'null'
+          - type: "null"
           title: Category
       - in: query
         name: limit
@@ -3521,7 +3521,7 @@ paths:
         schema:
           anyOf:
           - $ref: '#/components/schemas/Verdict'
-          - type: 'null'
+          - type: "null"
           title: Verdict
       - in: query
         name: workflow_id
@@ -3529,7 +3529,7 @@ paths:
         schema:
           anyOf:
           - type: string
-          - type: 'null'
+          - type: "null"
           title: Workflow Id
       - in: query
         name: status
@@ -3543,7 +3543,7 @@ paths:
             - failed
             - cancelled
             type: string
-          - type: 'null'
+          - type: "null"
           title: Status
       - in: query
         name: origin
@@ -3556,58 +3556,58 @@ paths:
             - webhook
             - article
             type: string
-          - type: 'null'
+          - type: "null"
           title: Origin
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/RunList'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -3625,56 +3625,56 @@ paths:
           title: Run Id
           type: string
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AuditResult'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Result withheld; the saved run and its details remain available. Submissions remain
             queued and cancellations remain effective.
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -3692,56 +3692,56 @@ paths:
           title: Run Id
           type: string
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AuditResult'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Result withheld; the saved run and its details remain available. Submissions remain
             queued and cancellations remain effective.
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -3759,55 +3759,55 @@ paths:
           title: Run Id
           type: string
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/RunDetail'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -3825,7 +3825,7 @@ paths:
           title: Run Id
           type: string
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
@@ -3835,49 +3835,49 @@ paths:
             Content-Disposition:
               schema:
                 type: string
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -3901,55 +3901,55 @@ paths:
               $ref: '#/components/schemas/ReactionInput'
         required: true
       responses:
-        '201':
+        "201":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Reaction'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -3960,55 +3960,55 @@ paths:
     get:
       operationId: status_api_status_get
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ServiceStatus'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -4025,56 +4025,56 @@ paths:
               $ref: '#/components/schemas/RunInput'
         required: true
       responses:
-        '202':
+        "202":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AuditResult'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Result withheld; the saved run and its details remain available. Submissions remain
             queued and cancellations remain effective.
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -4085,55 +4085,55 @@ paths:
     get:
       operationId: workflow_api_workflow_get
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/WorkflowSnapshot'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -4151,55 +4151,55 @@ paths:
           title: Workflow Id
           type: string
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/WorkflowSnapshot'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
@@ -4210,55 +4210,55 @@ paths:
     get:
       operationId: health_health_get
       responses:
-        '200':
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Health'
           description: Successful Response
-        '400':
+        "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Bad Request
-        '401':
+        "401":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unauthorized
-        '403':
+        "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Forbidden
-        '404':
+        "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Not Found
-        '409':
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Conflict
-        '413':
+        "413":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Request Entity Too Large
-        '422':
+        "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Unprocessable Entity
-        '500':
+        "500":
           content:
             application/json:
               schema:
