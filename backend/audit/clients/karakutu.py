@@ -5,7 +5,7 @@ import httpx
 from audit.clients.models import ArticleRecord, SimilarArticlesResult
 from audit.clients.concepts import Concept
 from audit.model import trace
-from audit.evidence import archive_output
+from audit.evidence import archive_output, bounded, record_full_evidence
 from audit.clients.auth import ArweaveWalletAuth
 
 ArchiveState = Literal[
@@ -45,7 +45,9 @@ class KarakutuClient:
     async def _get(self, path, params=None):
         if not self.enabled:
             return None
-        event = {'type':'archive_get', 'path':path, 'params':params, 'output':None, 'status':None, 'error_type':None}
+        # A recorded copy only: the request itself always sends the real parameters.
+        recorded = params if record_full_evidence.get() else bounded(params)
+        event = {'type':'archive_get', 'path':path, 'params':recorded, 'output':None, 'status':None, 'error_type':None}
         events = trace.get()
         if events is not None:
             events.append(event)

@@ -307,3 +307,29 @@ def test_a_title_holding_a_body_is_never_recorded_in_full():
     assert len(json.dumps(recorded_input)) < 2048
     assert recorded_input['leads'][0]['url'] == CANDIDATE
     assert set(recorded_input['leads'][0]['title']['summary']) == {'chars', 'sha256'}
+
+
+async def test_archive_request_parameters_are_recorded_bounded_but_sent_in_full():
+    from audit.clients.karakutu import KarakutuClient
+    from audit.model import trace
+
+    long_url = 'https://publisher.example/a?' + 'q=' + 'x' * 50000
+    sent = []
+
+    def handler(request):
+        sent.append(str(request.url))
+        return httpx.Response(200, json={'items': []})
+
+    client = KarakutuClient('https://archive.example')
+    await client.http.aclose()
+    client.http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    events = []
+    token = trace.set(events)
+    try:
+        await client._get('/articles', {'url': long_url})
+    finally:
+        trace.reset(token)
+        await client.close()
+    assert len(sent[0]) > 50000
+    assert len(json.dumps(events[0])) < 2048
+    assert set(events[0]['params']['url']['summary']) == {'chars', 'sha256'}

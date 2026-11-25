@@ -140,7 +140,8 @@ class Search(BaseSearchProvider):
         return results
 
     async def search_checked(self, query, max_results=5, *, language=None):
-        event = {'type':'search', 'query':query, 'max_results':max_results, 'language':language, 'results':[], 'error_type':None}
+        full = evidence.record_full_evidence.get()
+        event = {'type':'search', 'query':query if full else evidence.bounded(query), 'max_results':max_results, 'language':language, 'results':[], 'error_type':None}
         events = trace.get()
         if events is not None:
             events.append(event)
@@ -169,7 +170,7 @@ class Search(BaseSearchProvider):
                 if names:
                     event['unresponsive_engines'] = names
             results = results_from_hits(hits, lambda h:(h.get('url'), h.get('title') or '', h.get('content') or ''), query=query, provider='SearXNG', max_results=max_results)
-            event['results'] = dump(results)
+            event['results'] = dump(results) if full else evidence.bounded(dump(results))
             if not results and pairs:
                 event['error_type'] = 'EnginesUnresponsive'
                 self.state = 'degraded'
