@@ -22,7 +22,7 @@ STEPS = [
 ]
 
 SAFE_CONFIG = {
-    "model_provider", "response_format",
+    "model_provider", "response_format", "record_full_evidence",
     "model_enabled", "model_base_url", "model_name", "model_timeout", "max_tokens",
     "temperature", "thinking_control", "search_provider", "searxng_url", "archive_base_url",
     "requested_model", "resolved_model", "archive_reads_enabled", "archive_authenticated",

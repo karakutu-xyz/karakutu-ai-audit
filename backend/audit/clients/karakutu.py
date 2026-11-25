@@ -5,6 +5,7 @@ import httpx
 from audit.clients.models import ArticleRecord, SimilarArticlesResult
 from audit.clients.concepts import Concept
 from audit.model import trace
+from audit.evidence import archive_output
 from audit.clients.auth import ArweaveWalletAuth
 
 ArchiveState = Literal[
@@ -70,8 +71,9 @@ class KarakutuClient:
                 result = await self.http.get(self.base_url + path, params=params, headers={'Authorization': f'Bearer {token}'})
                 event['retry_status'] = result.status_code
             result.raise_for_status()
-            event['output'] = result.json()
-            return event['output']
+            body = result.json()
+            event['output'] = archive_output(path, body)
+            return body
         except (httpx.HTTPError, ValueError) as exc:
             event['error_type'] = type(exc).__name__
             return None

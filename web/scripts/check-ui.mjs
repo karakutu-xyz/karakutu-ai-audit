@@ -441,7 +441,7 @@ test("run detail presents ordered, collapsed exact records and restores its ledg
   for (const label of [
     "1.3 s",
     "Skipped: no comparison candidates.",
-    "Exact input JSON",
+    "Step input",
     "Exact output JSON",
     "Workflow snapshot unavailable",
     "Retry snapshot",
@@ -2644,4 +2644,35 @@ test("cancelled detail shows neutral stopped steps while exact history stays fai
   assert.ok(!html.includes('class="chip verdict-'));
   assert.equal((html.match(/>Pending</g) ?? []).length, 5);
   assert.equal(step.status, "failed");
+});
+
+test("step input accepts saved shapes beside exact system and user messages", () => {
+  const { StepTable } = load(path.join(root, "features/steps/StepTable.tsx"));
+  const { ModelCalls } = load(path.join(root, "features/steps/ModelCalls.tsx"));
+  const call = {
+    request: { model: "fictional-model", messages: [
+      { role: "system", content: "Invented system instructions." },
+      { role: "user", content: "Invented exact prompt text." },
+      { role: "assistant", content: "Invented assistant context." },
+    ] },
+    parsed_output: { reasoning: "Invented response." },
+  };
+  for (const input of [
+    { article: { ref: "run.input.removed_article", content_chars: 200000 } },
+    { article: { content: "Invented historical article." }, prior_stages: [] },
+  ]) {
+    const step = { name: "relevance", status: "completed", input, output: {},
+      duration_ms: 1, model_calls: [call], evidence: [] };
+    const html = render(StepTable, {
+      run: { status: "succeeded", steps: [step] }, workflow: null,
+    });
+    assert.ok(html.includes("Step input"));
+    assert.ok(html.includes("Exact model prompt"));
+    assert.ok(html.includes("Invented system instructions."));
+    assert.ok(html.includes("Invented exact prompt text."));
+    assert.ok(html.includes("Exact output JSON"));
+    const prompt = render(ModelCalls, { step, promptsOnly: true });
+    assert.ok(!prompt.includes("Invented assistant context."));
+    assert.ok(!prompt.includes("Invented response."));
+  }
 });

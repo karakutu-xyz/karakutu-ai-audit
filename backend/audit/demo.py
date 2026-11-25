@@ -10,12 +10,14 @@ from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from sqlalchemy import func, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
-from audit.clients.concepts import Concept
+from audit import evidence as recording, step_inputs
+from audit.clients.concepts import Concept, ConceptCatalog
 from audit.config import has_demo_marker, is_test_database_path
 from audit.db import (
     begin_write,
@@ -173,12 +175,12 @@ def _model_call(prompt: str, user: str, result, model: str, *, failed: bool = Fa
 
 def _archive(path: str, output, params=None) -> dict:
     return {"type": "archive_get", "path": path, "params": params,
-            "output": dump(output), "status": 200, "error_type": None}
+            "output": recording.archive_output(path, dump(output)), "status": 200, "error_type": None}
 
 
 def _fetch(kind: str, args: list, output, **kwargs) -> dict:
-    return {"type": kind, "input": dump({"args": args, "kwargs": kwargs}),
-            "output": dump(output), "error_type": None}
+    return {"type": kind, "input": dump(recording.fetch_input(args, kwargs, kind)),
+            "output": recording.fetch_output(dump(output)), "error_type": None}
 
 
 @dataclass
@@ -193,9 +195,13 @@ class _Trace:
     def add(self, result: StageResult, *, calls=(), evidence=(), extra=None):
         name = result.stage.value
         assert name == NAMES[len(self.steps)]
-        inp = {"article": dump(self.article), "prior_stages": dump(self.stages), **dump(self.state)}
-        if extra:
-            inp.update(extra)
+        catalog = ConceptCatalog.from_json(extra['catalog']) if extra else None
+        context = SimpleNamespace(synthetic=False, catalog=catalog,
+                                  archive=SimpleNamespace(enabled=True))
+        state = {'request': AuditRequest(removed_article=self.article), **self.state}
+        if result.skipped:
+            state['stopped'] = result.explanation
+        inp = step_inputs.build(name, state, context)
         status = ("skipped" if result.skipped else "failed" if
                   result.explanation.startswith("Stage did not complete") else "completed")
         self.steps.append(dump({"name": name, "status": status, "input": inp, "output": result,

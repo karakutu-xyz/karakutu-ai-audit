@@ -35,6 +35,7 @@ assignments are not project configuration. `MODEL_MAX_TOKENS` is an output count
 | `POSTGRES_PASSWORD` | Optional local PostgreSQL service password; tooling only. | empty (service refuses to start) | test/live: only with optional PostgreSQL Compose file; production: provider credentials | yes | Generate with openssl rand -hex 16 |
 | `TEST_POSTGRES_URL` | Test-only admin URL to a throwaway PostgreSQL server; creates/drops one database per test. | empty (temporary SQLite) | manual PostgreSQL pytest: admin URL; make test-postgres: generated | yes | Isolated test server; never production |
 | `MAX_CONCURRENT_RUNS` | Concurrent audits inside the single API process (1 to 8). | 1 | test/live/production: default sufficient | no | Operator capacity choice |
+| `RECORD_FULL_EVIDENCE` | Keep full archive and fetched page bodies in private step evidence for debugging; inputs remain lean and exact model calls are always retained. | false | test: ignored; live/production: optional | no | Enable only when full local evidence is needed |
 | `MODEL_ENABLED` | Enable model calls; test mode always ignores integrations. | false (example enables it) | test: ignored; live/production: true for useful audits | no | Choose true for live |
 | `MODEL_BASE_URL` | Local/Tilt OpenAI-compatible inference endpoint. | http://127.0.0.1:1234/v1 | test: ignored; live/production: reachable endpoint | no | LM Studio server; Scaleway console inference endpoint |
 | `MODEL_PROVIDER` | Provider profile: lmstudio or openai_compatible. | lmstudio | test: ignored; live/production: choose provider | no | LM Studio or provider profile |
@@ -202,7 +203,7 @@ exported environment without printing them.
   scripts/run-local.sh.
 - `ALLOWED_HOSTS`, `ALLOWED_ORIGINS`, `ARCHIVE_BASE_URL`, `ARCHIVE_WALLET_JSON`,
   `ARCHIVE_WALLET_PATH`, `DATABASE_URL`, `DATA_DIR`, `LIVE_INGESTION_ENABLED`,
-  `MAX_CONCURRENT_RUNS`, `MODEL_API_KEY`, `MODEL_BASE_URL`, `MODEL_ENABLED`,
+  `RECORD_FULL_EVIDENCE`, `MAX_CONCURRENT_RUNS`, `MODEL_API_KEY`, `MODEL_BASE_URL`, `MODEL_ENABLED`,
   `MODEL_MAX_TOKENS`, `MODEL_NAME`, `MODEL_NAME_CLASSIFICATION`,
   `MODEL_NAME_RELATED_REMOVALS`, `MODEL_NAME_RELEVANCE`, `MODEL_NAME_SOURCE`,
   `MODEL_NAME_WEB_SEARCH`, `MODEL_PROVIDER`, `MODEL_RESPONSE_FORMAT`,

@@ -3,7 +3,10 @@ import { EmptyState as Empty } from "../../components/EmptyState";
 import { Icon } from "../../components/Icon";
 import { Json } from "../../components/Json";
 
-export function ModelCalls({ step }: { step: Step }) {
+export function ModelCalls({ step, promptsOnly = false }: {
+  step: Step;
+  promptsOnly?: boolean;
+}) {
   if (!step.model_calls.length)
     return (
       <Empty title="No model calls in this step" icon="code">
@@ -13,6 +16,25 @@ export function ModelCalls({ step }: { step: Step }) {
         </p>
       </Empty>
     );
+  if (promptsOnly) {
+    return (
+      <div className="model-calls">
+        <h3>Exact model prompt</h3>
+        {step.model_calls.map((call, index) => {
+          const request = call.request && typeof call.request === "object"
+            ? call.request as Record<string, unknown> : null;
+          const messages = Array.isArray(request?.messages)
+            ? request.messages.filter((message: unknown) => {
+                if (!message || typeof message !== "object") return false;
+                const role = (message as Record<string, unknown>).role;
+                return role === "system" || role === "user";
+              }) : null;
+          return <Json key={index} value={messages}
+            label={`Model call ${index + 1}: system and user messages`} />;
+        })}
+      </div>
+    );
+  }
   return (
     <div className="model-calls">
       {step.model_calls.map((call, index) => (

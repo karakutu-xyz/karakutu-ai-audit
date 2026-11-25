@@ -86,7 +86,12 @@ async def test_demo_contract_and_deterministic_verdict(number, verdict):
         assert step["model"] == ("demo-model (offline)" if step["model_calls"] else None)
         assert step["status"] in {"completed", "skipped"}
         assert step["output"] == response.stages[index].model_dump(mode="json")
-        assert step["input"]["prior_stages"] == result["response"]["stages"][:index]
+        assert 'prior_stages' not in step['input']
+        if step['status'] == 'skipped':
+            assert 'skipped_because' in step['input']
+        else:
+            assert step['input']['article']['ref'] == 'run.input.removed_article'
+            assert 'content' not in step['input']['article']
         assert step["duration_ms"] >= 0
     assert observed[0]["model_calls"][0]["demo"] is True
     assert observed[0]["model_calls"][0]["request"]["messages"]

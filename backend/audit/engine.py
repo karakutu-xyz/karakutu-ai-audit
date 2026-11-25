@@ -13,6 +13,7 @@ from langgraph.errors import NodeCancelledError
 from langsmith import tracing_context
 from openai import AsyncOpenAI
 
+from audit import evidence, step_inputs
 from audit.config import MODEL_STEPS
 from audit.domain import AuditRequest, AuditResponse, StageResult, StageName, StageOutcome, AuditFlag
 from audit.model import trace
@@ -194,13 +195,13 @@ class Search(BaseSearchProvider):
 
 def capture_fetch(fn, kind):
     async def wrapped(*args, **kwargs):
-        event = {'type':kind, 'input':dump({'args':list(args), 'kwargs':kwargs}), 'output':None, 'error_type':None}
+        event = {'type':kind, 'input':dump(evidence.fetch_input(args, kwargs, kind)), 'output':None, 'error_type':None}
         events = trace.get()
         if events is not None:
             events.append(event)
         try:
             result = await fn(*args, **kwargs)
-            event['output'] = dump(result)
+            event['output'] = evidence.fetch_output(dump(result))
             return result
         except Exception as exc:
             event['error_type'] = type(exc).__name__
@@ -226,7 +227,8 @@ class AuditEngine:
         if provider not in ('disabled', 'searxng'):
             raise ValueError('Unsupported search provider')
         self.search = Search(config.get('searxng_url', '') if provider == 'searxng' else '')
-        self.public_config = {'model_enabled':not self.synthetic, 'model_base_url':safe_endpoint(config.get('model_base_url', '')),
+        self.public_config = {'record_full_evidence': config.get('record_full_evidence', False),
+                              'model_enabled':not self.synthetic, 'model_base_url':safe_endpoint(config.get('model_base_url', '')),
                               'model_provider':config.get('model_provider', 'lmstudio'),
                               'response_format':config.get('response_format', 'json_schema'),
                               'model_steps':{step: config.get('model_name_' + step) or None for step in MODEL_STEPS},
@@ -303,12 +305,12 @@ class AuditEngine:
             started = time.monotonic()
             events = []
             token = trace.set(events)
-            inp = {'article':dump(state['request'].removed_article), 'prior_stages':dump(state['stage_results'])}
-            if name == 'classification' and self.catalog is not None:
-                inp['catalog'] = self.catalog.to_json()
-            for key in ('classification', 'similarity', 'relevance', 'related', 'source'):
-                if key in state:
-                    inp[key] = dump(state[key])
+            evidence_token = evidence.record_full_evidence.set(
+                self.config.get('record_full_evidence', False))
+            try:
+                inp = dump(step_inputs.build(name, state, self))
+            except Exception as exc:  # noqa: BLE001 — recording must never change an audit
+                inp = {'record_error': type(exc).__name__}
             cancelled = None
             try:
                 result, updates = await self._execute(name, state)
@@ -324,6 +326,9 @@ class AuditEngine:
                 updates = {'stopped':'stage did not complete', 'failure':'An audit stage failed unexpectedly.'}
             finally:
                 trace.reset(token)
+                evidence.record_full_evidence.reset(evidence_token)
+            if name == 'related_removals':
+                step_inputs.observed_related(inp, updates, events)
             status = 'skipped' if result.skipped else ('failed' if result.explanation.startswith('Stage did not complete') else 'completed')
             step = dump({'name':name, 'status':status,
                     'model':next((e.get('request', {}).get('model') for e in events if e['type'] == 'model'), None), 'input':inp, 'output':dump(result),
