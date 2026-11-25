@@ -5,13 +5,56 @@
 | Step | Input and action | Output / branch |
 | --- | --- | --- |
 | 1. Classification | Article text plus catalog-grounded IPTC topic/genre menus. Coarse then fine model calls. | Up to five validated tags, genre, scope and gist. Unavailable catalog or failed classification never decides the audit. |
-| 2. Similarity | Archive similarity candidates, fetched through the public-address guard. | Measured same-publisher republication ends as `MOVED` when at least 99% of the original is contained. Remaining steps are recorded as skipped. Measured partial copies are retained for the low-interest exit or web search. |
+| 2. Similarity | Archive similarity candidates, fetched through the public-address guard. | Measured same-publisher republication ends as `MOVED` when at least 99% of the original is contained. Remaining steps are recorded as skipped. Measured partial copies and dated headline-and-word rewrite candidates are retained for the low-interest exit or web search. |
 | 3. Relevance | Title and the first 2,000 characters of the article prose (archive HTML is reduced to its paragraphs first, as in the other steps). | Public-affairs judgment: laws, votes, budgets, public services, elections, rights and the use of power are in scope with or without an allegation of wrongdoing; private matters of influential people are out unless the story shows a public stake. A failed model call is `AUDIT_FAILED`; a low-interest judgment waits for step 4 before exiting as `LIKELY_MOVED` or `LIKELY_LOW_PUBLIC_INTEREST`. |
-| 4. Related removals | Archive removal window (±14 days), same-subject model matching. | At least three confirmed related items across at least two publishers, or a related item already marked censored by a human auditor, raise `RELATED_REMOVALS`, keeping an otherwise low-interest item in scope. Without a pattern, a measured same-publisher partial copy holding at least 50% of the original text gives `LIKELY_MOVED`; below that a relocation note accompanies `LIKELY_LOW_PUBLIC_INTEREST`. Missing archive evidence does not manufacture a pattern. Strong key terms are lone acronyms (not all-caps header runs or labels) and two-word names (not company or legal-form pairs such as "Anonim Şirketi"); a name matches only from a word start. |
+| 4. Related removals | Archive removal window (±14 days), same-subject model matching. | At least three confirmed related items across at least two publishers, or a related item already marked censored by a human auditor, raise `RELATED_REMOVALS`, keeping an otherwise low-interest item in scope. Without a pattern, a measured same-publisher partial copy holding at least 50% of the original text gives `LIKELY_MOVED`; otherwise a qualifying same-publisher rewrite gives `LIKELY_MOVED`, then a below-floor partial copy adds a relocation note to `LIKELY_LOW_PUBLIC_INTEREST`. Missing archive evidence does not manufacture a pattern. Strong key terms are lone acronyms (not all-caps header runs or labels) and two-word names (not company or legal-form pairs such as "Anonim Şirketi"); a name matches only from a word start. |
 | 5. Source | Original URL, article citations, source search. | A live original with measured text overlap ends as `NOT_REMOVED`. A cited-source 404/410 may supply `SOURCE_DEAD`; access blocks and fetch refusals cannot. A live cited page counts as the same story, and becomes a web-search lead, only when it holds at least 20% of the archived text (the sibling line); below that it is reported as not shown to be the same story. |
-| 6. Web search | Search queries, archive/source leads, fetched page evidence and structured model outputs. | Models identify candidate matches; measured grounding and the deterministic decision function select the verdict. All failed model attempts mean `AUDIT_FAILED`. |
+| 6. Web search | Search queries, archive/source leads, fetched page evidence and structured model outputs. | Rewrite candidates lead the live-page prompt list. Models identify candidate matches; measured grounding retains qualifying rewrites even below the sibling bar, and the deterministic decision function selects the verdict. All failed model attempts mean `AUDIT_FAILED`. |
 
-`workflow/pipeline.py::_decide` maps substantive evidence to `NOT_REMOVED`, `MOVED`, `LIKELY_MOVED`, `FOUND_ONLINE`, `POSSIBLE_CENSORSHIP`, or `INCONCLUSIVE`. The pipeline also assembles the low-interest exit: the best live, measured same-publisher partial copy from step 2 gives `LIKELY_MOVED` when it holds at least 50% of the removed article's text (`old_in_new`). This starting floor is to be set from the benchmark. Below the floor, `LIKELY_LOW_PUBLIC_INTEREST` includes a relocation note; siblings, unmeasured fits, other publishers and redirects that end on another host do not count; the note rounds the share down so it never reads as the floor. Without a partial candidate, the low-interest response is unchanged. Source and web search are skipped, so no model compares key facts on this path; a person should compare the pages. This path never gives `POSSIBLE_CENSORSHIP`. The engine handles failed-execution exits. The eight verdict names remain compatible with the archived auditor. Every `POSSIBLE_CENSORSHIP` explanation says it is not a finding of censorship and requires human review. A missing search hit is not evidence of censorship.
+`workflow/pipeline.py::_decide` maps substantive evidence to `NOT_REMOVED`, `MOVED`,
+`LIKELY_MOVED`, `FOUND_ONLINE`, `POSSIBLE_CENSORSHIP`, or `INCONCLUSIVE`. The pipeline
+also assembles the low-interest exit. First, the best live, measured same-publisher
+partial copy from step 2 gives `LIKELY_MOVED` when it holds at least 50% of the
+removed article's text (`old_in_new`). This starting floor is to be set from the
+benchmark. Otherwise, a qualifying same-publisher rewrite gives `LIKELY_MOVED`.
+Otherwise, a below-floor partial copy adds a relocation note to
+`LIKELY_LOW_PUBLIC_INTEREST`, rounding its share down. Siblings without a rewrite
+signal, unmeasured fits without that signal, other publishers and redirects ending
+on another host do not decide this exit. Without a qualifying candidate, the
+low-interest response is unchanged. Source and web search are skipped, so no model
+compares key facts on this path; a person should compare the pages. This path never
+gives `POSSIBLE_CENSORSHIP`. The engine handles failed-execution exits. The eight
+verdict names remain compatible with the archived auditor. Every
+`POSSIBLE_CENSORSHIP` explanation says it is not a finding of censorship and requires
+human review. A missing search hit is not evidence of censorship.
+
+Same-publisher rewrites can preserve facts while changing nearly every five-word
+phrase. `search/rewrite.py` therefore measures headline words and distinctive words
+(at least five characters), using the same Turkish case folding as text matching.
+The removed article's own words are those covered by shingles surviving boilerplate
+cleaning; if cleaning is capped or leaves nothing, all its distinctive words count.
+These words are looked for throughout the candidate page. For at least 20 own words,
+a rewrite needs at least 40% of those words, at least 40% of the original headline
+words and a publication gap of at most two days. Shorter originals instead need
+at least 80% headline overlap in both directions within one day. All bars include
+the boundary. A missing title falls back to the URL's final path segment, dropping
+all-digit slug tokens. The candidate uses its archive title, then fetched title,
+then slug. Dates use the two publication dates when parseable, comparing calendar
+dates regardless of timezone; otherwise only an explicitly supplied archive day gap
+counts. Missing dates fail closed. Archive title and URL similarity scores are not
+used, and verbatim copies remain republications rather than rewrites.
+
+Similarity retains the best rewrite by word overlap, then headline overlap (headline
+for short originals), unless a measured republication was found. It hands all rewrite
+candidates to web search and puts their live pages first in the bounded prompts.
+In scope, the model must still identify the page as the same story. A qualifying
+rewrite then survives grounding even when both shingle containments are below 20%.
+With key facts covered, findings give the headline and word shares rounded down,
+publication gap and differing wording as `LIKELY_MOVED`; short originals say their
+text was too short to compare. Missing key facts retain the existing
+`POSSIBLE_CENSORSHIP` review path. Numeric rewrite evidence is saved in stage details.
+No new flags are added. A pure paraphrase retaining too few distinctive words stays
+set aside: lowering that bar would also admit unrelated pages.
 
 Similarity and web-search overlap bars use prose after dropping paragraphs shared
 by two other live same-site articles. Both requested URLs and fetched destinations

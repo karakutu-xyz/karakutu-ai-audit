@@ -5,7 +5,8 @@
     2. similarity         find similar link: the archive's similarity index, fetched and measured —
                           a measured republication ends the audit as MOVED (steps 3–6 skipped)
     3. relevance          out of scope? — may exit as LIKELY_LOW_PUBLIC_INTEREST or,
-                          with a measured same-publisher partial copy holding ≥50%, LIKELY_MOVED …
+                          with a measured same-publisher partial copy holding ≥50% or a
+                          qualifying rewrite, LIKELY_MOVED …
     4. related_removals   … unless other articles on the SAME subject vanished from the archive
                           within ±14 days: the RELATED_REMOVALS flag keeps the audit in scope
                           (operator's rule). Never fails the audit.
@@ -23,6 +24,7 @@ from audit.domain import (
     AuditResponse, Classification, StageName, StageOutcome, StageResult,
     Verdict,
 )
+from audit.search.rewrite import STUB_MAX_WORDS, RewriteSignal
 from audit.search.textmatch import MOVED_THRESHOLD, PARTIAL_MIN
 from audit.search.base import SearchResult
 from audit.search.urls import same_publisher
@@ -66,38 +68,47 @@ def _low_interest_response(
     related: related_removals.RelatedRemovalsEvidence, *,
     stages: List[StageResult], classification: Optional[Classification],
 ) -> AuditResponse:
-    """End an out-of-scope audit without losing a measured partial relocation."""
+    """End an out-of-scope audit while retaining a partial relocation or rewrite."""
     candidate = _best_partial_relocation(sim)
     verdict = Verdict.LIKELY_LOW_PUBLIC_INTEREST
     findings = f"Removed article judged not of public interest: {relevance.reasoning} "
-    if candidate is not None:
+    if candidate is not None and candidate.old_in_new >= LOW_INTEREST_RELOCATION_FLOOR:
+        deciding_candidate = candidate
+        rewrite = None
+    else:
+        deciding_candidate = sim.rewrite
+        rewrite = RewriteSignal(**sim.rewrite.model_dump()) if sim.rewrite else None
+    if deciding_candidate is not None:
+        relocated = SearchResult(
+            url=deciding_candidate.url, title=deciding_candidate.title,
+            snippet="", source="archive",
+        )
+        web = web_search.WebSearchEvidence(
+            relocated_to=relocated,
+            relocation_old_in_new=deciding_candidate.old_in_new,
+            relocation_new_in_old=deciding_candidate.new_in_old,
+            relocation_rewrite=rewrite,
+            matches=[relocated], hits_searched=len(sim.hits),
+            archive_candidates=len(sim.hits),
+            live_pages_read=len(sim.fetched.live),
+            unreadable_count=len(sim.fetched.unreadable), reasoning=sim.reason,
+        )
+        verdict, findings = _decide(web)
+        kind = "same-publisher rewrite" if rewrite else "measured same-publisher copy"
+        findings += (
+            " The public-interest screen judged the article out of scope "
+            f"({relevance.reasoning}); the {kind} from the "
+            "similarity step decides the verdict instead. The key-facts comparison "
+            "of web search was not run, so a person should compare the two pages. "
+        )
+    elif candidate is not None:
         o, n = candidate.old_in_new, candidate.new_in_old
-        if o >= LOW_INTEREST_RELOCATION_FLOOR:
-            relocated = SearchResult(
-                url=candidate.url, title=candidate.title, snippet="", source="archive",
-            )
-            web = web_search.WebSearchEvidence(
-                relocated_to=relocated,
-                relocation_old_in_new=o, relocation_new_in_old=n,
-                matches=[relocated], hits_searched=len(sim.hits),
-                archive_candidates=len(sim.hits),
-                live_pages_read=len(sim.fetched.live),
-                unreadable_count=len(sim.fetched.unreadable), reasoning=sim.reason,
-            )
-            verdict, findings = _decide(web)
-            findings += (
-                " The public-interest screen judged the article out of scope "
-                f"({relevance.reasoning}); the measured same-publisher copy from the "
-                "similarity step decides the verdict instead. The key-facts comparison "
-                "of web search was not run, so a person should compare the two pages. "
-            )
-        else:
-            findings += (
-                f"Relocation note: a same-publisher page at {candidate.url} holds "
-                f"{_percent_down(o)} of the original's text (and {n:.0%} of that page comes from "
-                f"the original), below the {LOW_INTEREST_RELOCATION_FLOOR:.0%} floor "
-                "for a likely move; a person may want to compare the two. "
-            )
+        findings += (
+            f"Relocation note: a same-publisher page at {candidate.url} holds "
+            f"{_percent_down(o)} of the original's text (and {n:.0%} of that page comes from "
+            f"the original), below the {LOW_INTEREST_RELOCATION_FLOOR:.0%} floor "
+            "for a likely move; a person may want to compare the two. "
+        )
     findings += related_removals.describe(related)
     return AuditResponse(
         verdict=verdict, stages=stages, short_circuited_at=StageName.RELEVANCE,
@@ -171,6 +182,7 @@ def _similarity_details(sim) -> dict:
     return {
         "available": sim.available, "reason": sim.reason,
         "candidates": [c.model_dump() for c in sim.candidates],
+        "rewrite": sim.rewrite.model_dump() if sim.rewrite else None,
         "relocated_to": sim.relocated_to.url if sim.relocated_to else None,
         "old_in_new": sim.relocation_old_in_new, "new_in_old": sim.relocation_new_in_old,
     }
@@ -205,6 +217,8 @@ def _web_details(web) -> dict:
                             for d in web.dead_same_story],
         "relocated_to": web.relocated_to.url if web.relocated_to else None,
         "old_in_new": web.relocation_old_in_new, "new_in_old": web.relocation_new_in_old,
+        "relocation_rewrite": (web.relocation_rewrite.model_dump()
+                               if web.relocation_rewrite else None),
         "covers_key_facts": web.relocation_covers_key_facts, "omissions": web.omissions,
         "related_same_publisher": [r.url for r in web.related_same_publisher],
     }
@@ -279,6 +293,33 @@ def _decide_verdict(web) -> tuple[Verdict, str]:
                     "measurement shows the original's text present in the copy."
                 )
             return Verdict.MOVED, findings
+        if web.relocation_rewrite is not None and web.relocation_covers_key_facts:
+            signal = web.relocation_rewrite
+            gap = signal.date_gap_days
+            published = (
+                "on the same day" if gap == 0
+                else f"{gap} {'day' if gap == 1 else 'days'} apart"
+            )
+            findings = (
+                f"Same-publisher rewrite at {web.relocated_to.url}: its headline shares "
+                f"{_percent_down(signal.title_overlap)} of the original's headline words"
+            )
+            if signal.own_words < STUB_MAX_WORDS:
+                findings += "; the original's text was too short to compare"
+            else:
+                findings += (
+                    f", and {_percent_down(signal.word_overlap)} of the original's "
+                    "distinctive words appear in it"
+                )
+            findings += f". The two pages were published {published}. "
+            if signal.own_words >= STUB_MAX_WORDS and o is not None and n is not None:
+                findings += (
+                    f"The wording differs: {_percent_down(o)} of the original's text "
+                    f"appears in the copy, and {_percent_down(n)} of the copy's text "
+                    "comes from the original. "
+                )
+            return (Verdict.LIKELY_MOVED,
+                    findings + "A human auditor should compare the two pages.")
         if o is None:
             # The fit could not be measured (no usable text on one side), so model
             # judgement stands — today's pre-measurement behaviour, said out loud.

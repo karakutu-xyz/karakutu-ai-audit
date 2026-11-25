@@ -25,6 +25,7 @@ from functools import lru_cache
 from itertools import combinations
 from typing import Iterable
 
+from audit.search.rewrite import distinctive_words
 from audit.search.textmatch import SHINGLE_K, containment, directional_containments, shingles, tokens
 
 
@@ -156,6 +157,14 @@ def _clean_shingles(text: str, boilerplate: frozenset[str]) -> tuple[frozenset, 
         windows = [(i, i + k) for i in range(len(toks) - k + 1)]
     kept = frozenset(tuple(toks[a:b]) for a, b in windows if not any(marked[a:b]))
     return kept, len(shingles(text)) - len(kept)
+
+
+def own_text_words(removed_prose: str, boilerplate: frozenset[str]) -> frozenset[str]:
+    """Distinctive words covered by kept shingles, with measurement's cap fallback."""
+    kept, removed = _clean_shingles(removed_prose, boilerplate)
+    if not kept or removed > MAX_REMOVED_SHARE * len(shingles(removed_prose)):
+        return distinctive_words(removed_prose)
+    return distinctive_words(" ".join(word for shingle in kept for word in shingle))
 
 
 def measure(

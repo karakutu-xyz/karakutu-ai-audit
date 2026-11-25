@@ -31,8 +31,10 @@ from audit.search.fetch import (
     prose_of,
     same_publisher,
 )
+from audit.search.rewrite import RewriteSignal
 from audit.search.textmatch import SIBLING_MAX, distinctive_phrase
 from audit.workflow import prompts
+from audit.workflow.similarity import SimilarCandidate
 
 
 # The `PLACEHOLDER_` prefix is a misnomer kept from the earlier auditor; the name is the
@@ -119,6 +121,7 @@ class WebSearchEvidence(BaseModel):
     # and says so in the findings.
     relocation_old_in_new: Optional[float] = None
     relocation_new_in_old: Optional[float] = None
+    relocation_rewrite: Optional[RewriteSignal] = None
     raw_old_in_new: Optional[float] = None
     raw_new_in_old: Optional[float] = None
     # Matched paragraph counts (proposed removals when capped): removed, relocation.
@@ -156,7 +159,7 @@ def overlap_details(web: WebSearchEvidence) -> dict:
     """Additional numeric review details, including set-aside candidates."""
     return web.model_dump(mode="json", include={
         "raw_old_in_new", "raw_new_in_old", "boilerplate_paragraphs", "boilerplate_capped",
-        "same_publisher_measurements",
+        "same_publisher_measurements", "relocation_rewrite",
     })
 
 
@@ -196,7 +199,8 @@ def build_agent(model: Model, system_prompt: str = PLACEHOLDER_WEB_SEARCH_PROMPT
 async def run(removed: Article, search_provider: BaseSearchProvider,
               agent: Agent[None, WebSearchResult], *,
               prefetched: Optional[FetchOutcome] = None,
-              extra_hits: Optional[List[SearchResult]] = None) -> WebSearchEvidence:
+              extra_hits: Optional[List[SearchResult]] = None,
+              rewrites: Optional[dict[str, SimilarCandidate]] = None) -> WebSearchEvidence:
     """Search, fetch, and judge — returning grounded evidence about the removed story.
 
     `extra_hits` are leads earlier steps already found (archive similarity candidates,
@@ -232,6 +236,8 @@ async def run(removed: Article, search_provider: BaseSearchProvider,
                              await _fetch_new(hits, prefetched or FetchOutcome(), removed.url),
                              hits)
 
+    # Stable priority keeps measured rewrite leads inside every prompt budget.
+    fetched.live.sort(key=lambda p: normalize_url(p.url) not in (rewrites or {}))
     web_dead = [d for d in fetched.dead if d.source != "archive"]
     if not fetched.live and not web_dead:
         # Nothing to read and nothing demonstrably gone. (Archive-sourced dead links do not
@@ -261,7 +267,7 @@ async def run(removed: Article, search_provider: BaseSearchProvider,
         try:
             prompt = _build_prompt(removed, fetched, max_pages=pages, page_chars=page_chars)
             result = await agent.run(prompt, model_settings={"max_tokens": WEB_SEARCH_MAX_TOKENS})
-            return explain(_ground(result.data, fetched, removed, len(hits)))
+            return explain(_ground(result.data, fetched, removed, len(hits), rewrites=rewrites))
         except Exception as exc:  # noqa: BLE001 — empty response, protocol error, timeout…
             last_exc = exc
 
@@ -438,7 +444,8 @@ def _archive_dead_note(n: int) -> str:
 
 
 def _ground(raw: WebSearchResult, fetched: FetchOutcome, removed: Article,
-            hits_searched: int) -> WebSearchEvidence:
+            hits_searched: int, *,
+            rewrites: Optional[dict[str, SimilarCandidate]] = None) -> WebSearchEvidence:
     """Resolve every model-authored URL back to something we actually fetched.
 
     `matches` is model-authored and its URLs end up in `AuditResponse.findings` as evidence.
@@ -468,6 +475,7 @@ def _ground(raw: WebSearchResult, fetched: FetchOutcome, removed: Article,
     ))
     measurements: dict[str, Measurement] = {}
     relocation_measurement: Optional[Measurement] = None
+    relocation_rewrite: Optional[RewriteSignal] = None
 
     for m in raw.matches:
         page: Optional[LivePage] = live_by_url.get(normalize_url(m.url))
@@ -484,17 +492,22 @@ def _ground(raw: WebSearchResult, fetched: FetchOutcome, removed: Article,
         # before it may stand: one that is measurably a DIFFERENT article is demoted to
         # reviewer context, and the next same-publisher candidate gets its chance. An
         # UNMEASURABLE fit (no usable text on a side) never demotes — no evidence, no call.
+        # A dated headline-and-word rewrite signal can retain a low-shingle match;
+        # the model's same-story judgement remains required before reaching here.
         # Cross-publisher matches are never measured: different outlets legitimately rewrite.
         if (relocated_to is None and same_publisher(page.url, removed.url)
                 and (not page.final_url or same_publisher(page.final_url, removed.url))):
             measured = measure(removed_prose, page.text, boilerplate)
             measurements[page.url] = measured
             o, n = measured.cleaned
-            if o is not None and max(o, n) < SIBLING_MAX:
+            rewrite = (rewrites or {}).get(normalize_url(page.url))
+            if o is not None and max(o, n) < SIBLING_MAX and rewrite is None:
                 related_same_publisher.append(hit)
                 continue   # not a same-story match, not a relocation
             relocated_to = hit
             relocation_measurement = measured
+            if rewrite is not None:
+                relocation_rewrite = RewriteSignal(**rewrite.model_dump())
             relocation_old_in_new = o
             relocation_new_in_old = n
             relocation_covers_key_facts = m.covers_key_facts
@@ -526,6 +539,7 @@ def _ground(raw: WebSearchResult, fetched: FetchOutcome, removed: Article,
         omissions=omissions,
         relocation_old_in_new=relocation_old_in_new,
         relocation_new_in_old=relocation_new_in_old,
+        relocation_rewrite=relocation_rewrite,
         raw_old_in_new=(relocation_measurement.raw_old_in_new
                         if relocation_measurement else None),
         raw_new_in_old=(relocation_measurement.raw_new_in_old
