@@ -1221,6 +1221,34 @@ def test_refusal_inventory_covers_the_database_password(tmp_path):
     assert "fictional@db-pass" in _result_secrets(config)()
 
 
+def test_refusal_inventory_covers_a_query_string_database_password(tmp_path):
+    config = settings(tmp_path, database_url=(
+        "postgresql+psycopg://audit@db.example/audit?password=fictional%40db-pass"))
+    assert "fictional@db-pass" in _result_secrets(config)()
+
+
+def test_refusal_inventory_keeps_replaced_and_loaded_wallet_material(tmp_path):
+    wallet = tmp_path / "fictional-wallet.json"
+    wallet.write_text(json.dumps({"d": "fictional-component-a"}))
+    secrets = _result_secrets(settings(tmp_path, archive_wallet_path=str(wallet)))
+    assert "fictional-component-a" in secrets()
+    wallet.write_text(json.dumps({"d": "fictional-component-b", "p": "fictional-p"}))
+    assert {"fictional-component-a", "fictional-component-b"} <= set(secrets())
+    wallet.unlink()
+    assert {"fictional-component-a", "fictional-component-b"} <= set(secrets())
+    # The key sign-in holds stays covered even if no file read ever saw it.
+    assert "fictional-loaded-component" in secrets(("fictional-loaded-component",))
+    assert "fictional-loaded-component" in secrets()
+
+
+def test_wallet_auth_exposes_only_private_components_of_the_loaded_key(tmp_path):
+    from audit.clients.auth import ArweaveWalletAuth
+    auth = ArweaveWalletAuth(str(tmp_path / "none.json"), "https://archive.example")
+    assert auth.loaded_private_values() == ()
+    auth._jwk = {"kty": "RSA", "n": "fictional-n", "e": "AQAB", "d": "fictional-d", "qi": "fictional-qi"}
+    assert auth.loaded_private_values() == ("fictional-d", "fictional-qi")
+
+
 def test_wallet_provisioned_after_start_is_refused(tmp_path, database_url):
     wallet = tmp_path / "fictional-wallet.json"  # missing at start, as before provisioning
     secret = "fictional-private-component"

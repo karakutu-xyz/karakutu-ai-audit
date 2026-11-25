@@ -194,32 +194,43 @@ def _result_secrets(settings: Settings):
     Returns a function so the wallet is resolved like ArweaveWalletAuth on every check
     (stripped inline JSON wins, else the keyfile): a keyfile provisioned or repaired after
     start is covered as soon as sign-in can use it. The file is re-read only when its
-    modification time or size changes.
+    modification time or size changes, and material once seen (or held by sign-in) stays
+    covered after the file is replaced or removed.
     """
     static = [settings.api_auth_token, settings.model_api_key, settings.archive_wallet_path]
     if settings.database_url:
         try:
-            static.append(make_url(settings.database_url).password or "")
+            url = make_url(settings.database_url)
         except Exception:  # an unparsable URL fails at startup elsewhere; never echo it
-            pass
+            url = None
+        if url is not None:
+            static.append(url.password or "")
+            # Drivers also accept credentials as query parameters (`?password=`).
+            for key, value in url.query.items():
+                if "password" in key.lower() or "secret" in key.lower():
+                    static.extend([value] if isinstance(value, str) else list(value))
     inline = (settings.archive_wallet_json or "").strip()
     if inline:
         static.extend(_wallet_secrets(inline))
-    cache: dict = {"key": None, "values": []}
+    cache: dict = {"key": None}
+    # Wallet material once read stays covered for the life of the process: sign-in may keep a
+    # loaded key after its file is replaced or removed.
+    seen: set[str] = set()
 
-    def secrets() -> tuple[str, ...]:
-        wallet_values = []
+    def secrets(loaded: tuple[str, ...] = ()) -> tuple[str, ...]:
+        """`loaded`: private components of the key archive sign-in currently holds."""
+        seen.update(value for value in loaded if value)
         if not inline and settings.archive_wallet_path:
             path = Path(settings.archive_wallet_path)
             try:
                 stat = path.stat()
                 key = (stat.st_mtime_ns, stat.st_size)
                 if cache["key"] != key:
-                    cache["values"] = _wallet_secrets(path.read_text(encoding="utf-8"))
+                    seen.update(_wallet_secrets(path.read_text(encoding="utf-8")))
                     cache["key"] = key
-                wallet_values = cache["values"]
             except (OSError, UnicodeError):
-                cache["key"], cache["values"] = None, []
+                cache["key"] = None
+        wallet_values = sorted(seen)
         # SearXNG's server secret is not read by this service.
         return tuple(value for value in [*static, *wallet_values] if value)
 
@@ -481,7 +492,9 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
         previous = app.state.store.previous_record_run_id(run)
         lineage = {"kind": "re_audit", "previous_record_id": previous + ".r0"} if previous else None
         try:
-            return build_result(run, lineage=lineage, secret_values=result_secrets())
+            auth = getattr(getattr(app.state.audit_engine, "archive", None), "auth", None)
+            loaded = auth.loaded_private_values() if hasattr(auth, "loaded_private_values") else ()
+            return build_result(run, lineage=lineage, secret_values=result_secrets(loaded))
         except RecordError as exc:
             return JSONResponse(status_code=409, content={"error": {
                 "code": "result_withheld", "reason": exc.code, "run_id": run["id"],

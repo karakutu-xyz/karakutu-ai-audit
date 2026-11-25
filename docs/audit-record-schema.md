@@ -123,7 +123,10 @@ of any nonzero length, appearing anywhere in any decoding state refuse the resul
   in the portable result refuses it. API result routes pass the service's configured
   API token, model key, database password and wallet material through the same builder.
   Wallet material includes private JWK components from inline JSON or the configured wallet
-  file, resolved like archive sign-in on every check (a keyfile added after start is covered).
+  file, resolved like archive sign-in on every check (a keyfile added after start is covered),
+  plus the key sign-in currently holds; wallet material once seen stays covered for the life
+  of the process. The database password counts whether it is in the URL's userinfo or a
+  `password` query parameter.
   The service does not read SearXNG's server secret.
 - **No raw diagnostics or transcripts by projection:** the portable result copies only
   the named stored result fields and fixed service errors. Article text, upstream bodies,
