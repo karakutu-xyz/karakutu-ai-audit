@@ -280,3 +280,30 @@ def test_recording_only_date_stays_out_of_stage_details():
     evidence.prompt_publish_date = '2030-03-12'
     assert 'prompt_publish_date' not in pipeline._related_details(evidence)
     assert 'prompt_publish_date' not in evidence.model_dump_json()
+
+
+def test_a_title_holding_a_body_is_never_recorded_in_full():
+    from types import SimpleNamespace
+
+    from audit.evidence import fetch_output
+    from audit.search.base import SearchResult
+    from audit.search.fetch import FetchOutcome
+
+    body = 'Invented body text. ' * 10000
+    page = {'url': CANDIDATE, 'final_url': None, 'status': 200, 'title': body, 'text': body}
+    recorded = fetch_output({'live': [page], 'dead': [], 'unreadable': [], 'excluded_self': []})
+    assert len(json.dumps(recorded)) < 1024
+    assert recorded['live'][0]['url'] == CANDIDATE
+
+    lead = SearchResult(url=CANDIDATE, title=body, snippet='', source='archive')
+    state = {
+        'request': AuditRequest(removed_article=Article(
+            url=ORIGINAL, title='Invented headline', content='Invented text.')),
+        'similarity': SimpleNamespace(hits=[lead], fetched=FetchOutcome(), rewrite=None),
+        'source': SimpleNamespace(live_source=None, extra_hits=[], dead_source=None),
+    }
+    engine = SimpleNamespace(synthetic=False, catalog=None, archive=SimpleNamespace(enabled=True))
+    recorded_input = step_inputs.build('web_search', state, engine)
+    assert len(json.dumps(recorded_input)) < 2048
+    assert recorded_input['leads'][0]['url'] == CANDIDATE
+    assert set(recorded_input['leads'][0]['title']['summary']) == {'chars', 'sha256'}

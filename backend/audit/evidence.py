@@ -21,7 +21,7 @@ def summary(value):
     return {'bytes': len(body), 'sha256': hashlib.sha256(body).hexdigest()}
 
 
-SCALAR_MAX_CHARS = 300
+SCALAR_MAX_CHARS = 500
 
 
 def _scalar(value):
@@ -31,6 +31,15 @@ def _scalar(value):
     if isinstance(value, str) and len(value) <= SCALAR_MAX_CHARS:
         return value
     return {'summary': text_summary(value) if isinstance(value, str) else summary(value)}
+
+
+def bounded(value):
+    """Recorded metadata with every long string (a title holding a body, say) as size and hash."""
+    if isinstance(value, dict):
+        return {key: bounded(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [bounded(item) for item in value]
+    return _scalar(value)
 
 
 def archive_output(path, body):
@@ -49,7 +58,7 @@ def archive_output(path, body):
 
 
 def page_summary(page):
-    result = {key: page[key] for key in
+    result = {key: bounded(page[key]) for key in
               ('url', 'final_url', 'status', 'title', 'reason') if key in page}
     if 'text' in page:
         result['text'] = text_summary(page['text'])
@@ -60,10 +69,10 @@ def fetch_input(args, kwargs, kind):
     if record_full_evidence.get():
         return {'args': list(args), 'kwargs': kwargs}
     if kind == 'probe_removed_url':
-        return {'urls': [args[0] if args else kwargs['url']]}
+        return bounded({'urls': [args[0] if args else kwargs['url']]})
     hits = args[0] if args else kwargs.get('hits', [])
-    return {'urls': [hit.url for hit in hits],
-            'exclude_url': kwargs.get('exclude_url', args[1] if len(args) > 1 else None)}
+    return bounded({'urls': [hit.url for hit in hits],
+                    'exclude_url': kwargs.get('exclude_url', args[1] if len(args) > 1 else None)})
 
 
 def fetch_output(body):
@@ -72,5 +81,5 @@ def fetch_output(body):
     if 'url' in body:
         return page_summary(body)
     return {key: [page_summary(page) for page in value]
-            if key in ('live', 'dead', 'unreadable') else value
+            if key in ('live', 'dead', 'unreadable') else bounded(value)
             for key, value in body.items()}

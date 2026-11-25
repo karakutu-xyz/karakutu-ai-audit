@@ -2,7 +2,7 @@
 import html
 import re
 
-from audit.evidence import summary, text_summary
+from audit.evidence import bounded, summary, text_summary
 from audit.search.fetch import prose_of
 from audit.workflow import relevance as relevance_step, related_removals as related_step
 
@@ -86,7 +86,7 @@ def build(name, state, engine):
         return {'skipped_because': state['stopped']}
     if engine.synthetic:
         return {'skipped_because': 'model is disabled; audit did not run'}
-    return BUILDERS[name](state, engine)
+    return bounded(BUILDERS[name](state, engine))
 
 
 def observed_related(inp, updates, events):
