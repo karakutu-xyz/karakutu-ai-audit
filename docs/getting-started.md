@@ -9,167 +9,175 @@ parts fit together, read [Architecture](architecture.md). Every variable and its
 
 | To run | You need |
 | --- | --- |
-| Test mode in Docker | Docker with Compose 2.24 or newer, and `make` |
-| Live mode in Docker | The same, plus Python 3 and an OpenAI-compatible chat model the containers can reach |
-| Local development | Python 3.11, uv, Node 22+; Docker Compose for live bundled search |
+| Test mode in Docker | Docker with Compose 2.24 or newer and `make` |
+| Live mode in Docker | The same, Python 3 and a reachable OpenAI-compatible chat model |
+| Local development | Python 3.11, uv and Node 22+; Docker Compose for live search |
 | Tilt hot reload | The local tools above, Docker Compose and Tilt |
 
-The model can be a local LM Studio server (the default settings expect
-one on port 1234) or a hosted OpenAI-compatible provider.
+## From test mode to a real audit
 
-Every mode serves the same addresses, all bound to loopback by default:
-
-| Surface | Address |
-| --- | --- |
-| Review UI | http://localhost:2201 |
-| API and its interactive docs | http://localhost:2200/docs |
-| SearXNG (live mode and Tilt only) | http://localhost:2202 |
-| Tilt dashboard (Tilt only) | http://localhost:10350 |
-
-Because the ports are shared, run only one of `make test`, `make live`, `make dev` and
-`tilt up` at a time.
-`make test` and `make live` stop each other; stop Tilt or local `make dev` yourself
-before starting another mode.
-
-## Test mode: demo data, no model
-
-Test mode runs the full UI and API against a fictional demo dataset. It calls no model, search
-engine, archive or website, and needs no `.env`.
-
-```sh
-make test        # build and start; prints the address when ready
-make down        # stop
-make test-reset  # delete the test database; the next `make test` seeds it again
-```
-
-Open http://localhost:2201. The **Test mode · demo data** pill in the top bar shows you are in
-test mode. The demo has 28 runs across three workflow versions: every verdict, a
-queued, a running, an interrupted, a stopped (cancelled by a person) and several failed
-runs, plus reviewer reactions. You can submit
-new benchmarks too. The offline demo engine answers them with fabricated, deterministic steps;
-they are demo output, not audits.
-
-Without `make`, the same start command is:
-
-```sh
-docker compose -p karakutu-ai-audit-test -f compose.yaml -f compose.test.yaml up --build -d --wait karakutu-audit-api karakutu-audit-web
-```
-
-Without Docker, set `RUN_MODE=test` for the API process (see [Development without
-Docker](#development-without-docker)). The database is then `data/demo/audit-test.sqlite3`.
-
-## Live mode: your model and search
-
-1. Create your settings once. This copies [`.env.example`](../.env.example) to an ignored
-   `.env`, fills in a random SearXNG secret and creates `data/`:
+1. **Try test mode.** Clone the repository using the [README quick start](../README.md#quick-start-test-mode-in-5-minutes), then from the checkout run:
 
    ```sh
-   make env
+   make test
    ```
 
-   Alternatively, copy `.env.example` to `.env` yourself and set `SEARXNG_SECRET`
-   to a long random string. Docker live startup still needs Python 3 for preflight.
+   Open http://localhost:2201. The **Test mode · demo data** pill marks the
+   fictional demo. Its 28 runs cover verdicts and run states; no model, search,
+   archive or website is called. Stop it before starting live mode:
 
-2. Point it at a model. With LM Studio, load a chat model and start its server on port 1234;
-   the defaults (`MODEL_NAME=auto`) pick the first chat model it reports. For a hosted
-   provider, see [Hosted model providers](#hosted-model-providers).
+   ```sh
+   make down
+   ```
 
-3. Start everything (API, UI and SearXNG):
+2. **Load a model.** Load `google/gemma-4-12b-qat` in LM Studio and start its
+   server on port 1234. Check the server's model list:
+
+   ```sh
+   curl http://127.0.0.1:1234/v1/models
+   ```
+
+   The example settings enable the model and set `MODEL_NAME=auto`. At startup,
+   `auto` selects the first returned model ID that does not contain `embed` or
+   `rerank`; it does not otherwise verify the model type. To pin the model, set
+   `MODEL_NAME` to its exact ID from the list, for example
+   `google/gemma-4-12b-qat`. Settings can also override models per step.
+
+   Compose uses `CONTAINER_MODEL_BASE_URL`, defaulting to
+   `http://host.docker.internal:1234/v1` when empty. LM Studio must accept
+   connections from Docker; enable its local network serving if needed. Local
+   `make dev` instead uses `MODEL_BASE_URL`, which defaults to
+   `http://127.0.0.1:1234/v1`. For another OpenAI-compatible server use
+   `MODEL_PROVIDER=openai_compatible`; see [Hosted model providers](#hosted-model-providers).
+   After startup, `GET /api/status` reports `model_enabled` and `model_name`;
+   this reports configuration, not ongoing model reachability.
+
+3. **Enable real audits and start live mode.** A plain example `.env` can run
+   live mode for browsing, but live audit routes return 404 until both
+   `LIVE_INGESTION_ENABLED=true` and an `API_AUTH_TOKEN` of at least 32
+   characters are configured. Create settings with a generated token:
+
+   ```sh
+   make env API_TOKEN=1
+   ```
+
+   This creates `.env` with a random search secret and token only if the file
+   does not already exist. If it exists, it is left unchanged. For an existing
+   file with an empty token, generate a value with `openssl rand -hex 32` and
+   put it on the `API_AUTH_TOKEN` line. Keep the file private. Edit `.env`:
+   set `LIVE_INGESTION_ENABLED=true` and confirm `API_AUTH_TOKEN` contains the
+   generated value. Then run:
 
    ```sh
    make live
-   make logs   # follow the API log
-   make down   # stop
    ```
 
-   The backend code, the Compose files and the SearXNG settings are built into the images, and
-   `make live` and `make test` rebuild them on every start. If you start Compose another way
-   after changing those files, add `--build`. `.env` values are read when the container is
-   created: after editing `.env`, run `make live` again, which recreates the API container with
-   the new values. `docker compose restart` keeps the old ones. Under Tilt or a local API
-   process, restarting the process is enough.
+   Open http://localhost:2201. **Live** appears in the top bar. The API is at
+   http://localhost:2200; SearXNG is at http://localhost:2202. All bind to
+   loopback by default. `make live` rebuilds the images and recreates containers
+   with changed `.env` values; `docker compose restart` does not reload them.
+   `make logs` follows API logs and `make down` stops the stack.
 
-The **Live** pill in the top bar shows you are in live mode. Runs and workflow snapshots live in the
-Docker volume `karakutu-ai-audit_karakutu-audit-data`.
-`docker compose -p karakutu-ai-audit down --volumes` deletes them for good.
+4. **Enter the UI token.** With authentication enabled the UI reports
+   “Access requires an API token. Add it in Settings.” Open **Settings**, choose
+   **Connection / API token**, paste the value into **API token (optional)**,
+   and choose **Apply connection**. To display your local value for copying:
 
-Archive reads are off until you set `ARCHIVE_BASE_URL`. Without them, the similarity and
-related-removals steps have no archive evidence and classification has no topic catalog; the
-audit still runs. Live ingestion (`POST /api/audit` and the webhook) stays off until you set
-`LIVE_INGESTION_ENABLED=true` and an `API_AUTH_TOKEN` of at least 32 characters.
+   ```sh
+   grep '^API_AUTH_TOKEN=' .env
+   ```
 
-A fresh live database has no articles. To list removed articles from the archive, import them
-(`days` is 1 to 90):
+   Copy only the value after `=` and never share it. The UI keeps it in memory
+   for this tab only; a reload or new tab needs it again. Browser storage would
+   outlive the session and be readable by scripts on the page. API calls such
+   as `GET /api/status` also need a bearer token when one is configured. Check
+   the status there or see **Model**, **Search** and **Archive reads** in Settings.
 
-```sh
-curl -X POST 'http://localhost:2200/api/articles/import?days=30'
-```
+5. **Import from the archive.** Set `ARCHIVE_BASE_URL` in `.env` to your
+   read-only archive endpoint. If it requires wallet authentication, set
+   `ARCHIVE_WALLET_PATH` to an absolute private keyfile path outside the checkout.
+   `make live` checks that file and adds `compose.wallet.yaml` to mount it
+   read-only; `ARCHIVE_WALLET_JSON` is an alternative and takes precedence.
+   Archive reads do not write to the archive. Restart with `make live` after
+   editing settings. On Linux, both the operator and container UID/group 10001
+   must be able to read the wallet; do not make it world-readable. See
+   [archive configuration](configuration.md#archive-read-state).
 
-With `API_AUTH_TOKEN` set, every API call needs the token, and the interactive docs at
-http://localhost:2200/docs cannot send it, so add the header (the variable holds your token):
+   In authenticated `GET /api/status`, `archive_reads_enabled` indicates that
+   an endpoint is configured and `archive` reports its state, including `ok` or
+   `unchecked`. **Settings** shows **Archive reads**. In **Articles**, set
+   **Days** from 1 to 90 (default 30) and choose **Import from archive**. It
+   imports articles from archive audits created in that period, initially as
+   metadata. The control appears in live mode when archive reads are enabled.
 
-```sh
-curl -X POST 'http://localhost:2200/api/articles/import?days=30' \
-  -H "Authorization: Bearer $API_AUTH_TOKEN"
-```
+6. **Audit an article.** Open an imported article and choose **Run first audit**
+   (or **Re-run audit**). Its text is loaded from the archive the first time it
+   is opened or audited. If the read fails and no content is available, the
+   audit returns HTTP 422 with `article_has_no_content`. A failed fill is tried
+   once per article and URL per API process; restart after fixing archive access
+   to retry. The audit is queued and the page updates as steps finish.
 
-Import only reads the archive and stores titles and links locally; an
-article's text and removal date are read when you first open it. Auditing an imported article
-(**Run first audit** or **Re-run audit**) is a live run, so it needs the same
-`LIVE_INGESTION_ENABLED=true` and `API_AUTH_TOKEN` as live ingestion; without them, use
-benchmarks.
+7. **Allow time.** The default `MAX_CONCURRENT_RUNS=1` runs one audit at a
+   time in the single API process; its allowed range is 1 to 8. A 12B model on
+   local hardware can take a few minutes per audit, depending on hardware and
+   evidence.
 
-### Docker live with archive reads
+8. **Read the result.** Review the verdict, findings and evidence on the article
+   page. Choose **Open full run** to inspect **Workflow steps**, inputs, exact
+   model messages and output, and record a review. A person decides; a missing
+   search hit is never evidence of censorship. `GET /api/runs/{run_id}` returns
+   the lean audit result with bounded evidence. `GET /api/runs/{run_id}/details`
+   returns private review details, including input and step records with model
+   calls. The article and full run pages use the details route. See
+   [review a saved run](workflow.md#review-a-saved-run).
 
-Set these in your protected, ignored `.env`, using a host wallet file outside the repo:
+9. **Check search quality.** Bundled SearXNG uses the image's default engines
+   plus mwmbl. Big providers such as Bing and Yandex stay off because queries
+   describe removed news; see [Web search engines](workflow.md#web-search-engines).
+   `GET /api/status` can report `search: degraded` when a query yields no usable
+   hits and reports unresponsive engines. Settings shows **Search** as
+   “SearXNG · reachable, but its search engines are not answering (blocked or
+   rate-limited)”. Web evidence may be missing, which can leave more results
+   `INCONCLUSIVE`. Retry after the engines recover.
 
-```dotenv
-ARCHIVE_BASE_URL=https://archive.example
-ARCHIVE_WALLET_PATH='/absolute/private/archive-wallet.json'
-```
+10. **Run a second stack if needed.** Give it a distinct project and three
+    unused ports, and use the same values when stopping it:
 
-Run `make live`. It uses Python 3 for an offline file preflight, then adds
-`compose.wallet.yaml` only when `ARCHIVE_WALLET_PATH` is non-empty. Compose mounts
-that file read-only as the `archive_wallet` secret. Inside the API container the
-path is always `/run/secrets/archive_wallet`; the host path is never an API
-environment value. A missing file, or one the user running `make` cannot read,
-stops the command before any containers start, naming only the variable.
-Local `make dev` uses the same setting as a host path. Inline `ARCHIVE_WALLET_JSON`
-continues to work and takes precedence over file content.
+    ```sh
+    make live PROJECT=second KARAKUTU_API_PORT=2300 KARAKUTU_WEB_PORT=2301 KARAKUTU_SEARCH_PORT=2302
+    make down PROJECT=second
+    ```
 
-On Linux, Compose secrets preserve host ownership and permissions. The API runs
-as UID 10001 in group 10001, so a mode-600 file owned by another UID cannot be
-read inside the container. Both the operator running `make` (checked before
-start) and the container must be able to read it: keep yourself as the owner and
-give the container's group read access, then nobody else:
-`sudo chgrp 10001 <keyfile>` and `chmod 640 <keyfile>`. Do not make the wallet
-world-readable. Docker Desktop on macOS shares files readably.
+    Compose names the search container under that project and stores live data
+    in `second_karakutu-audit-data`, separate from the default
+    `karakutu-ai-audit_karakutu-audit-data`. The test project defaults to the
+    live project name plus `-test`. `scripts/run-local.sh` always uses the
+    default `karakutu-ai-audit` project for search, so use `make live PROJECT=...`
+    for a second stack. Avoid port conflicts with Tilt and local processes.
 
-Check `GET /api/status` (with your API token when configured) and **Settings**.
-The `archive` field reports `ok`, or a fixed state such as `wallet_missing`,
-`wallet_unreadable`, `auth_unavailable`, `unreachable` or `rejected`.
-`unchecked` means no archive call has completed yet; startup catalog reads usually
-replace it. Archive failures do not prevent API startup. Import keeps the
-`archive_unavailable` error code and includes a safe `reason`; see
-[archive states](configuration.md#archive-read-state).
+11. **Troubleshoot.**
 
-### Your first review
-
-1. Open **Benchmarks** and choose **New benchmark run**. Paste an article URL, title and text,
-   or use **Use a synthetic example** for a made-up input. Add a label and an expected verdict
-   if you like. The run opens on its own page, `/runs/<id>`.
-2. Watch the six steps fill in. Open a step in **Workflow steps** to see its exact input and
-   output JSON, its search and fetch evidence, and the exact model requests and responses.
-3. Read the verdict and its findings, then record **Agree**, **Disagree** or **Needs review**
-   with your name and a note. A reaction is appended to the run; it never changes the result.
-4. Open **Saved workflow** to see the exact code, settings and prompts that produced the run.
-
-Every screen has its own address: **Runs** (`/runs`) lists benchmark and live runs in one
-ledger, with filters kept in the address so you can bookmark them; **Settings** (`/settings`)
-holds the API token, the service details and the current workflow snapshot. The **Articles**
-pages list demo, benchmark and imported live articles with audit history.
-
-More on reviewing in [the workflow guide](workflow.md#review-a-saved-run).
+    - For unhealthy containers, inspect `docker compose -p <project> ps` and
+      `docker logs <container>`. The default project is `karakutu-ai-audit`.
+      A checkout created with a restrictive umask such as 077 can make copied
+      files unreadable to the API image's non-root user. Make checkout files
+      world-readable with `chmod -R a+rX .`, or clone with umask 022.
+    - If model discovery fails or no chat model is loaded, check LM Studio,
+      its model list and the appropriate model URL in step 2. A disabled model
+      shows **Disabled** in Settings and produces `AUDIT_FAILED` runs; calls can
+      also fail after startup even when status says it is enabled.
+    - For degraded search, see step 9. For an unreachable search service, check
+      SearXNG and its configured URL; a refused request may mean JSON output is off.
+    - A live audit 404 means the live gate may be off (step 3). The token message
+      is resolved in step 4. For HTTP 422 `article_has_no_content`, fix archive
+      access and retry as in steps 5–6.
+    - If `make live` needs `.env`, run `make env`; if `make test` fails on
+      `!reset`, update Docker Compose. A port in use may belong to another mode.
+    - If `make dev` reports stale web or Python dependencies, run
+      `npm --prefix web ci` or `uv sync --frozen` respectively. Prompt or model
+      changes returning 403 require an API token. `untrusted_host` (400) means
+      the host must be added to `ALLOWED_HOSTS`; non-loopback hosts need a token.
+      To reset old demo data, run `make test-reset`, then `make test`.
 
 ### Batch benchmarks
 
@@ -254,57 +262,10 @@ for Compose overrides, Tilt, and plain uvicorn.
 
 ## Reproduce this state
 
-From a fresh clone, use Docker Compose 2.24.4+, make, Python 3.11 and uv, and Node
-22+. Live mode additionally needs a reachable LM Studio chat server or hosted
-provider. Install local dependencies with `uv sync --frozen` and
-`npm --prefix web ci`, then create settings with `make env`. No model or credentials
-are required for the offline demo.
-
-1. Run `make test` for the Docker demo. `GET http://127.0.0.1:2200/health` should
-   report mode `test`. Open http://localhost:2201/articles, select **Not audited**,
-   open a demo article and choose **Run first audit**. Its saved steps are synthetic.
-2. Stop Docker with `make down`. Run `RUN_MODE=test make dev` for the same demo
-   behavior using local API/UI processes. Verify health and Articles again; local
-   demo storage is separate from the Compose volume. Ctrl-C stops local processes.
-   Alternatively set RUN_MODE=test in `.env`, then use `make dev`.
-3. For live mode, prepare LM Studio:
-   - Download a chat model supported by your local server.
-   - In the Developer tab, start the server on port 1234 (the default) and turn on
-     just-in-time model loading, so the model loads on the first request.
-   - `curl http://127.0.0.1:1234/v1/models` should list the model.
-   - In `.env`, keep `MODEL_BASE_URL=http://127.0.0.1:1234/v1` and `MODEL_NAME=auto`.
-     `auto` picks the first chat model the server lists; to pin one, set
-     `MODEL_NAME` to its exact identifier from that list. Startup fails with "No chat
-     model is loaded" if the list is empty.
-   - Before `make live` (Docker), check from the host that
-     `curl http://127.0.0.1:1234/v1/models` lists the model. Containers reach the
-     host at `http://host.docker.internal:1234/v1`, the default when
-     `CONTAINER_MODEL_BASE_URL` is empty. Turn on LM Studio's "Serve on Local
-     Network" so containers can connect, or set `CONTAINER_MODEL_BASE_URL` to an
-     address the container can reach.
-   - Fill any other names `make env` reported as unset. Keep archive and live
-     ingestion disabled unless you need them.
-4. Run `make live`, or `RUN_MODE=live make dev` for local processes. Check `/health`
-   for `live` and `/api/status` for model/search/archive/live capabilities. If a
-   token is configured, enter it in Connection settings before API reads.
-   If the API container exits or keeps restarting, run `make logs` and look for
-   "Model discovery failed" or "No chat model is loaded". Check the loaded model,
-   turn on LM Studio's "Serve on Local Network", or set `CONTAINER_MODEL_BASE_URL`
-   to an address the container can reach. `/api/status` reports configuration
-   capabilities after startup; it does not report model reachability.
-   Settings also reports search reachability, probed within two seconds and
-   cached for 30 seconds. If SearXNG is unreachable, check SEARXNG_URL against
-   KARAKUTU_SEARCH_PORT. The local runner derives an empty URL from the published
-   port and refuses an explicit loopback mismatch, including with --check.
-   For "refused the request", enable JSON output in SearXNG and retry a query;
-   a health response alone cannot establish that JSON search works.
-   `degraded` means SearXNG is reachable but a query had no usable hits and reported blocked or rate-limited engines; retry a query after they recover.
-5. Open **Benchmarks**, choose **New benchmark run**, then **Use a synthetic
-   example**. Submit that fictional benchmark and inspect its steps. It uses the
-   live model while staying in the benchmark category. No archive writes occur.
-
-The complete settings reference is [Configuration](configuration.md); the
-production checklist is in [Docker deployment](deploy-docker.md).
+Follow [the ordered path](#from-test-mode-to-a-real-audit) for Docker test and
+live modes. For local processes, follow [Development without Docker](#development-without-docker).
+For a fictional live-model exercise, use **Benchmarks** and **New benchmark run**,
+then **Use a synthetic example**. It remains a benchmark, not a live article audit.
 
 ## Settings
 
@@ -343,42 +304,3 @@ it behind a TLS reverse proxy and set `KARAKUTU_BIND_ADDRESS`, `ALLOWED_HOSTS`,
 `ALLOWED_ORIGINS` and a strong `API_AUTH_TOKEN`. The rules are in
 [Privacy and access](data-and-api.md#privacy-and-access). Run exactly one API process; the run
 queue lives in memory.
-
-## Common problems
-
-**The API will not start: "No chat model is loaded".** `MODEL_NAME=auto` found a model server
-with no chat model loaded. Load a chat model in LM Studio, or set `MODEL_NAME` to a model the
-server has. In Docker the API keeps restarting until this is fixed; `make logs` or
-`docker compose logs karakutu-audit-api` shows the message.
-
-**The API will not start: "Model discovery failed".** The model server did not answer. Check
-`MODEL_BASE_URL` (Tilt and local) or `CONTAINER_MODEL_BASE_URL` (Docker). A model server on
-your machine must accept connections from Docker, not only from `127.0.0.1`.
-
-**Every run ends `AUDIT_FAILED`.** Read the run's findings. "Model is disabled; the audit did not
-run" means there is no `.env` or `MODEL_ENABLED=false`; the first step then reads "Stage did not
-complete" and the other five are skipped. For other failures, open the failed step: it keeps the
-model's raw response, so you can see what went wrong.
-
-**`make live` says "live mode needs .env".** Run `make env` or copy
-`.env.example` to `.env`.
-
-**`make test` fails on `!reset`.** Your Docker Compose is older than 2.24. Update it.
-
-**`make dev` says "Web dependencies are missing or out of date".** The checkout was updated
-but `web/node_modules` comes from an older install; without the check, Vite would fail with
-"Failed to resolve import". Run `npm --prefix web ci`. For "Python dependencies", run
-`uv sync --frozen`.
-
-**A port is already in use.** Another mode or Tilt is still running. Run `make down` and stop
-Tilt.
-
-**The UI says "Access requires an API token".** `API_AUTH_TOKEN` is set. Enter the token in
-**Settings**; the UI keeps it in memory only.
-
-**Prompt or model changes return 403.** They always need `API_AUTH_TOKEN`, even on loopback.
-
-**The browser gets `untrusted_host` (400).** You opened the UI under a host name that is not in
-`ALLOWED_HOSTS`. Add it (a non-loopback host also needs `API_AUTH_TOKEN`).
-
-**Test mode shows old demo data.** `make test-reset`, then `make test`.

@@ -41,8 +41,7 @@ Open http://localhost:2201. You get 28 demo runs covering every verdict and run 
 workflow versions to compare, and reviewer reactions. Everything in it is made up. Stop it with
 `make down`.
 
-To audit real articles, run live mode with your own model: see
-[Getting started](docs/getting-started.md). For a server, see [Docker deployment](docs/deploy-docker.md).
+To audit real articles, follow the [live audit path](docs/getting-started.md#from-test-mode-to-a-real-audit).
 
 ## Web UI
 
