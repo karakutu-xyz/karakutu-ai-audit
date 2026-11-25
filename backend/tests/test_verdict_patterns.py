@@ -544,6 +544,38 @@ async def test_copy_without_the_site_furniture_goes_on_to_web_search(run_offline
     assert any(step["name"] == "web_search" for step in result["steps"])
 
 
+ARCHIVED_FOOTER = ("Explore our publication archives and contact the reader desk for general "
+                   "subscription assistance delivery questions and account settings")
+
+
+@pytest.mark.parametrize("archived,live", [
+    (FOOTER, FOOTER),
+    ([ARCHIVED_FOOTER], [ARCHIVED_FOOTER + " online"]),
+], ids=["exact copy with learned footer", "revised site footer"])
+async def test_copy_with_the_site_furniture_still_moves(run_offline_audit, archived, live):
+    # Two other live pages share the site's current footer, so it is learned. A copy that
+    # carries it (unchanged, or revised by one word since archiving) is still a measured move.
+    article = budget_article()
+    article.content = page(BUDGET + archived)
+    orchard_url = "https://dusulke.example/haber/71003/orchard-survey"
+    result = await run_offline_audit(
+        article,
+        similar=[candidate(), SimilarArticle(id=71002, link=SECOND_URL),
+                 SimilarArticle(id=71003, link=orchard_url)],
+        pages={
+            NEW_URL: page(BUDGET + live),
+            SECOND_URL: page(POTTERY + live),
+            orchard_url: page(footer_orchard() + live),
+        },
+    )
+    measured = details(result, "similarity")["candidates"][0]
+    assert measured["old_in_new"] >= MOVED_THRESHOLD
+    assert measured["fit"] == "verbatim"
+    assert measured["boilerplate_paragraphs"][1] == len(live)
+    assert result["response"]["verdict"] == "MOVED"
+    assert result["response"]["short_circuited_at"] == "similarity"
+
+
 async def test_copy_missing_a_repeated_background_paragraph_is_not_moved(run_offline_audit):
     # Two follow-up stories on the site repeat the original's middle paragraph word for
     # word, so it is learned as same-site boilerplate. The relocated page is the original

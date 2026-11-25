@@ -82,15 +82,12 @@ different paragraph break cannot make identical text differ, and cleaning cannot
 the removed article's text that a candidate carries (for example after the site revised
 its footer; an archived footer that no longer matches today's is simply not dropped).
 The removed article loses a learned paragraph only when the candidate also carries it;
-a learned paragraph the candidate lacks stays in the score as ordinary missing text.
-Follow-up stories often repeat a background paragraph word for word, so it is learned;
-a relocated copy missing that paragraph is measured like any other copy missing text,
-against the same 99% move bar. Real site furniture is on every live page, so a copy
-that matches the article and carries the site's shared footer still reaches `MOVED`
-once the footer is dropped from both sides. A copy on a different page template, with
-another footer or none, keeps the learned footer it lacks in its score in the same way,
-so it usually falls below the move bar, becomes a partial fit and the audit goes on to
-web search.
+a learned paragraph the candidate lacks counts in the old-in-new score as missing text,
+like any other. A background paragraph that follow-up stories repeat word for word is
+learned, but its absence from a relocated copy can no longer be hidden by dropping it.
+The same applies to furniture: a copy on a different page template, with another footer
+or none, keeps the learned footer it lacks in its score, so it scores lower than before
+and may fall below the move bar.
 If the learned text covers more than 50% of the removed article's shingles, neither
 side is stripped: both scores stay raw and `boilerplate_capped` is true. This cap also
 protects against copies with long distinct teasers voting most of the body into
