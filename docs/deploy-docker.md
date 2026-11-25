@@ -44,7 +44,7 @@ is undecided. Set the host `ARCHIVE_WALLET_PATH` for `make live`; its optional
 always the API's container path. A production orchestrator should supply the
 same read-only container path. Never place wallet content in an image or an env
 file in the repository. On Linux, keep the operator as owner and grant read access
-to the container's group 10001 (`chgrp 10001`, mode 640); see [Docker archive reads](getting-started.md#docker-live-with-archive-reads).
+to the container's group 10001 (`chgrp 10001`, mode 640); see [Docker archive reads](getting-started.md#from-test-mode-to-a-real-audit).
 Check `/api/status`'s `archive` field and Settings after recreation. The compatible
 `archive_reads_enabled` boolean only says reads are configured.
 

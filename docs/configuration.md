@@ -254,7 +254,7 @@ only `/run/secrets/archive_wallet`. Production can supply the same container pat
 from the host secret store. Inline `ARCHIVE_WALLET_JSON` retains precedence.
 On Linux the file must be readable by both the operator and the container (owner
 plus group 10001, mode 640); see
-[the ownership note](getting-started.md#docker-live-with-archive-reads).
+[the ownership note](getting-started.md#from-test-mode-to-a-real-audit).
 
 `GET /api/status` returns `archive`, a fixed enum containing no paths, wallet
 content, tokens, URLs or upstream messages. `archive_reads_enabled` remains a
