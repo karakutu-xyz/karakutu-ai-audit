@@ -531,6 +531,18 @@ def test_a_carried_short_variant_cannot_hide_a_longer_variant_the_copy_lacks():
     assert measured.old_in_new == measured.raw_old_in_new < MOVED_THRESHOLD
 
 
+def test_a_carried_line_next_to_a_missing_learned_line_keeps_the_gap_visible():
+    # Both short lines are learned; the copy carries the second but lacks the first. The
+    # shingles that run from the missing line into the carried one are evidence of the gap.
+    body = " ".join(f"body{n}" for n in range(400))
+    missing = "kilo lima mike november"
+    carried = "oscar papa quebec romeo"
+    keys = frozenset(paragraph_keys([missing, carried]))
+    measured = measure(prose([body, missing, carried]), prose([body, carried]), keys)
+    assert not measured.boilerplate_capped
+    assert measured.old_in_new == measured.raw_old_in_new < MOVED_THRESHOLD
+
+
 def test_a_revised_site_footer_does_not_demote_an_exact_copy():
     # The live site appended a word to its footer since the article was archived. Voters
     # only show the revised footer, so the archived footer is not matched as boilerplate

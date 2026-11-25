@@ -185,12 +185,21 @@ def _clean_removed(
 ) -> frozenset:
     """The removed article's shingles after dropping only paragraphs the candidate carries.
 
-    An occurrence of a carried paragraph is kept when it overlaps an occurrence of a learned
-    paragraph the candidate lacks: a short footer variant inside a longer one must not
-    take the longer one's missing words out of the score with it.
+    An occurrence of a carried paragraph is kept when it overlaps, or lies within one
+    shingle's reach of, an occurrence of a learned paragraph the candidate lacks. Dropping
+    it would also drop the shingles that span into the missing paragraph, so a short footer
+    variant inside a longer one, or a carried line right after a missing one, would take
+    the missing words' evidence out of the score with it.
+
+    Residual: any other omission shorter than a shingle right next to carried furniture
+    loses the shingles that span into the furniture, as it did before this rule.
     """
     toks = tokens(removed_prose)
-    missing = _covered(len(toks), _spans(toks, boilerplate - carried))
+    reach = SHINGLE_K - 1
+    missing = _covered(len(toks), [
+        (max(0, a - reach), min(len(toks), b + reach))
+        for a, b in _spans(toks, boilerplate - carried)
+    ])
     spans = [(a, b) for a, b in _spans(toks, carried) if not any(missing[a:b])]
     return _kept(removed_prose, toks, spans)[0]
 
