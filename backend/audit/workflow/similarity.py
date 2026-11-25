@@ -24,10 +24,11 @@ from pydantic import BaseModel, Field
 from audit.domain import Article
 from audit.clients.karakutu import KarakutuClient, get_client as get_karakutu_client
 from audit.search.base import SearchResult
+from audit.search.boilerplate import build_boilerplate, measure
 from audit.search.fetch import (
     FetchOutcome, LivePage, fetch_candidates, normalize_url, prose_of, same_publisher,
 )
-from audit.search.textmatch import MOVED_THRESHOLD, SIBLING_MAX, directional_containments
+from audit.search.textmatch import MOVED_THRESHOLD, SIBLING_MAX
 
 
 ARCHIVE_CANDIDATES = 5
@@ -42,6 +43,11 @@ class SimilarCandidate(BaseModel):
     final_url: Optional[str] = None
     old_in_new: Optional[float] = None  # measured for live same-publisher candidates only
     new_in_old: Optional[float] = None
+    raw_old_in_new: Optional[float] = None
+    raw_new_in_old: Optional[float] = None
+    # Matched paragraph counts (proposed removals when capped): removed, candidate.
+    boilerplate_paragraphs: Optional[Tuple[int, int]] = None
+    boilerplate_capped: Optional[bool] = None
     fit: Optional[str] = None           # verbatim | partial | sibling | unmeasured
 
 
@@ -85,6 +91,12 @@ async def run(removed: Article, *, client: Optional[KarakutuClient] = None) -> S
         for u in urls:
             excluded[normalize_url(u)] = status
     removed_prose = prose_of(removed.content)
+    boilerplate = build_boilerplate(removed_prose, (
+        p.text for p in live.values()
+        if same_publisher(p.url, removed.url)
+        and (not p.final_url or same_publisher(p.final_url, removed.url))
+        and normalize_url(p.url) != normalize_url(removed.url)
+    ))
 
     candidates: List[SimilarCandidate] = []
     best: Optional[Tuple[LivePage, float, float]] = None
@@ -95,9 +107,16 @@ async def run(removed: Article, *, client: Optional[KarakutuClient] = None) -> S
         if key in live:
             page = live[key]
             cand.status, cand.final_url = "live", page.final_url
+            cand.same_publisher = cand.same_publisher and (
+                not page.final_url or same_publisher(page.final_url, removed.url)
+            )
             if cand.same_publisher:
-                o, n = directional_containments(removed_prose, page.text)
+                measured = measure(removed_prose, page.text, boilerplate)
+                o, n = measured.cleaned
                 cand.old_in_new, cand.new_in_old, cand.fit = o, n, _fit(o, n)
+                cand.raw_old_in_new, cand.raw_new_in_old = measured.raw
+                cand.boilerplate_paragraphs = measured.boilerplate_paragraphs
+                cand.boilerplate_capped = measured.boilerplate_capped
                 if o is not None and o >= MOVED_THRESHOLD and (best is None or o > best[1]):
                     best = (page, o, n)
         elif key in dead:

@@ -13,6 +13,39 @@
 
 `workflow/pipeline.py::_decide` maps substantive evidence to `NOT_REMOVED`, `MOVED`, `LIKELY_MOVED`, `FOUND_ONLINE`, `POSSIBLE_CENSORSHIP`, or `INCONCLUSIVE`. The pipeline also assembles the low-interest exit: the best live, measured same-publisher partial copy from step 2 gives `LIKELY_MOVED` when it holds at least 50% of the removed article's text (`old_in_new`). This starting floor is to be set from the benchmark. Below the floor, `LIKELY_LOW_PUBLIC_INTEREST` includes a relocation note; siblings, unmeasured fits, other publishers and redirects that end on another host do not count; the note rounds the share down so it never reads as the floor. Without a partial candidate, the low-interest response is unchanged. Source and web search are skipped, so no model compares key facts on this path; a person should compare the pages. This path never gives `POSSIBLE_CENSORSHIP`. The engine handles failed-execution exits. The eight verdict names remain compatible with the archived auditor. Every `POSSIBLE_CENSORSHIP` explanation says it is not a finding of censorship and requires human review. A missing search hit is not evidence of censorship.
 
+Similarity and web-search overlap bars use prose after dropping paragraphs shared
+by two other live same-site articles. Both requested URLs and fetched destinations
+must stay on the removed article's publisher to vote or be measured as same-publisher.
+Independence uses whole-page five-token shingles: each voter must have at least 30
+shingles absent from both the removed article and the other voter, and at least half
+as many as the distinct shingles within their shared paragraph keys. Shared volume
+is symmetric; repeated paragraphs and page order cannot inflate it. The removed
+article never votes, and reflowed copies cannot vote each other's body out.
+Learned paragraphs are found as token sequences anywhere in a page (every occurrence,
+overlapping ones included), and each side's own text, the shingles touching none of them,
+is looked for in the whole other side. A footer then cannot inflate either score, a
+different paragraph break cannot make identical text differ, and cleaning cannot hide
+the removed article's text that a candidate carries (for example after the site revised
+its footer; an archived footer that no longer matches today's is simply not dropped).
+If the learned text covers more than 50% of the removed article's shingles, neither
+side is stripped: both scores stay raw and `boilerplate_capped` is true. This cap also
+protects against copies with long distinct teasers voting most of the body into
+boilerplate. With fewer than two other pages, scores stay raw
+(see `search/boilerplate.py`). The bars
+(99% move, 30% partial, 20% sibling) were rechecked on cleaned invented page families
+(`backend/tests/test_boilerplate.py`) and kept; the original-URL check in the source step
+(50%) is not cleaned.
+Review details retain raw and cleaned scores, the cap flag and matched paragraph
+counts in removed-article/candidate order, including pages set aside as siblings.
+When capped, counts show proposed removals; neither side was stripped.
+
+Residual limitation: unrelated articles can quote the same lede and vote it into
+boilerplate when it covers at most half the removed text. In the invented regression,
+a genuine partial copy falls from 71/223 (31.84%) to 33/185 (17.84%) old-in-new after
+the quoted lede is removed. Its reverse score is 13.04% when the rest is rewritten,
+so it is demoted below the sibling bar. The cap does not protect every partial copy
+or prevent every score increase below its limit.
+
 ## Review a saved run
 
 Open a run from the Runs ledger (`/runs/<id>`). The page puts the saved prediction and its findings first, then the run facts, the six workflow steps and an append-only human reaction (**Human review**). Reviewer identity is required; the note and expected verdict are optional.

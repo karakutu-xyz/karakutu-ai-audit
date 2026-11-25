@@ -116,8 +116,10 @@ Models find and describe evidence. They never pick the verdict. Code does:
 - `AuditEngine.run` in [`engine.py`](../backend/audit/engine.py) delegates the low-interest
   response to the pipeline and handles failed execution (`AUDIT_FAILED`).
 - Text overlap is measured, not judged. The thresholds are constants in
-  [`textmatch.py`](../backend/audit/search/textmatch.py#L51): 0.99 containment for a move, 0.30
-  for a partial match.
+  [`textmatch.py`](../backend/audit/search/textmatch.py#L57): 0.99 containment for a move, 0.30
+  for a partial match, below 0.20 both ways for a different article. Same-publisher pages are
+  scored after same-site boilerplate is dropped
+  ([`boilerplate.py`](../backend/audit/search/boilerplate.py)).
 - Two flags can be added to a verdict: `SOURCE_DEAD` (a cited source answers 404 or 410) and
   `RELATED_REMOVALS` (a pattern of related removals). Both are defined in
   [`domain.py`](../backend/audit/domain.py#L61).
