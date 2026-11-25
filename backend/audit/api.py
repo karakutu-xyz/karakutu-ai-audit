@@ -693,9 +693,13 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
                 return archive_unavailable()
             return app.state.store.import_articles(items)
 
-    @app.get("/api/articles/{ref}", response_model=ArticleDetail)
-    async def article_detail(ref: str):
-        result = article_or_404(ref)
+    async def fill_archive_text(ref: str, result: dict) -> dict:
+        """Load an imported archive article's text once, the first time it is needed.
+
+        Imports store metadata only. The detail view and the audit route both call this, so an
+        article can be audited without being opened first. One attempt per article and URL per
+        process; a failed read leaves the saved metadata and exposes nothing from upstream.
+        """
         client = archive_client()
         if ref.startswith("ka-") and not result["content"] and client is not None and client.enabled:
             async with app.state.article_fill_lock:
@@ -711,16 +715,28 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
                         # Return the saved metadata without exposing upstream content/errors.
                         pass
             result = article_or_404(ref)
+        return result
+
+    @app.get("/api/articles/{ref}", response_model=ArticleDetail)
+    async def article_detail(ref: str):
+        result = await fill_archive_text(ref, article_or_404(ref))
         result["links"] = {"original_url": result["url"], "archive_url": None}
         return result
+
+    def require_audit_allowed(article: dict) -> None:
+        if article["category"] == "live" and not test_mode and not (settings.live_ingestion_enabled and settings.api_auth_token):
+            raise HTTPException(404)
 
     @app.post("/api/articles/{ref}/audit", status_code=202, response_model=AuditResult,
              responses=result_responses)
     async def article_audit(ref: str):
+        # Check access before any archive read, then load missing text as the detail view does.
+        article = article_or_404(ref)
+        require_audit_allowed(article)
+        await fill_archive_text(ref, article)
         async with app.state.article_lock:
             article = article_or_404(ref)
-            if article["category"] == "live" and not test_mode and not (settings.live_ingestion_enabled and settings.api_auth_token):
-                raise HTTPException(404)
+            require_audit_allowed(article)
             # Store re-reads the article and checks for active work under the database writer lock.
             return submit(None, article["category"], "article", article_ref=ref)
 

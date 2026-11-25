@@ -490,12 +490,40 @@ def test_archive_unavailable_and_live_article_audit(tmp_path, database_url):
     engine.archive = FakeArchive()
     with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, live_ingestion_enabled=True), engine)) as client:
         assert client.post("/api/articles/import", headers=AUTH).status_code == 200
-        assert client.post("/api/articles/ka-42/audit", headers=AUTH).status_code == 422
-        assert client.get("/api/articles/ka-42", headers=AUTH).status_code == 200
+        assert client.app.state.store.article("ka-42")["content"] == ""
+        # The audit route loads the missing text itself; the article need not be opened first.
         run = client.post("/api/articles/ka-42/audit", headers=AUTH)
         assert run.status_code == 202
         assert run.json()["run"]["category"] == "live" and run.json()["run"]["origin"] == "article"
         assert run.json()["article"]["ref"] == "ka-42"
+        assert client.app.state.store.article("ka-42")["content"] == FICTION
+        # One read per article: opening it afterwards does not read the archive again.
+        assert client.get("/api/articles/ka-42", headers=AUTH).json()["content"] == FICTION
+        assert [c[0] for c in engine.archive.calls].count("detail") == 1
+
+
+def test_audit_with_a_failed_archive_read_keeps_the_no_content_answer(tmp_path):
+    engine = FakeEngine()
+    engine.archive = FakeArchive(fail=True)
+    config = settings(tmp_path, api_auth_token=TOKEN, live_ingestion_enabled=True)
+    with TestClient(create_app(config, engine)) as client:
+        client.headers.update(AUTH)
+        assert client.post("/api/articles/import").status_code == 200
+        response = client.post("/api/articles/ka-42/audit")
+        assert response.status_code == 422
+        assert response.json() == {"error": {"code": "article_has_no_content"}}
+        assert "PRIVATE" not in response.text
+        assert [c[0] for c in engine.archive.calls].count("detail") == 1
+
+
+def test_audit_route_without_live_ingestion_never_reads_the_archive(tmp_path):
+    engine = FakeEngine()
+    engine.archive = FakeArchive()
+    with TestClient(create_app(settings(tmp_path, api_auth_token=TOKEN), engine)) as client:
+        client.headers.update(AUTH)
+        assert client.post("/api/articles/import").status_code == 200
+        assert client.post("/api/articles/ka-42/audit").status_code == 404
+        assert "detail" not in [c[0] for c in engine.archive.calls]
 
 
 async def test_archive_client_get_only():
