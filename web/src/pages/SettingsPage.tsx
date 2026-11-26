@@ -32,6 +32,7 @@ const searchLabels: Record<SearchState, string> = {
 const pollReasons: Record<PollReason, string> = {
   ...archiveLabels,
   archive_error: "Archive read failed",
+  archive_incomplete: "Archive listing incomplete",
   poll_error: "Polling failed",
   import_in_progress: "Import in progress",
   queue_paused: "Queue paused",
@@ -41,9 +42,10 @@ function lastPoll(polling: PollingStatus) {
   const last = polling.last;
   if (!last) return "Not yet";
   const time = date(last.finished_at);
-  return last.outcome === "skipped"
+  const result = last.outcome === "skipped"
     ? `${time} · skipped: ${last.reason ? pollReasons[last.reason] : "Unknown"}`
     : `${time} · found ${last.found}, new ${last.new}, queued ${last.queued}`;
+  return `${result} · unreadable ${last.unreadable}`;
 }
 
 export function SettingsPage() {

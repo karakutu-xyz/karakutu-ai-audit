@@ -41,36 +41,49 @@ Each cycle uses the same Unix-second archive audit listing and metadata-only
 `import_articles` as manual Import. The first window is 30 days. Later windows
 start one day before this process's last successful listing/import, clamped to
 2–30 days ending now. Restart resets the window to 30 days. An overlapping manual
-import skips the cycle with `import_in_progress`. Archive failures use fixed
-archive state labels or `archive_error`; other cycle failures use `poll_error` and
+import skips the cycle with `import_in_progress`. Polling requires every status and
+page to succeed and reach the end before the page cap; incomplete listings register
+nothing, queue nothing and leave the successful window unchanged. They use a fixed
+archive failure state or `archive_incomplete`. Listing exceptions use a fixed
+archive failure state or `archive_error`; other cycle failures use `poll_error` and
 the next cycle still runs. No upstream bodies or exception messages enter status
 or logs. Listing counts include invalid/duplicate entries; `new` counts only
-newly registered articles.
+newly registered articles. Both polling and manual Import persist metadata in a worker
+thread under the shared import lock; candidate queries also run off the event loop.
+Each store operation owns its session. SQLite permits cross-thread connections;
+in-memory SQLite uses one exclusively checked-out pooled connection rather than
+sharing an active connection between sessions.
+PostgreSQL uses its connection pool and transaction writer lock. Shutdown waits for
+an in-flight worker operation before closing the store or releasing the import lock.
 
 With `AUTO_AUDIT_ENABLED=true`, the store selects live archive refs with no run of
-any status or origin, ordered by the existing first-registration `created_at`
-timestamp, then the archive id in numeric order (one poll registers a whole listing at
-once, so this tiebreak decides most of the order). Import does not store a separate
-archive detection timestamp.
+any status or origin, ordered by numeric archive id (length, then id, then ref).
+Archive ids increase as articles are detected, so this queues oldest detections first
+even when a newest-first listing gives newer articles earlier local registration times.
 The budget is `AUTO_AUDIT_MAX_PER_POLL` minus queued/running `poll` runs, keeping
 that backlog at most N. At most N new runs are submitted in one cycle even if
 older work finishes during it. Queue pause allows metadata registration but skips
-automatic submissions (`queue_paused`). Each candidate uses `fill_archive_text`,
+automatic submissions (`queue_paused`). Each candidate refreshes the latest archive
+version through `fill_archive_text`, including when text is already cached, updating
+changed title, text and version references without changing historical run inputs. It
 then re-checks the article and absence of any run under the shared article lock
-before submission with origin `poll`. Missing text creates no run. Failed,
+before submission with origin `poll`. A failed refresh or missing text creates no run
+and increments `unreadable`, even when stale text is cached. Failed reads share a
+ten-minute cooldown per ref/URL, then become retryable. Failed,
 stopped and interrupted runs are never retried automatically. Manual audits may
 still re-run articles. Automatic work uses the current workflow and normal engine,
 including real model/search calls when configured; it never writes to the archive.
 
 Registration adds no text storage. Opening or auditing loads only the latest
-version's text through the unchanged loader; default archive evidence remains
+version's text; successful lazy reads still happen once per ref/URL, while automatic
+submissions always require a fresh read. Default archive evidence remains
 summaries and hashes, with full bodies only for `RECORD_FULL_EVIDENCE=true`.
 
 `GET /api/status` includes `polling`: `enabled`, `interval_minutes` (0 when off),
 `auto_audit_enabled` (false when polling is off), `auto_audit_max_per_poll`, and
 `last` (null until a cycle finishes). `last` holds RFC 3339 `started_at` and
 `finished_at`, `outcome` (`ok` or `skipped`), `reason` (a fixed label or null),
-`found`, `new` and `queued`. Counts remain visible on a partial failed cycle.
+`found`, `new`, `queued` and `unreadable`. Counts remain visible on a partial failed cycle.
 This state stays in memory and resets on restart. Settings displays it; Articles
 continues to offer manual selection and Run audit.
 
@@ -380,7 +393,8 @@ failed query. These descriptions do not change verdicts, thresholds or prompts.
 `POST /api/articles/import` accepts a `days` query parameter (default 30, range 1–90).
 It calls the archive's paginated `audits_created_between` listing for that date window
 and imports URL/title/publisher display name/publication date and archive ID as live
-metadata, with origin `archive`. It does not fetch full article text or start audits.
+metadata, with origin `archive`. It retains its existing partial-list behavior when
+some archive pages succeed. It does not fetch full article text or start audits.
 Changed URLs/hosts are refreshed for an existing `ka-<id>` row. Import resolves both
 the archive identity and normalized URL in one transaction. An existing `ka-<id>`
 row takes priority: if a URL-derived row already holds its new URL, that row's runs
@@ -404,15 +418,18 @@ import retains an existing normalized URL's ref, category, title and content whe
 that article originated from a run/demo, adding archive/source metadata without
 breaking run links.
 
-Opening an empty `ka-*` article requests the archive article once per ref/URL pair
-per service lifetime with checks and versions expanded. A changed URL permits a fresh
+Opening an empty `ka-*` article requests the archive article with checks and versions
+expanded. A successful lazy read happens once per ref/URL pair per service lifetime;
+a failed read becomes retryable after a ten-minute cooldown. A changed URL permits a fresh
 attempt during the same service lifetime. It stores the latest version's `news_text` (or
 top-level text when no versions exist), language, version title/check date/hash
 metadata and the first dead-check date after the last 200, using the shared archive
 check logic. The archive's timestamp representation is retained as a string for
 `removed_at`. Failed reads return the saved article with empty content and no upstream
-error text. Concurrent detail reads share a lock and one attempt; a service restart
-permits another attempt for still-empty articles. All archive calls are GET-only;
+error text. Concurrent detail reads share a lock and the attempt cache. Manual Run
+audit keeps its missing-text behavior with the same retry cooldown; only automatic
+audits explicitly refresh already-cached text. A service restart clears the cache.
+All archive calls are GET-only;
 local import/enrichment never mutates the archive.
 
 Audit runs are asynchronous and persisted. Start live runs from saved articles or

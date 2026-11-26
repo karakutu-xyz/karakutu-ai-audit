@@ -136,9 +136,13 @@ Live runs audit saved live articles: manual requests use origin `article`, and
 opt-in automatic audits use origin `poll`. Benchmark submissions stay in the
 benchmark category; historical `api` and `webhook` origins remain readable.
 Archive polling registers metadata every five minutes by default, then optionally
-queues oldest first attempts within the configured backlog budget. Any existing
+queues first attempts in numeric archive-id order (oldest detections first), independent
+of local registration time, within the configured backlog budget. Any existing
 run, including failed, stopped or interrupted work, prevents an automatic retry.
-Polling uses the same text loader, article lock and submission path as Run audit;
+Polling requires a complete listing before registering or queueing anything. It
+refreshes the latest archive text even when cached, then uses the same article lock
+and submission path as Run audit. Failed text reads create no run, increment the
+cycle's `unreadable` count and become retryable after a ten-minute cooldown;
 workflow snapshots and verdict rules are unchanged. See
 [Archive polling](data-and-api.md#archive-polling) for scheduling and status.
 

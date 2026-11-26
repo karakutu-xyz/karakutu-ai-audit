@@ -21,7 +21,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import QueuePool
 from sqlalchemy.schema import CreateColumn
 from sqlalchemy.sql.expression import ColumnElement
 
@@ -391,7 +391,9 @@ class Store:
             options: dict[str, Any] = {
                 "connect_args": {"check_same_thread": False, "timeout": 5}}
             if memory:
-                options["poolclass"] = StaticPool
+                # Keep one in-memory database, but never lend its connection to two
+                # sessions concurrently when imports move into a worker thread.
+                options.update(poolclass=QueuePool, pool_size=1, max_overflow=0)
         else:
             options = {"pool_pre_ping": True, "pool_size": 5, "max_overflow": 5,
                        "pool_recycle": 1800, "connect_args": {"connect_timeout": 10}}
@@ -689,15 +691,14 @@ class Store:
                 Run.origin == "poll", Run.status.in_(["queued", "running"])))
 
     def unaudited_archive_refs(self) -> list[str]:
-        # Registration time is the existing import timestamp; no article text is loaded. One
-        # import registers a whole listing at once, so ties fall back to the archive id in
-        # numeric order (shorter digit strings first), which follows the archive's own order.
+        # IDs increase as the archive detects articles. Local registration timestamps
+        # instead follow the newest-first listing, reversing chronology within a batch.
         with Session(self.engine) as session:
             return list(session.scalars(select(ArticleRow.ref).where(
                 ArticleRow.category == "live", ArticleRow.archive_id.is_not(None),
                 ArticleRow.ref.startswith("ka-"),
                 ~select(Run.id).where(Run.article_ref == ArticleRow.ref).exists(),
-            ).order_by(ArticleRow.created_at, func.length(ArticleRow.archive_id),
+            ).order_by(func.length(ArticleRow.archive_id),
                        ArticleRow.archive_id, ArticleRow.ref)))
 
     def import_articles(self, items: list[dict]) -> dict:
@@ -775,7 +776,8 @@ class Store:
                     session.flush()
         return counts
 
-    def fill_article(self, ref: str, record, *, expected_url: str, expected_archive_id: str | None) -> bool:
+    def fill_article(self, ref: str, record, *, expected_url: str,
+                     expected_archive_id: str | None, refresh=False) -> bool:
         """Store archive text only if the article still has the identity it was fetched for.
 
         The fetch happens outside this transaction; a concurrent import may have moved the
@@ -784,28 +786,37 @@ class Store:
         """
         from audit.clients.karakutu import first_dead_check_date
         with Session(self.engine) as session, session.begin():
+            begin_write(session.connection())
             row = session.get(ArticleRow, ref)
-            if row is None or row.content:
+            if row is None or (row.content and not refresh):
                 return False
             if row.url != expected_url or row.archive_id != expected_archive_id:
                 return False
             if str(record.id) != (expected_archive_id or ref[3:]):
                 return False
             versions = sorted(record.versions, key=lambda v: v.check_date or 0)
-            row.content = without_nul(versions[-1].news_text if versions else record.news_text)
-            row.language = without_nul(record.language_code)
-            row.snapshot = without_nul({"versions": [{"title": v.title, "check_date": v.check_date,
-                                         "content_hash": v.content_hash} for v in versions]})
+            values = without_nul({
+                "content": versions[-1].news_text if versions else record.news_text,
+                "language": record.language_code,
+                "snapshot": {"versions": [{"title": v.title, "check_date": v.check_date,
+                    "content_hash": v.content_hash} for v in versions]},
+            })
+            if refresh:
+                values["title"] = without_nul(
+                    (versions[-1].title if versions else record.title) or record.title or row.title)
             # Archive check dates are Unix seconds; store ISO, like published_at. Checks are
             # unvalidated upstream data: an unusable date leaves the removal date unknown
             # instead of discarding the article text.
             try:
                 dead = first_dead_check_date(record.checks)
-                row.removed_at = (datetime.fromtimestamp(int(dead), timezone.utc).isoformat()
-                                  if dead is not None else None)
+                values["removed_at"] = (datetime.fromtimestamp(int(dead), timezone.utc).isoformat()
+                                        if dead is not None else None)
             except (TypeError, ValueError, OverflowError, OSError):
-                row.removed_at = None
-            row.updated_at = now()
+                values["removed_at"] = None
+            if any(getattr(row, key) != value for key, value in values.items()):
+                for key, value in values.items():
+                    setattr(row, key, value)
+                row.updated_at = now()
             return True
 
     def add_reaction(self, run_id: str, values: dict) -> dict | None:

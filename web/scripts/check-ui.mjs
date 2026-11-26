@@ -1587,17 +1587,19 @@ test("Settings waits for service and workflow content, or ends on either error",
     [{ ...pollingFixture, enabled: false, interval_minutes: 0 }, ["Off"]],
     [{ ...pollingFixture, auto_audit_enabled: true, last: {
       started_at: "2026-11-01T00:00:00Z", finished_at: "2026-11-01T00:00:01Z",
-      outcome: "ok", reason: null, found: 7, new: 4, queued: 2,
-    } }, ["On (up to 5 per poll)", "found 7, new 4, queued 2"]],
-    ...["import_in_progress", "queue_paused", "archive_error", "poll_error"].map(
+      outcome: "ok", reason: null, found: 7, new: 4, queued: 2, unreadable: 3,
+    } }, ["On (up to 5 per poll)", "found 7, new 4, queued 2", "unreadable 3"]],
+    ...["import_in_progress", "queue_paused", "archive_error", "archive_incomplete",
+      "poll_error"].map(
       (reason) => [{ ...pollingFixture, last: {
         started_at: "2026-11-01T00:00:00Z",
         finished_at: "2026-11-01T00:00:01Z", outcome: "skipped", reason,
-        found: 0, new: 0, queued: 0,
+        found: 0, new: 0, queued: 0, unreadable: 1,
       } }, ["skipped:", {
         import_in_progress: "Import in progress", queue_paused: "Queue paused",
         archive_error: "Archive read failed", poll_error: "Polling failed",
-      }[reason]]],
+        archive_incomplete: "Archive listing incomplete",
+      }[reason], "unreadable 1"]],
     ),
   ]) {
     status = { mode: "live", polling };

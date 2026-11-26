@@ -13,6 +13,16 @@ def utc_now():
     return datetime.now(timezone.utc)
 
 
+async def store_in_thread(function, *args):
+    """Finish persistence before cancellation releases its lock or closes the store."""
+    task = asyncio.create_task(asyncio.to_thread(function, *args))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await task
+        raise
+
+
 class ArchivePoller:
     def __init__(self, settings, state, client, fill_archive_text, submit, *,
                  clock=utc_now, sleep=asyncio.sleep, startup_delay=1):
@@ -34,9 +44,9 @@ class ArchivePoller:
             "last": self.last,
         }
 
-    def archive_failure(self):
+    def archive_failure(self, fallback="archive_error"):
         state = getattr(self.client, "state", None)
-        return state if state in ARCHIVE_FAILURES else "archive_error"
+        return state if state in ARCHIVE_FAILURES else fallback
 
     async def run(self):
         # Yield to startup and allow the first status request before intake starts.
@@ -49,7 +59,8 @@ class ArchivePoller:
         """Run one cycle without sleeping; clocks and scheduling are injectable."""
         async with self.cycle_lock:
             cycle = {"started_at": self.clock().isoformat(), "finished_at": None,
-                     "outcome": "ok", "reason": None, "found": 0, "new": 0, "queued": 0}
+                     "outcome": "ok", "reason": None, "found": 0, "new": 0,
+                     "queued": 0, "unreadable": 0}
             try:
                 reason = await self._cycle(cycle)
             except Exception:
@@ -74,13 +85,13 @@ class ArchivePoller:
             start = max(end - timedelta(days=30), min(start, end - timedelta(days=2)))
             try:
                 items = await self.client.audits_created_between(
-                    int(start.timestamp()), int(end.timestamp()))
+                    int(start.timestamp()), int(end.timestamp()), require_complete=True)
             except Exception:
                 return self.archive_failure()
             if items is None:
-                return self.archive_failure()
+                return self.archive_failure("archive_incomplete")
             cycle["found"] = len(items)
-            counts = self.state.store.import_articles(items)
+            counts = await store_in_thread(self.state.store.import_articles, items)
             cycle["new"] = counts["imported"]
             self.last_success = end
         if not self.settings.auto_audit_enabled:
@@ -91,7 +102,7 @@ class ArchivePoller:
         budget = self.settings.auto_audit_max_per_poll - store.active_poll_runs()
         if budget <= 0:
             return None
-        for ref in store.unaudited_archive_refs():
+        for ref in await store_in_thread(store.unaudited_archive_refs):
             if cycle["queued"] >= budget:
                 break
             if self.state.queue_paused:
@@ -99,7 +110,10 @@ class ArchivePoller:
             article = store.article(ref)
             if article is None:
                 continue
-            await self.fill_archive_text(ref, article)
+            refreshed = await self.fill_archive_text(ref, article, refresh=True)
+            if refreshed is None or not refreshed["content"].strip():
+                cycle["unreadable"] += 1
+                continue
             async with self.state.article_lock:
                 # Manual audits may win while the archive read is in flight. Even a
                 # completed/failed/stopped manual run prevents an automatic retry.

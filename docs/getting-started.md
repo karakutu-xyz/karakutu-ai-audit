@@ -133,8 +133,9 @@ parts fit together, read [Architecture](architecture.md). Every variable and its
    Connection settings as in step 4. Its text is loaded from the archive the
    first time it is opened or audited. If the read fails and no content is
    available, the audit returns HTTP 422 with `article_has_no_content`. A failed
-   fill is tried once per article and URL per API process; restart after fixing
-   archive access to retry. The audit is queued and the page updates as steps finish.
+   fill becomes retryable after a ten-minute cooldown per article and URL. Fix
+   archive access, then open or audit the article again after that cooldown.
+   The audit is queued and the page updates as steps finish.
 
 7. **Allow time.** The default `MAX_CONCURRENT_RUNS=1` runs one audit at a
    time in the single API process; its allowed range is 1 to 8. A 12B model on

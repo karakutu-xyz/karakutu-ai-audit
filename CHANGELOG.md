@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Archive polling now requires complete listings, preserves its retry window on partial reads, and imports metadata off the API event loop. Automatic audits use numeric archive-id order and refresh cached text before submission; failed text reads become retryable after ten minutes and appear as unreadable counts in Settings.
+
 - Poll archive metadata every five minutes when archive reads are enabled; optionally queue bounded first audits with origin `poll`. Auto-audit is off by default, respects queue pause and existing attempts, and subtracts queued/running poll work from its cap. Settings now shows polling configuration and the last cycle's safe counts or skip reason. Test mode stays offline.
 
 - Breaking: the submit (`POST /api/audit`) and webhook (`POST /api/webhooks/audit`) routes and the `LIVE_INGESTION_ENABLED` setting are removed; intake from Karakutu uses polling. Run audit on an imported article now works in live mode with the normal token rules: no token while the app is only reachable from this machine, required otherwise.

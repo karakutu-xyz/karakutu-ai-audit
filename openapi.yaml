@@ -879,6 +879,7 @@ components:
             type: string
           - enum:
             - archive_error
+            - archive_incomplete
             - poll_error
             - import_in_progress
             - queue_paused
@@ -889,6 +890,10 @@ components:
           format: date-time
           title: Started At
           type: string
+        unreadable:
+          minimum: 0.0
+          title: Unreadable
+          type: integer
       required:
       - started_at
       - finished_at
@@ -897,6 +902,7 @@ components:
       - found
       - new
       - queued
+      - unreadable
       title: PollCycle
       type: object
     PollingStatus:

@@ -134,7 +134,7 @@ export type SearchState =
   | "disabled" | "unchecked" | "ok" | "unreachable" | "rejected" | "degraded";
 
 export type PollReason = ArchiveState | "archive_error" | "poll_error"
-  | "import_in_progress" | "queue_paused";
+  | "archive_incomplete" | "import_in_progress" | "queue_paused";
 
 export interface PollCycle {
   started_at: string;
@@ -144,6 +144,7 @@ export interface PollCycle {
   found: number;
   new: number;
   queued: number;
+  unreadable: number;
 }
 
 export interface PollingStatus {

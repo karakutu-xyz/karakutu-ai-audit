@@ -151,7 +151,7 @@ SQLAlchemy supports SQLite by default (`data/audit.sqlite3` live,
 | Table | Holds | Changes |
 | --- | --- | --- |
 | `workflows` | Workflow snapshots, keyed by fingerprint | Insert only |
-| `articles` | One article per normalized URL: title, source, host, dates, content, archive metadata, category and origin (`run`, `archive`, `demo`) | Created by its first run, an archive import or the test-mode demo seed (which includes articles with no run yet); imports and archive fills update metadata and missing text |
+| `articles` | One article per normalized URL: title, source, host, dates, content, archive metadata, category and origin (`run`, `archive`, `demo`) | Created by its first run, an archive import or the test-mode demo seed (which includes articles with no run yet); imports update metadata, lazy fills load missing text, and automatic audits refresh current archive text |
 | `runs` | Input, status, verdict, every step with model calls and evidence, category, origin and `article_ref` (the linked article) | Status and steps fill in while running; input never changes |
 | `reactions` | Reviewer reactions on a run | Append only |
 | `prompt_versions`, `prompt_activations` | Every prompt text ever stored, and which one is active | Append only |

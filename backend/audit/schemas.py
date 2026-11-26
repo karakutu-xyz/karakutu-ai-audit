@@ -95,7 +95,7 @@ class SafeErrorResponse(BaseModel):
 
 
 PollReason = ArchiveState | Literal[
-    "archive_error", "poll_error", "import_in_progress", "queue_paused"]
+    "archive_error", "archive_incomplete", "poll_error", "import_in_progress", "queue_paused"]
 
 
 class PollCycle(BaseModel):
@@ -106,6 +106,7 @@ class PollCycle(BaseModel):
     found: int = Field(ge=0)
     new: int = Field(ge=0)
     queued: int = Field(ge=0)
+    unreadable: int = Field(ge=0)
 
 
 class PollingStatus(BaseModel):
