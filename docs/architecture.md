@@ -31,6 +31,7 @@ web and archive boxes are not used at all (see [Test and live mode](#test-and-li
 | Path | What it owns |
 | --- | --- |
 | [`backend/audit/api.py`](../backend/audit/api.py) | FastAPI app, startup order, request guards (host, token, origin, body size), routes, the in-process run queue. |
+| [`backend/audit/poller.py`](../backend/audit/poller.py) | Single background archive intake task, overlapping metadata windows and opt-in bounded automatic audits; started and cancelled by the API lifespan. |
 | [`backend/audit/engine.py`](../backend/audit/engine.py) | The LangGraph graph (`AuditEngine`), the step wrapper that records every step, the SearXNG client (`Search`), model discovery. |
 | [`backend/audit/workflow/`](../backend/audit/workflow) | One module per step, the prompts ([`prompts.py`](../backend/audit/workflow/prompts.py)), the prompt registry ([`prompt_registry.py`](../backend/audit/workflow/prompt_registry.py)) and the verdict rules ([`pipeline.py`](../backend/audit/workflow/pipeline.py)). |
 | [`backend/audit/search/`](../backend/audit/search) | Guarded page fetching ([`fetch.py`](../backend/audit/search/fetch.py)), URL rules ([`urls.py`](../backend/audit/search/urls.py)) and measured text matching ([`textmatch.py`](../backend/audit/search/textmatch.py)). |
@@ -49,7 +50,7 @@ web and archive boxes are not used at all (see [Test and live mode](#test-and-li
 
 1. A client posts a benchmark to `POST /api/benchmarks/runs`, or
    asks for an audit of a stored article with `POST /api/articles/{ref}/audit`. `submit` in
-   [`api.py`](../backend/audit/api.py#L551) saves a `queued` run and links it to its article in
+   [`api.py`](../backend/audit/api.py) saves a `queued` run and links it to its article in
    the same transaction. The run records the current workflow, prompts and step models at this
    moment.
 2. An `asyncio` task waits for a free slot (`MAX_CONCURRENT_RUNS`, default 1), marks the run
@@ -150,7 +151,7 @@ SQLAlchemy supports SQLite by default (`data/audit.sqlite3` live,
 | Table | Holds | Changes |
 | --- | --- | --- |
 | `workflows` | Workflow snapshots, keyed by fingerprint | Insert only |
-| `articles` | One article per normalized URL: title, source, host, dates, content, archive metadata, category and origin (`run`, `archive`, `demo`) | Created by its first run, an archive import or the test-mode demo seed (which includes articles with no run yet); imports and archive fills update metadata and missing text |
+| `articles` | One article per normalized URL: title, source, host, dates, content, archive metadata, category and origin (`run`, `archive`, `demo`) | Created by its first run, an archive import or the test-mode demo seed (which includes articles with no run yet); imports update metadata, lazy fills load missing text, and automatic audits refresh current archive text |
 | `runs` | Input, status, verdict, every step with model calls and evidence, category, origin and `article_ref` (the linked article) | Status and steps fill in while running; input never changes |
 | `reactions` | Reviewer reactions on a run | Append only |
 | `prompt_versions`, `prompt_activations` | Every prompt text ever stored, and which one is active | Append only |
@@ -235,9 +236,11 @@ already marked).
 **Category and origin:** `benchmark` runs come from the UI or `scripts/benchmark.py` (origin
 `benchmark`). `POST /api/articles/{ref}/audit` gives a stored article its first audit or
 re-run in either category: the run keeps the article's category and uses origin `article`.
-New `live` runs come only from auditing saved live articles, with the normal token rules
-in both run modes. Historical runs with origin `api` or `webhook` remain readable and
-filterable. Intake from Karakutu will be by polling, which is not yet built.
+New `live` runs audit saved live articles: manual requests use the normal token
+rules, while opt-in automatic audits use origin `poll`. Historical runs with
+origin `api` or `webhook` remain readable and filterable. Karakutu intake polls
+metadata every five minutes by default when archive reads are enabled, and can
+optionally queue first audits. Test mode never polls.
 
 **Workflow version:** an immutable snapshot of code, settings, prompts and models, named by
 its fingerprint (`wf_…`). See [Provenance](#provenance-and-the-workflow-fingerprint).

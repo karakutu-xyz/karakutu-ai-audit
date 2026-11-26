@@ -433,7 +433,7 @@ def test_test_mode_disables_import_and_lazy_archive_fill(tmp_path):
             assert response.status_code == 200
             assert response.json()["content"] == ""
         assert engine.archive.calls == []
-        assert client.app.state.article_fill_attempts == set()
+        assert client.app.state.article_fill_attempts == {}
 
 
 @pytest.mark.parametrize("fail", [False, True])

@@ -55,7 +55,7 @@ def inventory() -> dict[str, set[str]]:
                             add("MODEL_NAME_" + step.upper(), path)
                     else:
                         assert path.name == "config.py" and ast.unparse(argument) == "name"
-                if (path.name == "config.py" and function in {"_bool", "_port", "_entries"}
+                if (path.name == "config.py" and function in {"_bool", "_port", "_entries", "_bounded_int"}
                         and node.args and isinstance(node.args[0], ast.Constant)):
                     add(node.args[0].value, path)
             elif (isinstance(node, ast.Subscript)
@@ -430,6 +430,9 @@ def test_runner_live_check_and_mode_override(tmp_path):
     ("RUN_MODE=test\nKARAKUTU_BIND_ADDRESS=0.0.0.0\n", ["API_AUTH_TOKEN"]),
     ("RUN_MODE=test\nKARAKUTU_WEB_PORT=invalid\n", ["KARAKUTU_WEB_PORT"]),
     ("RUN_MODE=invalid\n", ["RUN_MODE"]),
+    ("RUN_MODE=live\nPOLL_INTERVAL_MINUTES=-1\n", ["POLL_INTERVAL_MINUTES"]),
+    ("RUN_MODE=live\nAUTO_AUDIT_MAX_PER_POLL=0\n", ["AUTO_AUDIT_MAX_PER_POLL"]),
+    ("RUN_MODE=live\nAUTO_AUDIT_ENABLED=invalid\n", ["AUTO_AUDIT_ENABLED"]),
 ])
 def test_runner_missing_values_fail_by_name(tmp_path, text, names):
     result = runner(tmp_path, text)

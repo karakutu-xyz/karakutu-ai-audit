@@ -364,3 +364,45 @@ def test_web_port_80_adds_origins_the_way_browsers_send_them():
     origins = Settings(web_port=80).allowed_origins
     assert {"http://localhost", "http://127.0.0.1"} <= origins
     assert "http://localhost:80" not in origins
+
+
+@pytest.mark.parametrize("field,value,message", [
+    ("poll_interval_minutes", -1, "POLL_INTERVAL_MINUTES must be between 0 and 1440"),
+    ("poll_interval_minutes", 1441, "POLL_INTERVAL_MINUTES must be between 0 and 1440"),
+    ("auto_audit_max_per_poll", 0, "AUTO_AUDIT_MAX_PER_POLL must be between 1 and 50"),
+    ("auto_audit_max_per_poll", 51, "AUTO_AUDIT_MAX_PER_POLL must be between 1 and 50"),
+])
+def test_poll_settings_bounds(field, value, message, tmp_path):
+    with pytest.raises(ValueError) as error:
+        Settings(data_dir=tmp_path, **{field: value})
+    assert str(error.value) == message
+
+
+def test_poll_settings_environment_and_test_mode(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("RUN_MODE", "live")
+    monkeypatch.setenv("POLL_INTERVAL_MINUTES", "17")
+    monkeypatch.setenv("AUTO_AUDIT_ENABLED", "true")
+    monkeypatch.setenv("AUTO_AUDIT_MAX_PER_POLL", "9")
+    config = Settings.from_env()
+    assert (config.poll_interval_minutes, config.auto_audit_enabled,
+            config.auto_audit_max_per_poll) == (17, True, 9)
+    monkeypatch.setenv("RUN_MODE", "test")
+    monkeypatch.setenv("POLL_INTERVAL_MINUTES", "PRIVATE invalid input")
+    monkeypatch.setenv("AUTO_AUDIT_ENABLED", "PRIVATE invalid input")
+    monkeypatch.setenv("AUTO_AUDIT_MAX_PER_POLL", "PRIVATE invalid input")
+    assert Settings.from_env().auto_audit_enabled is False
+
+
+@pytest.mark.parametrize("name,value,message", [
+    ("POLL_INTERVAL_MINUTES", "-1", "POLL_INTERVAL_MINUTES must be between 0 and 1440"),
+    ("POLL_INTERVAL_MINUTES", "PRIVATE", "POLL_INTERVAL_MINUTES must be between 0 and 1440"),
+    ("AUTO_AUDIT_MAX_PER_POLL", "0", "AUTO_AUDIT_MAX_PER_POLL must be between 1 and 50"),
+])
+def test_poll_env_validation_uses_fixed_messages(monkeypatch, tmp_path, name, value, message):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("RUN_MODE", "live")
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError) as error:
+        Settings.from_env()
+    assert str(error.value) == message

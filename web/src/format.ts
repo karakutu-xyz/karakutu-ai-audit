@@ -38,18 +38,21 @@ export const runDuration = (run: RunSummary) =>
 // Origin `article`: a first audit or a re-run started from an article view. The ledger, run
 // detail, article history and the Runs origin filter all use this one label.
 export const ARTICLE_ORIGIN_LABEL = "Article audit";
+export const POLL_ORIGIN_LABEL = "Live · Auto-audit";
 
 // The one authored disclaimer for every verdict area (AGENTS.md).
 export const DISCLAIMER = "This is not a finding of censorship; a person decides.";
 
 export const originLabel = (run: Pick<RunSummary, "category" | "origin">) =>
-  run.origin === "article"
-    ? ARTICLE_ORIGIN_LABEL
-    : run.category === "benchmark"
-      ? "Benchmark"
-      : run.origin === "api"
-        ? "API"
-        : humanize(run.origin);
+  run.origin === "poll"
+    ? POLL_ORIGIN_LABEL
+    : run.origin === "article"
+      ? ARTICLE_ORIGIN_LABEL
+      : run.category === "benchmark"
+        ? "Benchmark"
+        : run.origin === "api"
+          ? "API"
+          : humanize(run.origin);
 
 // Compare display text only; the saved title and label remain untouched.
 export function ledgerLabel(run: RunSummary) {

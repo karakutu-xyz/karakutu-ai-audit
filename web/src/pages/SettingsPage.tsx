@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { ArchiveState, SearchState } from "../types";
+import type { ArchiveState, PollingStatus, PollReason, SearchState } from "../types";
+import { date } from "../format";
 import { useApi, useServiceStatus, useWorkflow } from "../api/hooks";
 import { useRoute, Link, useScrollRestoration } from "../router";
 import { ConnectionDialog } from "../dialogs/ConnectionDialog";
@@ -27,6 +28,25 @@ const searchLabels: Record<SearchState, string> = {
   rejected: "SearXNG · refused the request (is JSON output enabled?)",
   degraded: "SearXNG · reachable, but its search engines are not answering (blocked or rate-limited)",
 };
+
+const pollReasons: Record<PollReason, string> = {
+  ...archiveLabels,
+  archive_error: "Archive read failed",
+  archive_incomplete: "Archive listing incomplete",
+  poll_error: "Polling failed",
+  import_in_progress: "Import in progress",
+  queue_paused: "Queue paused",
+};
+
+function lastPoll(polling: PollingStatus) {
+  const last = polling.last;
+  if (!last) return "Not yet";
+  const time = date(last.finished_at);
+  const result = last.outcome === "skipped"
+    ? `${time} · skipped: ${last.reason ? pollReasons[last.reason] : "Unknown"}`
+    : `${time} · found ${last.found}, new ${last.new}, queued ${last.queued}`;
+  return `${result} · unreadable ${last.unreadable}`;
+}
 
 export function SettingsPage() {
   const { token, setToken } = useApi();
@@ -76,6 +96,19 @@ export function SettingsPage() {
               label: "Archive reads",
               value: archiveLabels[status.archive],
             },
+            {
+              label: "Polling",
+              value: status.polling.enabled
+                ? `Every ${status.polling.interval_minutes} min`
+                : "Off",
+            },
+            {
+              label: "Auto-audit",
+              value: status.polling.auto_audit_enabled
+                ? `On (up to ${status.polling.auto_audit_max_per_poll} per poll)`
+                : "Off",
+            },
+            { label: "Last poll", value: lastPoll(status.polling) },
             {
               label: "Prompts editable via API",
               value: status.prompts_editable

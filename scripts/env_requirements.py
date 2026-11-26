@@ -128,6 +128,20 @@ def issues(values: Mapping[str, str], mode: str) -> dict[str, str]:
             result[name] = "choose a port from 1 to 65535"
     if mode == "test":
         return result
+    for name, default, minimum, maximum in (
+        ("POLL_INTERVAL_MINUTES", "5", 0, 1440),
+        ("AUTO_AUDIT_MAX_PER_POLL", "5", 1, 50),
+    ):
+        try:
+            value = int(values.get(name, default))
+        except ValueError:
+            value = minimum - 1
+        if not minimum <= value <= maximum:
+            result[name] = f"must be between {minimum} and {maximum}"
+    if values.get("AUTO_AUDIT_ENABLED", "false").strip().lower() not in {
+        "true", "false", "1", "0",
+    }:
+        result["AUTO_AUDIT_ENABLED"] = "must be true or false"
     if values.get("MODEL_ENABLED", "false").lower() not in {"true", "1"}:
         result["MODEL_ENABLED"] = "enable the model for useful live audits"
     require("MODEL_BASE_URL", "LM Studio server URL", "http://127.0.0.1:1234/v1")

@@ -60,6 +60,7 @@ archive or real dataset.
 | --- | --- |
 | `test_api.py` | Routes, auth, host and origin guards, body limits, safe errors, prompt and model routes, restarts |
 | `test_articles.py` | Article identity, migration 4 and backfill, list filters and detail, first audit and re-run, archive import and fill |
+| `test_poller.py` | Offline archive polling, automatic audit limits, import/manual audit races, safe failures and task lifecycle |
 | `test_config.py` | Environment parsing, run modes, allowed hosts and origins, token rules, provider settings |
 | `test_db.py` | Storage, filters, migrations and rollback, prompt seeding and activation |
 | `test_provenance.py` | What goes into the workflow fingerprint, and that secrets do not |

@@ -387,7 +387,8 @@
           "enum": [
             "api",
             "webhook",
-            "article"
+            "article",
+            "poll"
           ],
           "type": "string"
         },

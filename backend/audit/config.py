@@ -189,6 +189,17 @@ def _bool(name: str, default: bool = False) -> bool:
     return value in {"true", "1"}
 
 
+def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    message = f"{name} must be between {minimum} and {maximum}"
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        raise ValueError(message) from None
+    if not minimum <= value <= maximum:
+        raise ValueError(message)
+    return value
+
+
 MODEL_STEPS = ("classification", "relevance", "related_removals", "source", "web_search")
 
 
@@ -224,6 +235,9 @@ class Settings:
     allowed_hosts: frozenset[str] = DEFAULT_ALLOWED_HOSTS
     allowed_origins: frozenset[str] = DEFAULT_ALLOWED_ORIGINS
     max_concurrent_runs: int = 1
+    poll_interval_minutes: int = 5
+    auto_audit_enabled: bool = False
+    auto_audit_max_per_poll: int = 5
     # The host address Docker publishes the API and UI on (KARAKUTU_BIND_ADDRESS); empty when
     # the service is not started by Compose. Only checked, never bound by the app itself.
     bind_address: str = ""
@@ -295,6 +309,10 @@ class Settings:
             raise ValueError("Invalid MODEL_THINKING_CONTROL")
         if not 1 <= self.max_concurrent_runs <= 8:
             raise ValueError("MAX_CONCURRENT_RUNS must be between 1 and 8")
+        if type(self.poll_interval_minutes) is not int or not 0 <= self.poll_interval_minutes <= 1440:
+            raise ValueError("POLL_INTERVAL_MINUTES must be between 0 and 1440")
+        if type(self.auto_audit_max_per_poll) is not int or not 1 <= self.auto_audit_max_per_poll <= 50:
+            raise ValueError("AUTO_AUDIT_MAX_PER_POLL must be between 1 and 50")
         if not 1 <= self.model_timeout <= 600 or not 128 <= self.max_tokens <= 16384:
             raise ValueError("Invalid model request limits")
 
@@ -332,6 +350,9 @@ class Settings:
             database_url=os.getenv("DATABASE_URL", ""),
             model_enabled=_bool("MODEL_ENABLED"),
             record_full_evidence=_bool("RECORD_FULL_EVIDENCE"),
+            poll_interval_minutes=_bounded_int("POLL_INTERVAL_MINUTES", 5, 0, 1440),
+            auto_audit_enabled=_bool("AUTO_AUDIT_ENABLED"),
+            auto_audit_max_per_poll=_bounded_int("AUTO_AUDIT_MAX_PER_POLL", 5, 1, 50),
             model_base_url=os.getenv("MODEL_BASE_URL", "http://127.0.0.1:1234/v1"),
             model_name=os.getenv("MODEL_NAME", "auto"),
             model_api_key=os.getenv("MODEL_API_KEY", "lm-studio"),

@@ -18,7 +18,7 @@ export interface QueueCancelled {
   cancelled: string[];
 }
 
-export type RunOrigin = "benchmark" | "api" | "webhook" | "article";
+export type RunOrigin = "benchmark" | "api" | "webhook" | "article" | "poll";
 
 export type ReactionKind = "agree" | "disagree" | "needs_review";
 
@@ -133,6 +133,28 @@ export type ArchiveState =
 export type SearchState =
   | "disabled" | "unchecked" | "ok" | "unreachable" | "rejected" | "degraded";
 
+export type PollReason = ArchiveState | "archive_error" | "poll_error"
+  | "archive_incomplete" | "import_in_progress" | "queue_paused";
+
+export interface PollCycle {
+  started_at: string;
+  finished_at: string;
+  outcome: "ok" | "skipped";
+  reason: PollReason | null;
+  found: number;
+  new: number;
+  queued: number;
+  unreadable: number;
+}
+
+export interface PollingStatus {
+  enabled: boolean;
+  interval_minutes: number;
+  auto_audit_enabled: boolean;
+  auto_audit_max_per_poll: number;
+  last: PollCycle | null;
+}
+
 export interface ServiceStatus {
   service: string;
   mode: RunMode;
@@ -146,6 +168,7 @@ export interface ServiceStatus {
   archive: ArchiveState;
   writes_enabled: false;
   prompts_editable: boolean;
+  polling: PollingStatus;
 }
 
 export interface PromptVersionSummary {

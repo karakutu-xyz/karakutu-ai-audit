@@ -125,20 +125,34 @@ class KarakutuClient:
         except Exception:
             return None
 
-    async def audits_created_between(self, date_from, date_to, statuses=(0, 1, 2, 3, 4)):
-        rows, any_ok = [], False
+    async def audits_created_between(self, date_from, date_to, statuses=(0, 1, 2, 3, 4),
+                                    *, require_complete=False):
+        """Keep partial results for interactive Import; polling requires every page."""
+        rows, any_ok, complete = [], False, True
         for status in statuses:
             for page in range(1, 31):
                 body = await self._get('/audits', {'view':'public','status':status,'date_from':date_from,'date_to':date_to,'page':page,'page_size':100,'sort_by':'created_at','sort_order':'desc'})
                 if body is None:
+                    complete = False
                     break
                 any_ok = True
-                items = body.get('items') or []
+                if not isinstance(body, dict) or not isinstance(body.get('items'), list):
+                    complete = False
+                    break
+                items = body['items']
                 for item in items:
+                    if not isinstance(item, dict):
+                        complete = False
+                        continue
                     art = item.get('article') or {}
                     rows.append({'audit_id':item.get('id'),'article_id':art.get('id'),'url':art.get('link') or '', 'title':art.get('title') or '', 'newspaper':art.get('newspaper') or '', 'status':item.get('status',status),'decision':item.get('decision'),'created_at':item.get('created_at'),'publish_date':art.get('publish_date')})
                 if len(items) < 100:
                     break
+            else:
+                # The page cap is a safety bound, not proof the listing ended.
+                complete = False
+        if require_complete and not complete:
+            return None
         return rows if any_ok else None
 
 def first_dead_check_date(checks):

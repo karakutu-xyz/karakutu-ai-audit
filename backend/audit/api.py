@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from hmac import compare_digest
 import json
+import time
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
@@ -27,6 +28,7 @@ from audit.config import MODEL_STEPS, Settings, canonical_request_host
 from audit.db import ArticleStoreError, PromptStoreError, Store
 from audit.domain import AuditRequest, Verdict
 from audit.engine import AuditEngine
+from audit.poller import ARCHIVE_TEXT_RETRY_SECONDS, ArchivePoller, store_in_thread
 from audit.record import RecordError, build_result
 from audit.provenance import build_base, models_from_config, with_prompts
 from audit.schemas import (
@@ -270,7 +272,9 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
             app.state.article_lock = asyncio.Lock()
             app.state.article_fill_lock = asyncio.Lock()
             app.state.article_import_lock = asyncio.Lock()
-            app.state.article_fill_attempts = set()
+            # None marks a successful read; a deadline marks a retryable failure.
+            app.state.article_fill_attempts = {}
+            app.state.article_fill_clock = time.monotonic
             store.interrupt_incomplete()
             if test_mode:
                 # After interrupt_incomplete, so demo runs keep their queued/running state.
@@ -281,6 +285,11 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
                 "model_provider": settings.model_provider, "response_format": settings.response_format})
             app.state.workflow_base = build_base(audit_engine.public_config)
             app.state.workflow = store.save_workflow(with_prompts(app.state.workflow_base, active_texts(), current_models()))
+            app.state.poller = ArchivePoller(
+                settings, app.state, archive_client(), fill_archive_text, submit)
+            if app.state.poller.enabled:
+                task = asyncio.create_task(app.state.poller.run())
+                app.state.tasks.add(task)
             yield
         finally:
             tasks = list(app.state.tasks)
@@ -344,6 +353,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
                 "search": await search_state(),
                 "archive_reads_enabled": bool(settings.archive_base_url),
                 "archive": archive_state(),
+                "polling": app.state.poller.status(),
                 "writes_enabled": False, "prompts_editable": bool(settings.api_auth_token)}
 
     def current_overrides(assignments=None):
@@ -472,7 +482,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
                    limit: int = Query(default=50, ge=1, le=200), offset: int = Query(default=0, ge=0),
                    verdict: Verdict | None = None, workflow_id: str | None = None,
                    status: Literal["queued", "running", "succeeded", "failed", "cancelled"] | None = None,
-                   origin: Literal["benchmark", "api", "webhook", "article"] | None = None):
+                   origin: Literal["benchmark", "api", "webhook", "article", "poll"] | None = None):
         return app.state.store.runs(category=category, limit=limit, offset=offset,
                                     verdict=verdict.value if verdict else None, workflow_id=workflow_id,
                                     status=status, origin=origin)
@@ -686,30 +696,45 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
                 items = None
             if items is None:
                 return archive_unavailable()
-            return app.state.store.import_articles(items)
+            return await store_in_thread(app.state.store.import_articles, items)
 
-    async def fill_archive_text(ref: str, result: dict) -> dict:
-        """Load an imported archive article's text once, the first time it is needed.
+    async def fill_archive_text(ref: str, result: dict, *, refresh=False) -> dict | None:
+        """Load missing text once; automatic audits explicitly refresh cached text.
 
-        Imports store metadata only. The detail view and the audit route both call this, so an
-        article can be audited without being opened first. One attempt per article and URL per
-        process; a failed read leaves the saved metadata and exposes nothing from upstream.
+        Failed reads share a bounded cooldown per ref/URL. Normal readers keep the saved
+        article on failure; refresh callers receive None so stale text cannot be submitted.
         """
         client = archive_client()
-        if ref.startswith("ka-") and not result["content"] and client is not None and client.enabled:
+        if (ref.startswith("ka-") and (refresh or not result["content"])
+                and client is not None and client.enabled):
             async with app.state.article_fill_lock:
                 identity = (ref, result["url"])
-                if identity not in app.state.article_fill_attempts:
-                    app.state.article_fill_attempts.add(identity)
-                    try:
-                        record = await client.get_article(result["archive_id"] or ref[3:])
-                        if record is not None:
-                            app.state.store.fill_article(ref, record, expected_url=result["url"],
-                                                         expected_archive_id=result["archive_id"])
-                    except Exception:
-                        # Return the saved metadata without exposing upstream content/errors.
-                        pass
+                attempts = app.state.article_fill_attempts
+                retry_at = attempts.get(identity)
+                if ((retry_at is not None and app.state.article_fill_clock() < retry_at)
+                        or (not refresh and identity in attempts and retry_at is None)):
+                    return None if refresh else article_or_404(ref)
+                stored = False
+                readable = False
+                try:
+                    record = await client.get_article(result["archive_id"] or ref[3:])
+                    if record is not None:
+                        stored = app.state.store.fill_article(
+                            ref, record, expected_url=result["url"],
+                            expected_archive_id=result["archive_id"], refresh=refresh)
+                        readable = stored and bool(article_or_404(ref)["content"].strip())
+                except Exception:
+                    # Keep saved metadata without exposing upstream content/errors.
+                    pass
+                finally:
+                    # Cancellation is retryable too, rather than poisoning this identity.
+                    attempts[identity] = (None if readable else
+                        app.state.article_fill_clock() + ARCHIVE_TEXT_RETRY_SECONDS)
+                if refresh and not stored:
+                    return None
             result = article_or_404(ref)
+        elif refresh:
+            return None
         return result
 
     @app.get("/api/articles/{ref}", response_model=ArticleDetail)
