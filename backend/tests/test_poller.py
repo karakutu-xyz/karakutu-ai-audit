@@ -667,8 +667,37 @@ async def test_unreadable_sweep_bounds_reads_and_skips_cooldown(tmp_path, empty)
         assert archive.reads == [str(i) for i in range(1, 11)]
         clock = ARCHIVE_TEXT_RETRY_SECONDS
         archive.empty = archive.read_failure = False
+        # The sweep resumes after where the last bounded sweep stopped.
         assert (await poller.run_cycle())["queued"] == 5
-        assert archive.reads[-5:] == [str(i) for i in range(1, 6)]
+        assert archive.reads[-5:] == [str(i) for i in range(11, 16)]
+
+
+async def test_unreadable_older_articles_cannot_starve_a_readable_one(tmp_path):
+    # Ten unreadable older articles and one readable newer one, with cool-downs expiring
+    # between cycles: the readable one must be reached instead of the sweep alternating
+    # between the first and second five forever.
+    async with service(tmp_path, auto_audit_enabled=True,
+                       auto_audit_max_per_poll=5) as (app, archive, _):
+        archive.items = [{"article_id": i, "url": f"https://paper.example/fiction-{i}"}
+                         for i in range(1, 12)]
+        original = archive.get_article
+
+        async def get_article(article_id):
+            record = await original(article_id)
+            if int(article_id) <= 10:
+                record.versions[-1].news_text = ""
+            return record
+
+        archive.get_article = get_article
+        clock = 0
+        app.state.article_fill_clock = lambda: clock
+        poller = app.state.poller
+        queued = []
+        for _ in range(4):
+            queued.append((await poller.run_cycle())["queued"])
+            clock += ARCHIVE_TEXT_RETRY_SECONDS
+        assert sum(queued) == 1
+        assert [r.article_ref for r in runs(app) if r.origin == "poll"] == ["ka-11"]
 
 
 @pytest.mark.parametrize("failure", ["timeout", "unavailable", "rejected"])

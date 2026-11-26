@@ -73,7 +73,9 @@ that backlog at most N. At most N new runs are submitted in one cycle even if
 older work finishes during it. Each cycle also allows at most N archive text reads
 and 2×N candidate attempts outside cooldown, including failed or empty reads.
 Candidates in cooldown consume neither a read nor an attempt, allowing later
-candidates to progress. The first failed read leaving the archive client unavailable
+candidates to progress. When a sweep stops on the read or attempt limit, the next
+cycle resumes after the last candidate it tried and wraps around, so unreadable
+older articles cannot use up every cycle's reads. The first failed read leaving the archive client unavailable
 or rejected stops the sweep with its fixed failure reason; metadata import counts
 and the successful import window remain saved. Queue pause allows metadata registration but skips
 automatic submissions (`queue_paused`). Each candidate refreshes the latest archive

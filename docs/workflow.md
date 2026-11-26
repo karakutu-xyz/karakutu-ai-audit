@@ -148,7 +148,9 @@ and submission path as Run audit. Failed text reads create no run, increment the
 cycle's `unreadable` count and become retryable after a ten-minute cooldown,
 including reads with empty text. Each cycle makes at most
 `AUTO_AUDIT_MAX_PER_POLL` text reads and twice that many candidate attempts outside
-cooldown. Cooling candidates cost no read or attempt. A read that leaves the
+cooldown. Cooling candidates cost no read or attempt. A sweep that stops on that
+limit resumes after its last candidate next cycle, so unreadable older articles
+cannot block newer ones. A read that leaves the
 archive client unavailable or rejected ends the sweep with a fixed reason while
 keeping the metadata import result. Cancellation exits the poller after draining
 any persistence worker, including a failed worker. Workflow snapshots and verdict

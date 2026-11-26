@@ -33,6 +33,11 @@ async def store_in_thread(function, *args):
         raise cancelled
 
 
+def sweep_key(ref):
+    archive_id = ref[3:]
+    return (len(archive_id), archive_id, ref)
+
+
 class ArchivePoller:
     def __init__(self, settings, state, client, fill_archive_text, submit, *,
                  clock=utc_now, sleep=asyncio.sleep, startup_delay=1):
@@ -43,6 +48,9 @@ class ArchivePoller:
                         and client is not None and client.enabled)
         self.last = None
         self.last_success = None
+        # Where the last read-bounded sweep stopped; the next sweep resumes after it so
+        # unreadable older articles cannot use up every cycle's reads.
+        self.sweep_after = None
         self.cycle_lock = asyncio.Lock()
 
     def status(self):
@@ -116,15 +124,26 @@ class ArchivePoller:
             return None
         attempts, reads = 0, 0
         read_limit = self.settings.auto_audit_max_per_poll
-        for ref in await store_in_thread(store.unaudited_archive_refs):
-            if (cycle["queued"] >= budget or reads >= read_limit
-                    or attempts >= 2 * read_limit):
+        candidates = await store_in_thread(store.unaudited_archive_refs)
+        if self.sweep_after is not None:
+            # Same order as the store query: archive id in numeric order, then ref.
+            after = sweep_key(self.sweep_after)
+            candidates = ([ref for ref in candidates if sweep_key(ref) > after]
+                          + [ref for ref in candidates if sweep_key(ref) <= after])
+        self.sweep_after = None
+        last_tried = None
+        for ref in candidates:
+            if cycle["queued"] >= budget:
+                break
+            if reads >= read_limit or attempts >= 2 * read_limit:
+                self.sweep_after = last_tried
                 break
             if self.state.queue_paused:
                 return "queue_paused"
             article = store.article(ref)
             if article is None:
                 attempts += 1
+                last_tried = ref
                 continue
             retry_at = self.state.article_fill_attempts.get((ref, article["url"]))
             if retry_at is not None and self.state.article_fill_clock() < retry_at:
@@ -132,6 +151,7 @@ class ArchivePoller:
                 continue
             attempts += 1
             reads += 1
+            last_tried = ref
             refreshed = await self.fill_archive_text(ref, article, refresh=True)
             if refreshed is None or not refreshed["content"].strip():
                 cycle["unreadable"] += 1
