@@ -5,6 +5,7 @@ import httpx
 from audit.clients.models import ArticleRecord, SimilarArticlesResult
 from audit.clients.concepts import Concept
 from audit.model import trace
+from audit.evidence import archive_output, bounded, record_full_evidence
 from audit.clients.auth import ArweaveWalletAuth
 
 ArchiveState = Literal[
@@ -44,7 +45,9 @@ class KarakutuClient:
     async def _get(self, path, params=None):
         if not self.enabled:
             return None
-        event = {'type':'archive_get', 'path':path, 'params':params, 'output':None, 'status':None, 'error_type':None}
+        # A recorded copy only: the request itself always sends the real parameters.
+        recorded = params if record_full_evidence.get() else bounded(params)
+        event = {'type':'archive_get', 'path':path, 'params':recorded, 'output':None, 'status':None, 'error_type':None}
         events = trace.get()
         if events is not None:
             events.append(event)
@@ -70,8 +73,12 @@ class KarakutuClient:
                 result = await self.http.get(self.base_url + path, params=params, headers={'Authorization': f'Bearer {token}'})
                 event['retry_status'] = result.status_code
             result.raise_for_status()
-            event['output'] = result.json()
-            return event['output']
+            body = result.json()
+            try:
+                event['output'] = archive_output(path, body)
+            except Exception as exc:  # noqa: BLE001 — recording never changes the read
+                event['output'] = {'summary': {'record_error': type(exc).__name__}}
+            return body
         except (httpx.HTTPError, ValueError) as exc:
             event['error_type'] = type(exc).__name__
             return None

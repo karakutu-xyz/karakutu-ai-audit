@@ -123,6 +123,12 @@ class ArweaveWalletAuth:
         except OSError:
             return False
 
+    def loaded_private_values(self) -> tuple[str, ...]:
+        """Private JWK components of the key sign-in holds, for the service's own refusal
+        checks only (never logged or returned)."""
+        jwk = self._jwk or {}
+        return tuple(jwk[k] for k in ("d", "p", "q", "dp", "dq", "qi") if isinstance(jwk.get(k), str))
+
     @property
     def _source(self) -> str:
         """A fixed label, never source metadata."""

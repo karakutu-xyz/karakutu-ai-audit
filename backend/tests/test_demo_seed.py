@@ -69,8 +69,12 @@ def test_counts_and_domain_contracts(seeded):
         if detail.output:
             assert [s.output for s in detail.steps] == [s.model_dump(mode="json") for s in detail.output.stages]
         for index, step in enumerate(detail.steps):
-            assert step.input["article"] == row["input"]["removed_article"]
-            assert step.input["prior_stages"] == [s["output"] for s in row["steps"][:index]]
+            assert 'prior_stages' not in step.input
+            if step.status == 'skipped':
+                assert 'skipped_because' in step.input
+            elif 'article' in step.input:
+                assert step.input['article']['ref'] == 'run.input.removed_article'
+                assert 'content' not in step.input['article']
         if detail.verdict == Verdict.POSSIBLE_CENSORSHIP:
             assert "not a finding of censorship" in detail.output.findings
     for version, accuracy in ((1, 3), (2, 4), (3, 5)):
@@ -225,7 +229,7 @@ def test_seeded_workflows_and_prompt_history_through_api(tmp_path):
                 definition = workflow.json()["definition"]
                 assert bool(definition["prompts"] == app.state.store.workflow(f"wf_demo_v{version}")["definition"]["prompts"])
                 assert definition["models"]["steps"]["source"] == "demo-model-large"
-                run = client.get(f"/api/runs/run_demo_reservoir_v{version}")
+                run = client.get(f"/api/runs/run_demo_reservoir_v{version}/details")
                 assert run.status_code == 200
                 assert run.json()["workflow_id"] == workflow.json()["id"]
                 assert run.json()["steps"][2]["model"] == "demo-model-small"

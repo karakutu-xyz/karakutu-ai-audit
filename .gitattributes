@@ -1,0 +1,2 @@
+# The OpenAPI contract is checked byte for byte (scripts/export_openapi.py --check).
+openapi.yaml text eol=lf

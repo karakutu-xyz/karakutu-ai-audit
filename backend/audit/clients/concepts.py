@@ -9,7 +9,7 @@ Locale is pinned to en-GB: it is the only locale with a label AND a definition f
 the 1,393 media topics (tr covers 641 labels and no definitions). The definitions are what the
 classifier reads.
 
-The engine loads the catalog once at startup and captures it with each classification step.
+The engine loads the catalog once at startup and records its counts and fingerprint with each classification step.
 An unavailable catalog is explicit: classification is skipped, never invented.
 """
 from __future__ import annotations

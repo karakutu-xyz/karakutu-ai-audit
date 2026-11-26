@@ -9,7 +9,8 @@ from audit.domain import (
     AuditRequest, AuditResponse, Classification, GeographicScope,
     StageName, StageOutcome, StageResult, Verdict,
 )
-from audit.engine import NAMES
+from audit.engine import NAMES, dump
+from audit.step_inputs import article_ref
 from audit.workflow.pipeline import _skipped
 
 
@@ -74,12 +75,8 @@ class DemoEngine:
             started = time.monotonic()
             # Yield even with a zero delay; cancellation must propagate to the API queue.
             await asyncio.sleep(self.step_delay)
-            inp = {
-                "article": request.removed_article.model_dump(mode="json"),
-                "prior_stages": [stage.model_dump(mode="json") for stage in stages],
-            }
-            if stages:
-                inp["classification"] = classification.model_dump(mode="json")
+            inp = ({'skipped_because': 'Simulated similarity relocation.'} if stopped
+                   else {'article': dump(article_ref(request.removed_article))})
             result = (
                 _skipped(StageName(name), f"{DEMO_NOTE} Simulated similarity relocation.")
                 if stopped else self._result(name, verdict, classification)

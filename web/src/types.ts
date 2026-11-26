@@ -131,7 +131,7 @@ export type ArchiveState =
   | "auth_unavailable" | "unreachable" | "rejected";
 
 export type SearchState =
-  | "disabled" | "unchecked" | "ok" | "unreachable" | "rejected";
+  | "disabled" | "unchecked" | "ok" | "unreachable" | "rejected" | "degraded";
 
 export interface ServiceStatus {
   service: string;
@@ -317,4 +317,51 @@ export interface ArticleDetail extends ArticleSummary {
   snapshot: Record<string, unknown> | null;
   links: ArticleLinks;
   runs: ArticleRun[];
+}
+
+export type AuditFlag = "SOURCE_DEAD" | "RELATED_REMOVALS";
+export type ResultLineage =
+  | { kind: "initial" }
+  | { kind: "re_audit"; previous_record_id: string }
+  | { kind: "correction"; previous_record_id: string;
+      reason: "record_error" | "redaction" };
+
+export interface ResultClassification {
+  subject_tags: { notation: string; label: string }[];
+  genre: { notation: string; label: string } | null;
+  geographic_scope: "local" | "regional" | "national" | "global_scope" | null;
+  gist: string;
+}
+
+export interface ResultEvidence {
+  relocated_to: string | null;
+  old_in_new: number | null;
+  new_in_old: number | null;
+  covers_key_facts: boolean | null;
+  original_url_status: string | null;
+  live_copies: string[];
+  dead_copies: { url: string; reason: string }[];
+  related_same_publisher: string[];
+  search_queries: number | null;
+  search_queries_failed: number | null;
+}
+
+export interface AuditResult {
+  schema: "karakutu-ai-audit/audit-result";
+  schema_version: "2.0";
+  record_id: string | null;
+  lineage: ResultLineage | null;
+  article: { ref: string | null; archive_id: string | null;
+    url: string; content_sha256: string };
+  run: { id: string; origin: RunOrigin; category: Category; status: RunStatus;
+    created_at: string; finished_at: string | null; workflow_id: string };
+  verdict: Verdict | null;
+  flags: AuditFlag[];
+  findings: string | null;
+  classification: ResultClassification | null;
+  stages: { stage: StageName; outcome: "pass" | "fail" | "inconclusive";
+    summary: string }[];
+  evidence: ResultEvidence | null;
+  error: { code: "audit_failed"; message: string } | null;
+  notice: string;
 }

@@ -44,7 +44,7 @@ is undecided. Set the host `ARCHIVE_WALLET_PATH` for `make live`; its optional
 always the API's container path. A production orchestrator should supply the
 same read-only container path. Never place wallet content in an image or an env
 file in the repository. On Linux, keep the operator as owner and grant read access
-to the container's group 10001 (`chgrp 10001`, mode 640); see [Docker archive reads](getting-started.md#docker-live-with-archive-reads).
+to the container's group 10001 (`chgrp 10001`, mode 640); see [Docker archive reads](getting-started.md#from-test-mode-to-a-real-audit).
 Check `/api/status`'s `archive` field and Settings after recreation. The compatible
 `archive_reads_enabled` boolean only says reads are configured.
 
@@ -183,6 +183,17 @@ make live
 Do not start the newer version on the restored data in between: it would migrate the schema
 forward again, and the older code refuses a newer schema. Check health and the workflow again.
 Restoring discards data written since the backup.
+
+## Outbound fetches and bot challenges
+
+The API image is built on Debian trixie (`python:3.11-slim-trixie`). Some publishers behind
+Cloudflare answer the older bookworm image's OpenSSL 3.0 TLS handshake with a bot challenge
+(HTTP 403, `cf-mitigated: challenge`) while serving the same request from a newer OpenSSL. Every page
+of such an outlet then reads as unreadable inside the container only, and audits lose that
+evidence. Keep the base image current. When a run shows a publisher's candidates as unreadable,
+the reason on each candidate says why (for example `HTTP 403 (blocked/erroring, not gone)` or a
+connection error class); a whole outlet with the same 403 points at the fetch environment, not
+at the articles.
 
 ## One API process
 

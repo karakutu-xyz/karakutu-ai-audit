@@ -1,4 +1,5 @@
 """Six-node LangGraph audit, with explicit evidence and model-call provenance."""
+import re
 import time
 import asyncio
 import logging
@@ -12,8 +13,9 @@ from langgraph.errors import NodeCancelledError
 from langsmith import tracing_context
 from openai import AsyncOpenAI
 
+from audit import evidence, step_inputs
 from audit.config import MODEL_STEPS
-from audit.domain import AuditRequest, AuditResponse, StageResult, StageName, StageOutcome, Verdict, AuditFlag
+from audit.domain import AuditRequest, AuditResponse, StageResult, StageName, StageOutcome, AuditFlag
 from audit.model import trace
 from audit.jsonsafe import json_safe
 from audit.clients.karakutu import KarakutuClient
@@ -88,6 +90,11 @@ def dump(value):
     return json_safe(value)
 
 
+# A SearXNG engine name ("brave", "google cse", "mymemory translated"): at most three
+# lowercase words and 32 characters. Anything else is not kept.
+ENGINE_NAME = re.compile(r'(?=.{1,32}$)[a-z0-9][a-z0-9_.-]*(?: [a-z0-9_.-]+){0,2}')
+
+
 class Search(BaseSearchProvider):
     def __init__(self, base, *, transport=None):
         self.base = base.rstrip('/')
@@ -96,13 +103,14 @@ class Search(BaseSearchProvider):
         self._transport = transport
         self._probe_at = None
         self._probe_lock = asyncio.Lock()
-        # A rejection is remembered until a real search succeeds; neither a probe nor a
-        # later transport failure can clear it.
+        # Probes and transport failures cannot clear remembered query failures.
+        # Valid search answers clear rejection; successful queries clear degradation.
         self._rejected = False
+        self._degraded = False
         self._search_generation = 0
 
     async def probe(self) -> SearchState:
-        """Bounded reachability only; HTTP answers cannot clear search rejection.
+        """Bounded reachability only; HTTP answers cannot clear search failures.
 
         Coalesce concurrent status polls and cache for 30 seconds. A real search
         completed during a probe owns the newer state. No upstream text escapes.
@@ -118,7 +126,8 @@ class Search(BaseSearchProvider):
                     async with httpx.AsyncClient(timeout=2, transport=self._transport) as client:
                         async with client.stream('GET', self.base + '/healthz'):
                             pass  # Headers suffice; never download an upstream body.
-                state = "rejected" if self._rejected else "ok"
+                state = ("rejected" if self._rejected else
+                         "degraded" if self._degraded else "ok")
             except Exception:
                 state = "unreachable"
             if generation == self._search_generation:
@@ -131,7 +140,8 @@ class Search(BaseSearchProvider):
         return results
 
     async def search_checked(self, query, max_results=5, *, language=None):
-        event = {'type':'search', 'query':query, 'max_results':max_results, 'language':language, 'results':[], 'error_type':None}
+        full = evidence.record_full_evidence.get()
+        event = {'type':'search', 'query':query if full else evidence.bounded(query), 'max_results':max_results, 'language':language, 'results':[], 'error_type':None}
         events = trace.get()
         if events is not None:
             events.append(event)
@@ -148,10 +158,29 @@ class Search(BaseSearchProvider):
                     # A 200 without a results list (an error object, a proxy page) is a failed
                     # query, not an empty search: it must not clear a rejection or hide an outage.
                     raise ValueError('search response has no results list')
+                # SearXNG lists blocked engines as [name, reason] pairs. Only that shape counts;
+                # the reason is upstream text and is never kept, and a name is kept only when it
+                # looks like an engine name, so no upstream sentence can reach the trace.
+                unresponsive = payload.get('unresponsive_engines')
+                pairs = [entry for entry in
+                         (unresponsive if isinstance(unresponsive, list) else [])
+                         if isinstance(entry, (list, tuple)) and len(entry) == 2]
+                names = [name.strip() for name, _reason in pairs if isinstance(name, str)
+                         and ENGINE_NAME.fullmatch(name.strip())][:20]
+                if names:
+                    event['unresponsive_engines'] = names
             results = results_from_hits(hits, lambda h:(h.get('url'), h.get('title') or '', h.get('content') or ''), query=query, provider='SearXNG', max_results=max_results)
-            event['results'] = dump(results)
+            event['results'] = dump(results) if full else evidence.bounded(dump(results))
+            if not results and pairs:
+                event['error_type'] = 'EnginesUnresponsive'
+                self.state = 'degraded'
+                self._degraded = True
+                self._rejected = False
+                self._search_generation += 1
+                return [], True
             self.state = 'ok'
             self._rejected = False
+            self._degraded = False
             self._search_generation += 1
             return results, False
         except Exception as exc:
@@ -167,13 +196,16 @@ class Search(BaseSearchProvider):
 
 def capture_fetch(fn, kind):
     async def wrapped(*args, **kwargs):
-        event = {'type':kind, 'input':dump({'args':list(args), 'kwargs':kwargs}), 'output':None, 'error_type':None}
+        event = {'type':kind, 'input':dump(evidence.fetch_input(args, kwargs, kind)), 'output':None, 'error_type':None}
         events = trace.get()
         if events is not None:
             events.append(event)
         try:
             result = await fn(*args, **kwargs)
-            event['output'] = dump(result)
+            try:
+                event['output'] = evidence.fetch_output(dump(result))
+            except Exception as exc:  # noqa: BLE001 — recording never changes the fetch
+                event['output'] = {'record_error': type(exc).__name__}
             return result
         except Exception as exc:
             event['error_type'] = type(exc).__name__
@@ -199,7 +231,8 @@ class AuditEngine:
         if provider not in ('disabled', 'searxng'):
             raise ValueError('Unsupported search provider')
         self.search = Search(config.get('searxng_url', '') if provider == 'searxng' else '')
-        self.public_config = {'model_enabled':not self.synthetic, 'model_base_url':safe_endpoint(config.get('model_base_url', '')),
+        self.public_config = {'record_full_evidence': config.get('record_full_evidence', False),
+                              'model_enabled':not self.synthetic, 'model_base_url':safe_endpoint(config.get('model_base_url', '')),
                               'model_provider':config.get('model_provider', 'lmstudio'),
                               'response_format':config.get('response_format', 'json_schema'),
                               'model_steps':{step: config.get('model_name_' + step) or None for step in MODEL_STEPS},
@@ -276,12 +309,12 @@ class AuditEngine:
             started = time.monotonic()
             events = []
             token = trace.set(events)
-            inp = {'article':dump(state['request'].removed_article), 'prior_stages':dump(state['stage_results'])}
-            if name == 'classification' and self.catalog is not None:
-                inp['catalog'] = self.catalog.to_json()
-            for key in ('classification', 'similarity', 'relevance', 'related', 'source'):
-                if key in state:
-                    inp[key] = dump(state[key])
+            evidence_token = evidence.record_full_evidence.set(
+                self.config.get('record_full_evidence', False))
+            try:
+                inp = dump(step_inputs.build(name, state, self))
+            except Exception as exc:  # noqa: BLE001 — recording must never change an audit
+                inp = {'record_error': type(exc).__name__}
             cancelled = None
             try:
                 result, updates = await self._execute(name, state)
@@ -297,6 +330,12 @@ class AuditEngine:
                 updates = {'stopped':'stage did not complete', 'failure':'An audit stage failed unexpectedly.'}
             finally:
                 trace.reset(token)
+                evidence.record_full_evidence.reset(evidence_token)
+            if name == 'related_removals':
+                try:
+                    step_inputs.observed_related(inp, updates, events)
+                except Exception as exc:  # noqa: BLE001 — recording must never change an audit
+                    inp['record_error'] = type(exc).__name__
             status = 'skipped' if result.skipped else ('failed' if result.explanation.startswith('Stage did not complete') else 'completed')
             step = dump({'name':name, 'status':status,
                     'model':next((e.get('request', {}).get('model') for e in events if e['type'] == 'model'), None), 'input':inp, 'output':dump(result),
@@ -389,18 +428,30 @@ class AuditEngine:
             leads.append(SearchResult(url=src.live_source.url, title=src.live_source.title, snippet='', source='cited'))
         leads.extend(src.extra_hits)
         try:
-            out = await web_search.run(article, self.search, s['agents'].web_search, prefetched=prefetched, extra_hits=leads)
+            out = await web_search.run(
+                article, self.search, s['agents'].web_search,
+                prefetched=prefetched, extra_hits=leads,
+                rewrites=({normalize_url(sim.rewrite.url): sim.rewrite} if sim.rewrite else {}),
+            )
         except web_search.WebSearchModelFailure as exc:
             failed = pipeline._stage_failed(stage)
             note = web_search.search_failure_note(exc.evidence) if exc.evidence else ''
             if exc.evidence is not None:
                 # The note follows: a failed step is recognised by its leading sentence.
-                failed = failed.model_copy(update={'explanation': (failed.explanation + ' ' + note).strip(),
-                                                   'details': pipeline._web_details(exc.evidence)})
+                failed = failed.model_copy(update={
+                    'explanation': (failed.explanation + ' ' + note).strip(),
+                    'details': (pipeline._web_details(exc.evidence)
+                                | web_search.overlap_details(exc.evidence)),
+                })
             return failed, {'failure': note + 'The web-search model failed on every attempt.'}
         if src.dead_source and not any(normalize_url(d.url) == normalize_url(src.dead_source.url) for d in out.dead_same_story):
             out.dead_same_story.insert(0, src.dead_source)
-        return StageResult(stage=stage, outcome=StageOutcome.PASS if out.matches else StageOutcome.FAIL, explanation=out.reasoning, details=pipeline._web_details(out)), {'web':out}
+        return StageResult(
+            stage=stage,
+            outcome=StageOutcome.PASS if out.matches else StageOutcome.FAIL,
+            explanation=out.reasoning,
+            details=pipeline._web_details(out) | web_search.overlap_details(out),
+        ), {'web':out}
 
     async def run(self, request: AuditRequest, on_step=None, prompts: dict[str, str] | None = None, models: dict | None = None) -> dict:
         agents = getattr(self, 'agents', None)
@@ -424,8 +475,10 @@ class AuditEngine:
         if state.get('failure'):
             response = pipeline._audit_failed(state['failure'], stages=stages, classification=cls)
         elif state.get('low_interest'):
-            findings = f"Removed article judged not of public interest: {state['relevance'].reasoning} " + related_removals.describe(state['related'])
-            response = AuditResponse(verdict=Verdict.LIKELY_LOW_PUBLIC_INTEREST, stages=stages, short_circuited_at=StageName.RELEVANCE, findings=pipeline._with_classification(findings, cls), classification=cls, flags=[])
+            response = pipeline._low_interest_response(
+                state['similarity'], state['relevance'], state['related'],
+                stages=stages, classification=cls,
+            )
         else:
             web = state['web']
             src = state.get('source')

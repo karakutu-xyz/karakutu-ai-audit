@@ -86,7 +86,12 @@ async def test_demo_contract_and_deterministic_verdict(number, verdict):
         assert step["model"] == ("demo-model (offline)" if step["model_calls"] else None)
         assert step["status"] in {"completed", "skipped"}
         assert step["output"] == response.stages[index].model_dump(mode="json")
-        assert step["input"]["prior_stages"] == result["response"]["stages"][:index]
+        assert 'prior_stages' not in step['input']
+        if step['status'] == 'skipped':
+            assert 'skipped_because' in step['input']
+        else:
+            assert step['input']['article']['ref'] == 'run.input.removed_article'
+            assert 'content' not in step['input']['article']
         assert step["duration_ms"] >= 0
     assert observed[0]["model_calls"][0]["demo"] is True
     assert observed[0]["model_calls"][0]["request"]["messages"]
@@ -166,9 +171,9 @@ def test_demo_engine_completes_benchmark_through_api(tmp_path):
             **request_for(5).model_dump(mode="json"), "label": "Fabricated offline demo",
         })
         assert submitted.status_code == 202
-        run_id = submitted.json()["id"]
+        run_id = submitted.json()["run"]["id"]
         for _ in range(100):
-            fetched = client.get(f"/api/runs/{run_id}")
+            fetched = client.get(f"/api/runs/{run_id}/details")
             assert fetched.status_code == 200
             run = fetched.json()
             if run["status"] in {"succeeded", "failed"}:
@@ -191,9 +196,9 @@ def test_test_mode_cancels_demo_during_step_delay_and_keeps_progress(tmp_path):
         app.state.audit_engine.step_delay = 0.1
         run_id = client.post("/api/benchmarks/runs", json={
             **request_for(5).model_dump(mode="json"),
-        }).json()["id"]
+        }).json()["run"]["id"]
         for _ in range(100):
-            before = client.get(f"/api/runs/{run_id}").json()
+            before = client.get(f"/api/runs/{run_id}/details").json()
             if before["steps"]:
                 break
             time.sleep(0.005)
@@ -201,11 +206,26 @@ def test_test_mode_cancels_demo_during_step_delay_and_keeps_progress(tmp_path):
             pytest.fail("Demo did not emit its first step")
         response = client.post(f"/api/runs/{run_id}/cancel")
         assert response.status_code == 200
-        stopped = response.json()
+        assert response.json()["record_id"] is None
+        stopped = client.get(f"/api/runs/{run_id}/details").json()
         assert stopped["status"] == "cancelled"
         assert stopped["verdict"] is None and stopped["output"] is None
         assert stopped["steps"][:len(before["steps"])] == before["steps"]
         assert 1 <= len(stopped["steps"]) < 6
         assert stopped["summary"]["verdict_label"] == "Stopped by a person"
         assert stopped["summary"]["failed_steps"] == []
-        assert client.get(f"/api/runs/{run_id}").json() == stopped
+        assert client.get(f"/api/runs/{run_id}/details").json() == stopped
+
+
+async def test_demo_step_inputs_never_repeat_a_body_held_in_the_title():
+    body = "Invented demo body sentence. " * 80
+    request = request_for(1)
+    request = request.model_copy(update={"removed_article": request.removed_article.model_copy(
+        update={"title": body, "content": body})})
+    engine = DemoEngine(step_delay=0)
+    await engine.start()
+    result = await engine.run(request)
+    await engine.close()
+    for step in result["steps"]:
+        assert body not in json.dumps(step["input"])
+        assert len(json.dumps(step["input"])) < 2048

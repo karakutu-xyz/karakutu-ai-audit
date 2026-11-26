@@ -184,7 +184,7 @@ def test_demo_list_filters_detail_and_sql_projection(tmp_path):
         assert detail["content"] and detail["source"] and detail["removed_at"]
         assert len(detail["runs"]) == 3
         assert [r["created_at"] for r in detail["runs"]] == sorted((r["created_at"] for r in detail["runs"]), reverse=True)
-        assert detail["runs"][0]["summary"] == client.get(f"/api/runs/{detail['runs'][0]['id']}").json()["summary"]
+        assert detail["runs"][0]["summary"] == client.get(f"/api/runs/{detail['runs'][0]['id']}/details").json()["summary"]
         assert client.get("/api/articles/missing").status_code == 404
         assert client.post("/api/articles/missing/audit").status_code == 404
         for params in ({"limit": 0}, {"limit": 201}, {"offset": -1}, {"status": "bad"}, {"q": "x" * 201}):
@@ -207,20 +207,21 @@ def test_first_audit_rerun_retains_history_and_labels(tmp_path):
         ref = client.get("/api/articles?status=not_audited").json()["items"][0]["ref"]
         first = client.post(f"/api/articles/{ref}/audit")
         assert first.status_code == 202
-        first = finished(client, first.json()["id"])
+        first = finished(client, first.json()["run"]["id"])
         second = client.post(f"/api/articles/{ref}/audit")
         assert second.status_code == 202
-        second = finished(client, second.json()["id"])
+        second = finished(client, second.json()["run"]["id"])
         assert first["id"] != second["id"]
         assert first["article_ref"] == second["article_ref"] == ref
         assert second["origin"] == "article" and second["category"] == "benchmark"
         assert second["input"]["similar_articles"] == []
         assert len(client.get(f"/api/articles/{ref}").json()["runs"]) == 2
-        assert client.get(f"/api/runs/{first['id']}").json() == first
+        assert client.get(f"/api/runs/{first['id']}/details").json() == first
         benchmark = client.post("/api/benchmarks/runs", json=BODY).json()
-        finished(client, benchmark["id"])
+        benchmark = finished(client, benchmark["run"]["id"])
         rerun = client.post(f"/api/articles/{benchmark['article_ref']}/audit")
         assert rerun.status_code == 202
+        rerun = client.get(f"/api/runs/{rerun.json()['run']['id']}/details")
         assert rerun.json()["label"] == BODY["label"]
         assert rerun.json()["expected_verdict"] == BODY["expected_verdict"]
         assert rerun.json()["workflow_id"] == client.get("/api/workflow").json()["id"]
@@ -232,7 +233,7 @@ def test_first_audit_uses_disabled_model_engine(tmp_path, database_url):
         ref = add_article(client.app.state.store)
         response = client.post(f"/api/articles/{ref}/audit")
         assert response.status_code == 202
-        run = finished(client, response.json()["id"])
+        run = finished(client, response.json()["run"]["id"])
         assert run["article_ref"] == ref and run["verdict"] == "AUDIT_FAILED"
         assert client.get("/api/articles?status=failed").json()["total"] == 1
 
@@ -266,12 +267,12 @@ def test_every_demo_article_audits_and_reruns_offline(tmp_path, monkeypatch):
             before = client.get(f"/api/articles/{ref}").json()
             assert FICTION in before["content"]
             assert before["source"] and before["removed_at"]
-            history = {r["id"]: client.get(f"/api/runs/{r['id']}").json() for r in before["runs"]}
+            history = {r["id"]: client.get(f"/api/runs/{r['id']}/details").json() for r in before["runs"]}
             completed = []
             for _ in range(2):
                 response = client.post(f"/api/articles/{ref}/audit")
                 assert response.status_code == 202
-                run = finished(client, response.json()["id"])
+                run = finished(client, response.json()["run"]["id"])
                 assert run["status"] == "succeeded"
                 assert run["article_ref"] == ref and run["origin"] == "article"
                 assert run["category"] == article["category"]
@@ -281,12 +282,12 @@ def test_every_demo_article_audits_and_reruns_offline(tmp_path, monkeypatch):
                 completed.append(run)
             assert completed[0]["id"] != completed[1]["id"]
             assert completed[0]["output"] == completed[1]["output"]
-            assert client.get(f"/api/runs/{completed[0]['id']}").json() == completed[0]
+            assert client.get(f"/api/runs/{completed[0]['id']}/details").json() == completed[0]
             after = client.get(f"/api/articles/{ref}").json()
             assert after["run_count"] == before["run_count"] + 2
             assert after["status"] == "audited"
             for run_id, saved in history.items():
-                assert client.get(f"/api/runs/{run_id}").json() == saved
+                assert client.get(f"/api/runs/{run_id}/details").json() == saved
         assert client.get("/api/articles?status=not_audited").json()["total"] == 0
 
 
@@ -339,7 +340,7 @@ def test_audit_conflict_is_atomic_and_no_content(tmp_path, database_url):
         with ThreadPoolExecutor(max_workers=2) as pool:
             responses = list(pool.map(lambda _: client.post(f"/api/articles/{ref}/audit"), range(2)))
         assert sorted(r.status_code for r in responses) == [202, 409]
-        run_id = next(r.json()["id"] for r in responses if r.status_code == 202)
+        run_id = next(r.json()["run"]["id"] for r in responses if r.status_code == 202)
         conflict = next(r for r in responses if r.status_code == 409)
         assert conflict.json() == {"error": {"code": "run_in_progress", "run_id": run_id}}
         assert client.get(f"/api/articles/{ref}").json()["run_count"] == 1
@@ -489,12 +490,40 @@ def test_archive_unavailable_and_live_article_audit(tmp_path, database_url):
     engine.archive = FakeArchive()
     with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, live_ingestion_enabled=True), engine)) as client:
         assert client.post("/api/articles/import", headers=AUTH).status_code == 200
-        assert client.post("/api/articles/ka-42/audit", headers=AUTH).status_code == 422
-        assert client.get("/api/articles/ka-42", headers=AUTH).status_code == 200
+        assert client.app.state.store.article("ka-42")["content"] == ""
+        # The audit route loads the missing text itself; the article need not be opened first.
         run = client.post("/api/articles/ka-42/audit", headers=AUTH)
         assert run.status_code == 202
-        assert run.json()["category"] == "live" and run.json()["origin"] == "article"
-        assert run.json()["article_ref"] == "ka-42"
+        assert run.json()["run"]["category"] == "live" and run.json()["run"]["origin"] == "article"
+        assert run.json()["article"]["ref"] == "ka-42"
+        assert client.app.state.store.article("ka-42")["content"] == FICTION
+        # One read per article: opening it afterwards does not read the archive again.
+        assert client.get("/api/articles/ka-42", headers=AUTH).json()["content"] == FICTION
+        assert [c[0] for c in engine.archive.calls].count("detail") == 1
+
+
+def test_audit_with_a_failed_archive_read_keeps_the_no_content_answer(tmp_path):
+    engine = FakeEngine()
+    engine.archive = FakeArchive(fail=True)
+    config = settings(tmp_path, api_auth_token=TOKEN, live_ingestion_enabled=True)
+    with TestClient(create_app(config, engine)) as client:
+        client.headers.update(AUTH)
+        assert client.post("/api/articles/import").status_code == 200
+        response = client.post("/api/articles/ka-42/audit")
+        assert response.status_code == 422
+        assert response.json() == {"error": {"code": "article_has_no_content"}}
+        assert "PRIVATE" not in response.text
+        assert [c[0] for c in engine.archive.calls].count("detail") == 1
+
+
+def test_audit_route_without_live_ingestion_never_reads_the_archive(tmp_path):
+    engine = FakeEngine()
+    engine.archive = FakeArchive()
+    with TestClient(create_app(settings(tmp_path, api_auth_token=TOKEN), engine)) as client:
+        client.headers.update(AUTH)
+        assert client.post("/api/articles/import").status_code == 200
+        assert client.post("/api/articles/ka-42/audit").status_code == 404
+        assert "detail" not in [c[0] for c in engine.archive.calls]
 
 
 async def test_archive_client_get_only():
@@ -518,7 +547,7 @@ def test_all_submission_routes_link_same_article(tmp_path, database_url):
     with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, live_ingestion_enabled=True), FakeEngine())) as client:
         runs = [client.post(path, headers=AUTH, json=BODY).json() for path in
                 ("/api/benchmarks/runs", "/api/audit", "/api/webhooks/audit")]
-        assert len({r["article_ref"] for r in runs}) == 1
+        assert len({r["article"]["ref"] for r in runs}) == 1
         assert client.get("/api/articles", headers=AUTH).json()["items"][0]["run_count"] == 3
 
 

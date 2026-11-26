@@ -202,6 +202,22 @@ const baseRun = {
   reactions: [],
 };
 
+function resultFixture(run = baseRun) {
+  return {
+    schema: "karakutu-ai-audit/audit-result", schema_version: "2.0",
+    record_id: null, lineage: null,
+    article: { ref: "ref_fictional", archive_id: null,
+      url: "https://news.example/fictional", content_sha256: "a".repeat(64) },
+    run: { id: run.id, origin: run.origin ?? "benchmark", category: run.category,
+      status: run.status, created_at: run.created_at, finished_at: run.finished_at,
+      workflow_id: run.workflow_id },
+    verdict: run.verdict, flags: [], findings: null, classification: null,
+    stages: [], evidence: null, error: null,
+    notice: "Machine triage record. No verdict, including POSSIBLE_CENSORSHIP, " +
+      "is a finding of censorship; a person decides on independent evidence.",
+  };
+}
+
 test("route matching decodes identifiers and rejects malformed or unknown addresses", () => {
   for (const name of ["articles", "runs", "benchmarks", "settings"]) {
     assert.equal(router.matchRoute(`/${name}`).name, name);
@@ -425,7 +441,7 @@ test("run detail presents ordered, collapsed exact records and restores its ledg
   for (const label of [
     "1.3 s",
     "Skipped: no comparison candidates.",
-    "Exact input JSON",
+    "Step input",
     "Exact output JSON",
     "Workflow snapshot unavailable",
     "Retry snapshot",
@@ -751,8 +767,10 @@ function resourceHarness() {
       if (name === "./context") return { ApiContext: {} };
       if (name === "../format") return format;
       if (name === "./client") {
+        const client = load(path.join(root, "api/client.ts"));
         return {
-          ApiError: load(path.join(root, "api/client.ts")).ApiError,
+          ApiError: client.ApiError,
+          withheldRunId: client.withheldRunId,
           errorMessage: (error) => error.message,
           request: (path, token, { signal, method }) => new Promise((resolve, reject) => {
             requests.push({ path, token, signal, method, resolve, reject });
@@ -930,6 +948,7 @@ for (const [name, argument, data] of [
 test("run polling handles visibility, overlap, completion and manual refresh", async () => {
   const harness = resourceHarness();
   harness.render("useRun", baseRun.id);
+  assert.equal(harness.requests[0].path, `/api/runs/${baseRun.id}/details`);
   assert.equal([...harness.timers.values()][0].interval, 1500);
   harness.poll();
   assert.equal(harness.requests.length, 1);
@@ -1549,6 +1568,7 @@ test("Settings waits for service and workflow content, or ends on either error",
     ok: "SearXNG · reachable",
     unreachable: "SearXNG · unreachable at the configured SEARXNG_URL",
     rejected: "SearXNG · refused the request (is JSON output enabled?)",
+    degraded: "SearXNG · reachable, but its search engines are not answering (blocked or rate-limited)",
   })) {
     status = { mode: "live", search_provider: "searxng", search };
     const html = renderToStaticMarkup(runtime.render(() => page.SettingsPage()));
@@ -1934,7 +1954,26 @@ test("run cancellation stops polling and mutation uses safe conflict feedback", 
   control.requests[2].resolve({});
   assert.equal(await stale, false);
   assert.equal(control.render().busy, false);
+  // A stop that took effect but whose result the service withheld counts as done.
+  const stopped = [];
+  const withheld = control.render().mutate(endpoint, (data) => stopped.push(data));
+  control.requests[3].reject(new ApiError(409, "result_withheld", baseRun.id));
+  assert.equal(await withheld, true);
+  assert.deepEqual(stopped, [null]);
+  assert.equal(control.render().error, "");
   control.unmount();
+});
+
+test("a withheld article audit is followed, not reported as a failure", async () => {
+  const harness = articleDetailHarness();
+  harness.render();
+  const action = harness.start();
+  harness.requests[0].reject(new harness.client.ApiError(409, "result_withheld", "run_new"));
+  await action;
+  const html = harness.render();
+  assert.ok(!html.includes("An audit for this article is already running."));
+  assert.equal(harness.refreshes, 1);
+  harness.unmount();
 });
 
 function controlHarness(file, name, props) {
@@ -2210,8 +2249,11 @@ test("article rail offers Stop audit only while the latest audit is queued or ru
     assert.equal(control.props.run.status, status);
     const before = harness.refreshes;
     const stopped = { ...baseRun, id: latest.id, status: "cancelled", verdict: null };
-    control.props.onStopped(stopped);
-    assert.equal(harness.run, stopped);
+    harness.setRun({ ...latest, steps: [], input: {}, output: null });
+    harness.render();
+    harness.stopControl().props.onStopped(resultFixture(stopped));
+    assert.equal(harness.run.id, stopped.id);
+    assert.equal(harness.run.status, "cancelled");
     assert.equal(harness.api.articlesCache.size, 0);
     assert.equal(harness.refreshes, before + 1);
     harness.unmount();
@@ -2300,7 +2342,7 @@ test("article POST presents the accepted run immediately and preserves history",
   const accepted = { ...baseRun, id: "run_new", origin: "article", status: "queued",
     verdict: null, summary: fictionalStory({ verdict: null, steps: [] }) };
   assert.equal(harness.requests[0].ref, "ref_fictional");
-  harness.requests[0].resolve(accepted);
+  harness.requests[0].resolve(resultFixture(accepted));
   await action;
   const html = harness.render();
   assert.equal(harness.article.runs[0].id, "run_new");
@@ -2434,6 +2476,51 @@ test("story evidence uses stored measurements and never treats a failed probe as
   assert.equal(evidenceSummary({ name: "classification", output: {} }).length, 0);
 });
 
+test("evidence lines say why a page could not be read", () => {
+  const { evidenceSummary } = load(path.join(root, "features/steps/evidenceSummary.ts"));
+  const lines = evidenceSummary({ name: "similarity", output: { details: { candidates: [
+    { url: "https://ledger.invalid/a", status: "unreadable",
+      reason: "HTTP 403 (blocked/erroring, not gone)" },
+    { url: "https://ledger.invalid/b", status: "unreadable", reason: "ConnectError (unreachable, not provably gone)" },
+    { url: "https://ledger.invalid/c", status: "live" },
+  ] } }, evidence: [{ type: "fetch_candidates", output: {
+    dead: [{ url: "https://copy.invalid/gone", status: 404, reason: "HTTP 404" }],
+  } }] });
+  assert.ok(lines.some((line) =>
+    line.text === "ledger.invalid · HTTP 403 (blocked/erroring, not gone)"));
+  assert.ok(lines.some((line) =>
+    line.text === "ledger.invalid · ConnectError (unreachable, not provably gone)"));
+  assert.ok(lines.some((line) => line.text === "ledger.invalid"));
+  // A reason that only repeats the HTTP status is not shown twice.
+  assert.ok(lines.some((line) => line.text === "copy.invalid · HTTP 404"));
+  assert.ok(!lines.some((line) => line.text.includes("HTTP 404 · HTTP 404")));
+  // An older run keeps the reason only in the fetch trace: one line per page, with the reason.
+  const older = evidenceSummary({ name: "similarity", output: { details: { candidates: [
+    { url: "https://ledger.invalid/a", status: "unreadable" },
+  ] } }, evidence: [{ type: "fetch_candidates", output: { unreadable: [
+    { url: "https://ledger.invalid/a", reason: "HTTP 403 (blocked/erroring, not gone)" },
+  ] } }] });
+  assert.equal(older.map((line) => line.text).join("\n"),
+    "ledger.invalid · HTTP 403 (blocked/erroring, not gone)");
+  // Older traces stored the response's own content type: never shown, only "not HTML".
+  // Unknown reason text is dropped. A live page keeps both its status and its measurement.
+  const mixed = evidenceSummary({ name: "similarity", output: { details: { candidates: [
+    { url: "https://ledger.invalid/live", status: "live", old_in_new: 0.35 },
+  ] } }, evidence: [{ type: "fetch_candidates", output: {
+    live: [{ url: "https://ledger.invalid/live", status: 200 }],
+    unreadable: [
+      { url: "https://ledger.invalid/doc", reason: "not HTML (application/fabricated-private-words)" },
+      { url: "https://ledger.invalid/odd", reason: "fabricated private upstream words" },
+    ],
+  } }] });
+  const texts = mixed.map((line) => line.text).join("\n");
+  assert.ok(!texts.includes("fabricated"), texts);
+  assert.ok(texts.includes("ledger.invalid · not HTML"), texts);
+  assert.equal(mixed.filter((line) => line.url === "https://ledger.invalid/live").length, 1);
+  const live = mixed.find((line) => line.url === "https://ledger.invalid/live").text;
+  assert.ok(live.includes("HTTP 200") && live.includes("containment"), live);
+});
+
 test("Articles clamps only fresh offsets and resets its own epoch across routes", () => {
   const harness = ledgerHarness("ArticlesPage");
   visit("https://workbench.invalid/articles?q=fictional&offset=100");
@@ -2466,7 +2553,7 @@ test("stop controls confirm before mutations and refresh after success", async (
     error: "",
     mutate: async (path, onSuccess) => {
       calls.push(path);
-      onSuccess?.({ ...baseRun, status: "cancelled", verdict: null });
+      onSuccess?.(resultFixture({ ...baseRun, status: "cancelled", verdict: null }));
       return true;
     },
   });
@@ -2496,7 +2583,7 @@ test("stop controls confirm before mutations and refresh after success", async (
     await dialog.props.onConfirm();
     assert.deepEqual(calls, ["/api/runs/run%20fictional/cancel"]);
     assert.equal(refreshes, 1);
-    assert.equal(stoppedRun.status, "cancelled");
+    assert.equal(stoppedRun.run.status, "cancelled");
     tree = control.render();
     assert.equal(findNode(tree, (node) => typeof node.type === "function"), null);
   } finally {
@@ -2602,4 +2689,35 @@ test("cancelled detail shows neutral stopped steps while exact history stays fai
   assert.ok(!html.includes('class="chip verdict-'));
   assert.equal((html.match(/>Pending</g) ?? []).length, 5);
   assert.equal(step.status, "failed");
+});
+
+test("step input accepts saved shapes beside exact system and user messages", () => {
+  const { StepTable } = load(path.join(root, "features/steps/StepTable.tsx"));
+  const { ModelCalls } = load(path.join(root, "features/steps/ModelCalls.tsx"));
+  const call = {
+    request: { model: "fictional-model", messages: [
+      { role: "system", content: "Invented system instructions." },
+      { role: "user", content: "Invented exact prompt text." },
+      { role: "assistant", content: "Invented assistant context." },
+    ] },
+    parsed_output: { reasoning: "Invented response." },
+  };
+  for (const input of [
+    { article: { ref: "run.input.removed_article", content_chars: 200000 } },
+    { article: { content: "Invented historical article." }, prior_stages: [] },
+  ]) {
+    const step = { name: "relevance", status: "completed", input, output: {},
+      duration_ms: 1, model_calls: [call], evidence: [] };
+    const html = render(StepTable, {
+      run: { status: "succeeded", steps: [step] }, workflow: null,
+    });
+    assert.ok(html.includes("Step input"));
+    assert.ok(html.includes("Exact model prompt"));
+    assert.ok(html.includes("Invented system instructions."));
+    assert.ok(html.includes("Invented exact prompt text."));
+    assert.ok(html.includes("Exact output JSON"));
+    const prompt = render(ModelCalls, { step, promptsOnly: true });
+    assert.ok(!prompt.includes("Invented assistant context."));
+    assert.ok(!prompt.includes("Invented response."));
+  }
 });

@@ -10,12 +10,13 @@ below: models → agent builder → run orchestration → prompt/grounding helpe
 
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from audit.model import Agent
 from audit.model import Model
 
 from audit.domain import Article
 from audit.search.base import BaseSearchProvider, SearchResult
+from audit.search.boilerplate import Measurement, build_boilerplate, measure
 from audit.search.fetch import (
     MAX_PAGE_CHARS,
     MAX_PAGES_IN_PROMPT,
@@ -30,8 +31,10 @@ from audit.search.fetch import (
     prose_of,
     same_publisher,
 )
-from audit.search.textmatch import SIBLING_MAX, directional_containments, distinctive_phrase
+from audit.search.rewrite import RewriteSignal
+from audit.search.textmatch import SIBLING_MAX, distinctive_phrase
 from audit.workflow import prompts
+from audit.workflow.similarity import SimilarCandidate
 
 
 # The `PLACEHOLDER_` prefix is a misnomer kept from the earlier auditor; the name is the
@@ -43,7 +46,8 @@ PLACEHOLDER_WEB_SEARCH_PROMPT = prompts.WEB_SEARCH_PROMPT
 # EMPTY response when this prompt gets large, and it is the biggest prompt the service sends.
 # START SMALL: a large first rung tends to come back empty on Turkish articles, burning a
 # long doomed call before the ladder shrinks — the worst prompt would be tried FIRST. The first rung is now sized to usually SUCCEED (3 pages for coverage, but 500 chars),
-# and the rungs shrink from there. Each rung is a genuinely smaller ask.
+# and the rungs shrink from there. Each rung may add the single best rewrite
+# without displacing its budgeted pages.
 _PROMPT_BUDGETS = [
     (MAX_PAGES_IN_PROMPT, 500),   # 3 pages x 500
     (2, 400),
@@ -53,7 +57,7 @@ _PROMPT_BUDGETS = [
 # model's loaded context, and a human rarely needs more than a few leads.
 MAX_DEAD_IN_PROMPT = 3
 MAX_DEAD_SNIPPET_CHARS = 200
-# Output cap per model call (merged over the provider default). A correct answer — up to 3
+# Output cap per model call (merged over the provider default). A correct answer — up to 4
 # matches with omissions plus two sentences of reasoning — is ~100–250 tokens. A runaway rung can
 # otherwise run to the provider's token cap and take minutes before the next rung answers
 # quickly. The ladder is the fix; the cap just makes the doomed rung cheap.
@@ -118,6 +122,14 @@ class WebSearchEvidence(BaseModel):
     # and says so in the findings.
     relocation_old_in_new: Optional[float] = None
     relocation_new_in_old: Optional[float] = None
+    relocation_rewrite: Optional[RewriteSignal] = None
+    raw_old_in_new: Optional[float] = None
+    raw_new_in_old: Optional[float] = None
+    # Matched paragraph counts (proposed removals when capped): removed, relocation.
+    boilerplate_paragraphs: Optional[tuple[int, int]] = None
+    boilerplate_capped: Optional[bool] = None
+    # Includes demoted pages, whose relocation fields remain empty.
+    same_publisher_measurements: dict[str, Measurement] = Field(default_factory=dict)
     # Same-publisher live pages the model CALLED a match but whose text MEASURES as a
     # different article (both containments < SIBLING_MAX): siblings from the same news
     # cycle, not relocations. Reviewer context only — never matches, never a relocation.
@@ -142,6 +154,14 @@ class WebSearchEvidence(BaseModel):
     # from "the fetch failed". (When the search backend degrades it serves PDFs and sitemaps.)
     unreadable_count: int = 0
     reasoning: str = ""
+
+
+def overlap_details(web: WebSearchEvidence) -> dict:
+    """Additional numeric review details, including set-aside candidates."""
+    return web.model_dump(mode="json", include={
+        "raw_old_in_new", "raw_new_in_old", "boilerplate_paragraphs", "boilerplate_capped",
+        "same_publisher_measurements", "relocation_rewrite",
+    })
 
 
 def candidate_counts(web: WebSearchEvidence) -> str:
@@ -180,7 +200,8 @@ def build_agent(model: Model, system_prompt: str = PLACEHOLDER_WEB_SEARCH_PROMPT
 async def run(removed: Article, search_provider: BaseSearchProvider,
               agent: Agent[None, WebSearchResult], *,
               prefetched: Optional[FetchOutcome] = None,
-              extra_hits: Optional[List[SearchResult]] = None) -> WebSearchEvidence:
+              extra_hits: Optional[List[SearchResult]] = None,
+              rewrites: Optional[dict[str, SimilarCandidate]] = None) -> WebSearchEvidence:
     """Search, fetch, and judge — returning grounded evidence about the removed story.
 
     `extra_hits` are leads earlier steps already found (archive similarity candidates,
@@ -188,6 +209,7 @@ async def run(removed: Article, search_provider: BaseSearchProvider,
     `prefetched` is what those steps already fetched; nothing in it is fetched again, and its
     archive-sourced dead candidates are upgraded to `source="web"` when a web pass here
     independently returns the same URL (their 404 then keeps full evidentiary standing).
+    `rewrites` contains only similarity's best rewrite, keyed by normalized URL.
     """
     hits, queries, failed = await _gather_hits(
         removed, search_provider, leads=list(extra_hits or []),
@@ -238,14 +260,18 @@ async def run(removed: Article, search_provider: BaseSearchProvider,
         ))
 
     # The model call is the one thing here that actually breaks: a local model handed the full
-    # prompt (removed article + up to 3 fetched pages) returns an EMPTY response and pydantic-ai
+    # prompt (removed article + fetched pages) returns an EMPTY response and pydantic-ai
     # raises. It is prompt-size driven, so retry progressively smaller before giving up.
     last_exc: Optional[Exception] = None
+    rewrite = next(iter((rewrites or {}).values()), None)
     for attempt, (pages, page_chars) in enumerate(_PROMPT_BUDGETS, start=1):
         try:
-            prompt = _build_prompt(removed, fetched, max_pages=pages, page_chars=page_chars)
+            prompt = _build_prompt(
+                removed, fetched, max_pages=pages, page_chars=page_chars,
+                rewrite_url=rewrite.url if rewrite else None,
+            )
             result = await agent.run(prompt, model_settings={"max_tokens": WEB_SEARCH_MAX_TOKENS})
-            return explain(_ground(result.data, fetched, removed, len(hits)))
+            return explain(_ground(result.data, fetched, removed, len(hits), rewrites=rewrites))
         except Exception as exc:  # noqa: BLE001 — empty response, protocol error, timeout…
             last_exc = exc
 
@@ -384,11 +410,21 @@ def _merge_fetched(prefetched: FetchOutcome, fresh: FetchOutcome, hits: List[Sea
 
 def _build_prompt(removed: Article, fetched: FetchOutcome,
                   max_pages: int = MAX_PAGES_IN_PROMPT,
-                  page_chars: int = MAX_PAGE_CHARS) -> str:
-    """Render the removed article, live pages, and dead links into the model prompt."""
+                  page_chars: int = MAX_PAGE_CHARS,
+                  rewrite_url: Optional[str] = None) -> str:
+    """Keep the original page budget, adding the best rewrite only if outside it."""
+    pages = fetched.live[:max_pages]
+    if rewrite_url is not None:
+        key = normalize_url(rewrite_url)
+        if not any(normalize_url(p.url) == key for p in pages):
+            rewrite_page = next(
+                (p for p in fetched.live[max_pages:] if normalize_url(p.url) == key), None,
+            )
+            if rewrite_page is not None:
+                pages.append(rewrite_page)
     live_text = "\n\n".join(
         f"- {p.title} ({p.url})\n  TEXT: {p.text[:page_chars]}"
-        for p in fetched.live[:max_pages]
+        for p in pages
     ) or "(none)"
 
     # Only WEB-sourced dead links are shown: an archive-sourced dead link can never become
@@ -422,7 +458,8 @@ def _archive_dead_note(n: int) -> str:
 
 
 def _ground(raw: WebSearchResult, fetched: FetchOutcome, removed: Article,
-            hits_searched: int) -> WebSearchEvidence:
+            hits_searched: int, *,
+            rewrites: Optional[dict[str, SimilarCandidate]] = None) -> WebSearchEvidence:
     """Resolve every model-authored URL back to something we actually fetched.
 
     `matches` is model-authored and its URLs end up in `AuditResponse.findings` as evidence.
@@ -444,6 +481,16 @@ def _ground(raw: WebSearchResult, fetched: FetchOutcome, removed: Article,
     related_same_publisher: List[SearchResult] = []
     invented: List[str] = []
     removed_prose = prose_of(removed.content)  # the archive hands content as raw HTML
+    boilerplate = build_boilerplate(removed_prose, (
+        p.text for p in live_by_url.values()
+        if same_publisher(p.url, removed.url)
+        and (not p.final_url or same_publisher(p.final_url, removed.url))
+        and normalize_url(p.url) != normalize_url(removed.url)
+    ))
+    measurements: dict[str, Measurement] = {}
+    relocation_measurement: Optional[Measurement] = None
+    relocation_rewrite: Optional[RewriteSignal] = None
+    demoted: list[tuple[SearchResult, PageMatch, Measurement]] = []
 
     for m in raw.matches:
         page: Optional[LivePage] = live_by_url.get(normalize_url(m.url))
@@ -460,18 +507,47 @@ def _ground(raw: WebSearchResult, fetched: FetchOutcome, removed: Article,
         # before it may stand: one that is measurably a DIFFERENT article is demoted to
         # reviewer context, and the next same-publisher candidate gets its chance. An
         # UNMEASURABLE fit (no usable text on a side) never demotes — no evidence, no call.
+        # Complete this original selection before considering rewrites: a low-shingle
+        # rewrite must never pre-empt a later relocation, including one missing key facts.
+        # Keep demoted hits in model-match order for the fallback below; the model's
+        # same-story judgement remains required for any rewrite promotion.
         # Cross-publisher matches are never measured: different outlets legitimately rewrite.
-        if relocated_to is None and same_publisher(page.url, removed.url):
-            o, n = directional_containments(removed_prose, page.text)
+        if (relocated_to is None and same_publisher(page.url, removed.url)
+                and (not page.final_url or same_publisher(page.final_url, removed.url))):
+            measured = measure(removed_prose, page.text, boilerplate)
+            measurements[page.url] = measured
+            o, n = measured.cleaned
+            rewrite = (rewrites or {}).get(normalize_url(page.url))
             if o is not None and max(o, n) < SIBLING_MAX:
                 related_same_publisher.append(hit)
+                demoted.append((hit, m, measured))
                 continue   # not a same-story match, not a relocation
             relocated_to = hit
+            relocation_measurement = measured
+            if rewrite is not None:
+                relocation_rewrite = RewriteSignal(**rewrite.model_dump())
             relocation_old_in_new = o
             relocation_new_in_old = n
             relocation_covers_key_facts = m.covers_key_facts
             omissions = [om for om in m.omissions if om.strip()]
         matches.append(hit)
+
+    # Only when the original selection found no relocation, promote the first
+    # demoted rewrite. Preserve its measurement and the model's key-facts report.
+    if relocated_to is None:
+        for hit, m, measured in demoted:
+            rewrite = (rewrites or {}).get(normalize_url(hit.url))
+            if rewrite is None:
+                continue
+            related_same_publisher.remove(hit)
+            relocated_to = hit
+            relocation_measurement = measured
+            relocation_old_in_new, relocation_new_in_old = measured.cleaned
+            relocation_covers_key_facts = m.covers_key_facts
+            omissions = [om for om in m.omissions if om.strip()]
+            relocation_rewrite = RewriteSignal(**rewrite.model_dump())
+            matches.append(hit)
+            break
 
     # Archive-sourced dead candidates never enter dead_same_story — the only basis on which
     # the service ever raises the censorship flag. Web-sourced ones keep full standing.
@@ -498,6 +574,16 @@ def _ground(raw: WebSearchResult, fetched: FetchOutcome, removed: Article,
         omissions=omissions,
         relocation_old_in_new=relocation_old_in_new,
         relocation_new_in_old=relocation_new_in_old,
+        relocation_rewrite=relocation_rewrite,
+        raw_old_in_new=(relocation_measurement.raw_old_in_new
+                        if relocation_measurement else None),
+        raw_new_in_old=(relocation_measurement.raw_new_in_old
+                        if relocation_measurement else None),
+        boilerplate_paragraphs=(relocation_measurement.boilerplate_paragraphs
+                               if relocation_measurement else None),
+        boilerplate_capped=(relocation_measurement.boilerplate_capped
+                            if relocation_measurement else None),
+        same_publisher_measurements=measurements,
         related_same_publisher=related_same_publisher,
         matches=matches,
         dead_same_story=dead_same_story,

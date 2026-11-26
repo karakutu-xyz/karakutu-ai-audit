@@ -80,6 +80,22 @@ GENERIC_ENTITIES = {
 }
 GENERIC_BIGRAM_PARTS = {"haberleri", "gazete", "gazetesi", "resmi", "spor", "ekonomi", "makro", "son", "dakika",
                         "genel", "kurulu"}
+# Company and legal-form words (folded). A capitalised pair with one of these names a company
+# form ("Anonim Şirketi", "Yatırım Holding"), which many unrelated companies share, so it is
+# never a strong term; the distinctive part can still count as a recurring single word.
+# Stems cover Turkish inflection ("Holdingleri", "Şirketlerin"); short forms match exactly.
+LEGAL_FORM_STEMS = ("anonim", "sirket", "limited", "holding", "sanayi", "ticaret", "insaat",
+                    "yatirim", "grub", "grup", "group", "kooperatif", "corporat", "compan")
+LEGAL_FORM_EXACT = {"ltd", "sti", "as", "tic", "san", "inc", "corp", "gmbh", "llc", "plc"}
+
+
+def is_legal_form(word: str) -> bool:
+    """Whether a folded word is a company or legal-form word, inflected or not."""
+    return word in LEGAL_FORM_EXACT or word.startswith(LEGAL_FORM_STEMS)
+
+# All-caps labels that mark a header or a page section, not a named body.
+HEADER_LABELS = {"flas", "ozel", "video", "guncel", "guncelleme", "foto", "galeri", "canli",
+                 "yorum", "analiz", "roportaj", "manset", "duyuru", "reklam", "ilan"}
 
 
 class RelatedRemoval(BaseModel):
@@ -100,6 +116,9 @@ class RelatedRemovalsEvidence(BaseModel):
     reason: str = ""
     anchor_ts: Optional[int] = None
     anchor_source: str = ""                  # first_dead_check | now
+    # The publish date the model prompt carried. Recording only: excluded from dumps, so
+    # stage details and the audit response stay as they were.
+    prompt_publish_date: str = Field(default="", exclude=True)
     window_days: int = WINDOW_DAYS
     window_size: int = 0                     # candidate audits in the window (after self-exclusion)
     entities: List[str] = Field(default_factory=list)
@@ -139,6 +158,15 @@ def key_terms(title: str, text: str) -> Tuple[Dict[str, str], Set[str], Dict[str
                 w_clean = w.strip("“”\"'’‘(),.:;!?")
                 base = re.sub(r"[’'‘].*$", "", w_clean)                 # strip the Turkish apostrophe suffix
                 is_acr = len(w_clean) >= 2 and w_clean.isupper() and w_clean.isalpha()
+                # An acronym stands alone; a run of capitals is a header or shouting ("SON
+                # DAKİKA", "ÖZEL HABER"), and a header label is never a named body.
+                # Neighbours are judged without their suffix ("KZB'DE KRİZ" is a shouted run).
+                shouted = any(
+                    len(n) >= 2 and n.isupper() and n.isalpha()
+                    for n in (re.sub(r"[’'‘].*$", "", toks[j].strip("“”\"'’‘(),.:;!?"))
+                              for j in (i - 1, i + 1) if 0 <= j < len(toks)))
+                if is_acr and (shouted or fold(base) in HEADER_LABELS):
+                    is_acr = False
                 is_cap = w_clean[:1].isupper() and not w_clean.isupper() and len(w_clean) >= 3
                 if is_acr or (is_cap and i > 0):
                     f = fold(base)
@@ -154,6 +182,7 @@ def key_terms(title: str, text: str) -> Tuple[Dict[str, str], Set[str], Dict[str
                     if is_cap and nxt_base[:1].isupper() and not nxt_base.isupper() and len(nxt_base) >= 3:
                         a, b = fold(base), fold(nxt_base)
                         if (a not in GENERIC_BIGRAM_PARTS and b not in GENERIC_BIGRAM_PARTS
+                                and not is_legal_form(a) and not is_legal_form(b)
                                 and not (a in GENERIC_ENTITIES and b in GENERIC_ENTITIES)):
                             ents.setdefault(a + " " + b, f"{base} {nxt_base}")
                             kinds[a + " " + b] = "bigram"
@@ -177,7 +206,12 @@ def candidate_text(row: dict) -> str:
 def term_matches(term: str, ctext: str) -> bool:
     toks = set(re.findall(r"[a-z0-9]+", ctext))
     if " " in term:
-        return term in ctext
+        # Whole words from a word start, so "ali veli" never matches inside "kali velimi"; the
+        # last word may carry a short suffix, as Turkish names do ("Ali Velinin" in a slug).
+        words = term.split()
+        pattern = (r"(?<![a-z0-9])" + r"\s+".join(re.escape(w) for w in words)
+                   + r"[a-z0-9]{0,5}(?![a-z0-9])")
+        return re.search(pattern, ctext) is not None
     if term in toks:
         return True
     if len(term) >= 4:
@@ -339,6 +373,8 @@ async def run(removed: Article, agent: Optional[Agent], *, client: Optional[Kara
         return ev
     publish_date = (record.publish_date if record is not None and record.publish_date else None)
     prompt = build_prompt(removed, ev.prefiltered, gist=gist, publish_date=publish_date, text=prose)
+    ev.prompt_publish_date = str(publish_date or (
+        removed.published_at.date().isoformat() if removed.published_at else "?"))[:10]
     try:
         # temperature 0: the same list must give the same answer run to run (at the default
         # temperature a member can drop in and out between otherwise identical calls)

@@ -422,6 +422,7 @@ dev = [
     { name = "jsonschema" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "pyyaml" },
     { name = "rfc3339-validator" },
     { name = "ruff" },
 ]
@@ -445,6 +446,7 @@ dev = [
     { name = "jsonschema", specifier = ">=4.23,<5" },
     { name = "pytest", specifier = ">=8,<9" },
     { name = "pytest-asyncio", specifier = ">=0.24,<2" },
+    { name = "pyyaml", specifier = ">=6,<7" },
     { name = "rfc3339-validator", specifier = ">=0.1.4,<1" },
     { name = "ruff", specifier = ">=0.9,<1" },
 ]

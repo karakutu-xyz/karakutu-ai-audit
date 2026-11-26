@@ -157,7 +157,7 @@ represent real sources. `synthetic` retains its production meaning of model disa
 
 ## API
 
-The generated [OpenAPI contract](../openapi.json) documents validation schemas and endpoints; regenerate with `uv run python scripts/export_openapi.py`. The TypeScript client is kept aligned through the same documented route shapes and integrated browser checks.
+The generated [OpenAPI contract](../openapi.yaml) (YAML; the running API still serves it as `/openapi.json`) documents validation schemas and endpoints; regenerate with `uv run python scripts/export_openapi.py`. The TypeScript client is kept aligned through the same documented route shapes and integrated browser checks.
 
 | Method / path | Purpose |
 | --- | --- |
@@ -174,24 +174,25 @@ The generated [OpenAPI contract](../openapi.json) documents validation schemas a
 | `GET /api/prompts/{name}/diff?from=<v>&to=<v>` | Unified diff preserving line endings. |
 | `GET /api/workflow` | Current immutable workflow snapshot. |
 | `GET /api/workflows/{id}` | Snapshot used by a historical run. |
-| `POST /api/benchmarks/runs` | Submit a benchmark, return 202 and its queued run. |
+| `POST /api/benchmarks/runs` | Submit a benchmark, return 202 and its lean queued `AuditResult`. |
 | `POST /api/audit` | Submit a **live** run; disabled by default. |
 | `POST /api/webhooks/audit` | Submit a **live** webhook run; disabled by default. |
 | `GET /api/articles` | Paginated articles with latest audit status/verdict, run count and activity. |
 | `GET /api/articles/{ref}` | Stored content, archive metadata/links and newest-first run history with computed summaries; unknown refs return 404. |
-| `POST /api/articles/{ref}/audit` | First audit or re-run; 202 `RunDetail`, origin `article`; preserves every previous run. |
+| `POST /api/articles/{ref}/audit` | First audit or re-run; 202 `AuditResult`, origin `article`; preserves every previous run. |
 | `POST /api/articles/import?days=30` | Read archive audit listings and upsert local article metadata; 200 `{imported, updated, skipped}`. |
 | `GET /api/runs` | Filter/paginate by category, origin, status, verdict and workflow ID. |
-| `GET /api/runs/{id}` | Complete run with stage and model/evidence records. |
-| `POST /api/runs/{id}/cancel` | Stop a queued/running audit; return 200 `RunDetail`. |
+| `GET /api/runs/{id}` | Read the lean `AuditResult`; full review data requires `/details`. |
+| `GET /api/runs/{id}/details` | Read full `RunDetail`, including input, output, steps, evidence and model calls. |
+| `POST /api/runs/{id}/cancel` | Stop a queued/running audit; return 200 `AuditResult`. |
 | `GET /api/queue` | Queue pause flag, concurrency limit and oldest-first running/queued run IDs. |
 | `POST /api/queue/pause` | Hold queued and new submissions; running audits continue. Return `QueueState`. |
 | `POST /api/queue/resume` | Release queued work; return `QueueState`. |
 | `POST /api/queue/cancel?include_running=false` | Stop queued audits; optionally include running audits. Return `{cancelled: [run IDs]}`. |
-| `GET /api/runs/{id}/export` | Download the same local review record. |
+| `GET /api/runs/{id}/export` | Download the full local review record, including exact transcripts. |
 | `POST /api/runs/{id}/reactions` | Append `agree`, `disagree` or `needs_review`, reviewer and note. |
 
-Run submission accepts `removed_article: {url, title, content, published_at?}`, `similar_articles` (up to five), optional `label`, and optional `expected_verdict`. Poll the returned run ID until status is `succeeded`, `failed` or `cancelled`. `AUDIT_FAILED` is a failed execution, not a substantive finding.
+Run submission accepts `removed_article: {url, title, content, published_at?}`, `similar_articles` (up to five), optional `label`, and optional `expected_verdict`. Poll `GET /api/runs/{id}` using the returned `run.id` until `run.status` is `succeeded`, `failed` or `cancelled`. `AUDIT_FAILED` is a failed execution, not a substantive finding.
 
 ### Run and queue controls
 
@@ -285,14 +286,35 @@ Unreached steps are `pending`. Test-mode cancellation interrupts the demo step
 delay and keeps already-emitted steps; the seed includes one cancelled example.
 The run-list metadata schema is named `RunSummary`; its existing fields are unchanged.
 
+### Private step records
+
+Run details and export retain permissive step input/evidence JSON, accepting both
+historical cumulative records and new lean inputs by name. Article-reading inputs
+refer to `run.input.removed_article`, with URL, title, publication date, character
+count and content SHA-256. Classification stores a catalog count/byte/hash summary;
+other steps record only their own dependencies, never full earlier stage objects.
+Skipped inputs carry the reason. See [the step contract](workflow.md#exact-review-record).
+
+By default archive outputs are byte/hash summaries plus item counts or article
+identity and text length/hash. Fetch events retain requested URLs and page metadata,
+text lengths/hashes and dead/unreadable reasons. Search events remain unchanged.
+`RECORD_FULL_EVIDENCE=true` restores full private archive/fetch evidence bodies;
+inputs stay lean. Exact model requests/messages, parsed output and usage are always
+retained. The review panel shows Step input beside exact system/user messages.
+Article text stays in the run request and exact model prompts, without extra copies
+in default step inputs, evidence or details. No database migration or response
+schema change is needed; historical runs keep their saved shape. The portable audit
+record and computed run story continue reading output fields, not step input state.
+
 ### Search status and evidence
 
-Status `search` is one of `disabled`, `unchecked`, `ok`, `unreachable`, or
+Status `search` is one of `disabled`, `unchecked`, `ok`, `degraded`, `unreachable`, or
 `rejected`, with no URL or upstream error text. Test mode always reports
 `disabled` offline. Live status probes `/healthz` with a two-second bound and a
-30-second cache. Any HTTP answer proves reachability but cannot clear rejection
-learned from a real search query. Settings explains unreachable search in terms
+30-second cache. Any HTTP answer proves reachability but cannot clear degradation
+or rejection learned from a real search query. Settings explains unreachable search in terms
 of the configured SEARXNG_URL and rejected search in terms of JSON output.
+`degraded` means a query returned no usable hits and reported unresponsive engines; only engine names are retained, never upstream reasons.
 
 New web-search evidence and step `details` include `search_queries` (web queries
 attempted), `search_queries_failed`, `web_hits`, `archive_candidates`, and
@@ -354,7 +376,34 @@ local import/enrichment never mutates the archive.
 
 This is an intentionally changed API: the old synchronous `/api/audit` response and `/api/v1/articles/...` publishing jobs are archived. New `/api/audit` is asynchronous, persisted and live-gated. Consumers must explicitly migrate; no silent compatibility facade publishes to Karakutu.
 
-A finished live run serializes to the versioned [audit record](audit-record-schema.md) that will be posted to karakutu (`backend/audit/record.py`). Benchmark, unfinished and interrupted runs never serialize. No route posts records yet; `GET /api/runs/{id}/export` remains the local review record, with reactions and exact transcripts.
+All audit-submission POSTs, benchmark submission and individual cancellation return the
+lean `AuditResult` defined in [the v2 result contract](audit-record-schema.md).
+`GET /api/runs/{id}` returns the same shape: article identity and content hash, run
+metadata with a workflow pointer, nullable verdict, bounded findings, classification,
+stage summaries and typed evidence. It has no article text, input, steps, prompts or
+model calls. Submission returns 202 with queued metadata under `run`, `record_id: null`,
+`verdict: null` and `stages: []`. Clients navigate using `run.id`.
+
+Every result route can instead return **409** with
+`{"error": {"code": "result_withheld", "reason": "<fixed refusal code>", "run_id": "<id>"}}`.
+The shared builder scrubs and scans full projected text before truncation, using the
+configured API token, model key, database password and wallet material (the wallet is
+resolved like archive sign-in on every check, so a keyfile added after start is covered). Credentials or secrets that survive
+scrubbing cause `credential_detected` or `secret_detected`; oversized stored URLs,
+identities or serialized results cause `too_large`. An invalid projection causes
+`invalid_result`. These responses contain no stored prose. Withholding affects only
+the response: a submission still creates and queues its run, and cancellation still
+cancels it, so a caller must not resubmit: follow `run_id` instead (the review UI opens the
+run or refreshes and shows no error). Full data remains at `/api/runs/{id}/details`. Submitted article URLs over
+8,192 UTF-8 bytes fail validation with the existing 422 error shape before creating a run.
+
+A finished live run with a stored result can serialize to the v2 record for karakutu.
+Benchmark, queued, running, cancelled and interrupted runs produce no record; their API
+result has `record_id: null`. Finished API records use initial lineage or point to the
+latest earlier finished live result for the same article. No route posts records yet.
+Full `RunDetail` review data is available only through `GET /api/runs/{id}/details` and
+the explicit `GET /api/runs/{id}/export` download. The review UI polls `/details`.
+Authentication, rate limits and unknown-ID 404 behavior are unchanged.
 
 The editable names are `relevance`, `classification_coarse`, `classification_fine`, `source`, `web_search`, and `related_removals`. Prompt text must be a valid UTF-8 string, nonblank, at most 20,000 characters, without NUL, and retain the registry's required output tokens and `GUARDRAIL` section marker (or `NONE` for related removals). Author is 1–120 characters; note is at most 2,000. Validation returns 422 with safe codes, including `missing_token:<token>`; it never echoes prompt text. Duplicate text for the same name returns 409 `duplicate_version`; activate the existing version instead. Rollback without a previous distinct version returns 409 `no_previous_version`. Unknown names/versions return 404. Prompt summaries omit text; individual versions and the current/historical workflow snapshots contain exact text.
 
@@ -394,7 +443,7 @@ data/reports/    batch summaries and detailed exports
 data/audit.sqlite3  all stored runs, reactions and workflow snapshots
 ```
 
-The ignore rules also cover `reports/`, `exports/`, `fixtures/`, `datasets/`, `private/`, `runs/`, `.env*`, wallet files, database sidecars, JSON/JSONL/CSV/TSV/Parquet files. Only explicit configuration manifests and `openapi.json` are allowed JSON files. Documentation stays tracked under `docs/`; generated reports do not belong there. Tests generate fabricated inputs inline. `scripts/check_data_hygiene.py` catches tracked/staged private paths, including forced Git additions. It also scans the staged content of every file for home-directory paths, email addresses, private keys, keyfile members and common API tokens, URLs on real hosts, and bare real hostnames in prose, comments and string literals. Reserved names pass: `.example`/`.invalid`/`.test`/`.localhost`, `example.<tld>`, internal suffixes such as `.local`/`.internal`, single-label and numeric hosts, and IP literals. Outlet domains are reference data and may appear only in the lookup tables named in the script (`workflow/source.py`, `search/urls.py`, `workflow/web_search.py`); `LICENSE` and lockfiles are exempt from the host rules only. The required pinned uv build-image reference is allowed only as the exact backend Dockerfile `FROM` directive; comments, URLs and other image references remain scanned. Likewise, the project's public repository URL is allowed only as the exact `git clone` line of the README quick start. The patterns are heuristics: they cannot detect real article prose or real names, so never paste either into source, prompts, tests or docs.
+The ignore rules also cover `reports/`, `exports/`, `fixtures/`, `datasets/`, `private/`, `runs/`, `.env*`, wallet files, database sidecars, JSON/JSONL/CSV/TSV/Parquet files. Only explicit configuration manifests and the audit-record schema are allowed JSON files. Documentation stays tracked under `docs/`; generated reports do not belong there. Tests generate fabricated inputs inline. `scripts/check_data_hygiene.py` catches tracked/staged private paths, including forced Git additions. It also scans the staged content of every file for home-directory paths, email addresses, private keys, keyfile members and common API tokens, URLs on real hosts, and bare real hostnames in prose, comments and string literals. Reserved names pass: `.example`/`.invalid`/`.test`/`.localhost`, `example.<tld>`, internal suffixes such as `.local`/`.internal`, single-label and numeric hosts, and IP literals. Outlet domains are reference data and may appear only in the lookup tables named in the script (`workflow/source.py`, `search/urls.py`, `workflow/web_search.py`); `LICENSE` and lockfiles are exempt from the host rules only. The required pinned uv build-image reference is allowed only as the exact backend Dockerfile `FROM` directive; comments, URLs and other image references remain scanned. Likewise, the project's public repository URL is allowed only as the exact `git clone` line of the README quick start. The patterns are heuristics: they cannot detect real article prose or real names, so never paste either into source, prompts, tests or docs.
 
 ### String length contract
 

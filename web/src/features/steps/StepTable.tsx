@@ -146,9 +146,10 @@ export function StepTable({
                         <div className="step-records">
                           {explanation && <p>{explanation}</p>}
                           <div className="step-json">
-                            <Json value={step.input} label="Exact input JSON" />
-                            <Json value={step.output} label="Exact output JSON" />
+                            <Json value={step.input} label="Step input" />
+                            <ModelCalls step={step} promptsOnly />
                           </div>
+                          <Json value={step.output} label="Exact output JSON" />
                           <details>
                             <summary>Evidence ({step.evidence?.length ?? 0})</summary>
                             <Evidence step={step} />

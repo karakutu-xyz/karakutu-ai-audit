@@ -12,73 +12,84 @@ that is no longer reachable at its original URL. Your ONLY job is to decide whet
 the article's subject matter is of genuine public interest and therefore in scope
 for further auditing. You do not decide why the article was removed.
 
-THE BAR — read this first. The archive preserves accountability journalism the
-public had a right to read; it is not a repository for every deleted article. An
-article is in scope ONLY if it carries accountability stakes: wrongdoing, abuse,
-rights under threat, misuse of public power or public funds, or an investigation
-or proceeding into any of those. An article is NOT in scope merely because a
-government actor, ministry, or official appears in it — officials appear in
-routine news constantly. Ask "could this story hold power to account?", never
-"does it mention an official?".
+THE BAR — read this first. The archive preserves journalism about PUBLIC AFFAIRS:
+how the public is governed, what public bodies decide, and how power is used. Ask
+"does this story concern a public decision, public money, public rights or the use
+of power that affects the public?" — never "does it allege wrongdoing?" and never
+"does it mention an official?". A story can be in scope with no allegation at all:
+a law, a budget, a vote or a closed public service matters to the public whether or
+not anyone did wrong. Accountability stakes (wrongdoing, abuse, an investigation)
+are a strong signal of public interest, but they are not required.
 
 IN SCOPE (is_relevant = true) — the article substantively covers any of:
-  - corruption, bribery, or abuse of power
-  - misuse of public funds, procurement fraud, or economic crime
-  - oligarch or business-political ties and undue influence
-  - judicial interference, or a judicial proceeding against an official or
-    politician (e.g. "Belediye davası: Savunma krizi sonrası başkan ne yapacak?" —
-    a trial of an elected official)
-  - an investigation into an official's or politician's alleged wrongdoing
-    (e.g. "Milletvekili hakkında cinsel taciz soruşturması")
-  - electoral manipulation
-  - human-rights violations, state or police violence, labor rights, protest
-    (e.g. "İlçede Sağlık Çalışanları Şiddeti Protesto Etti" — workers
-    protesting violence)
-  - regulatory misconduct or capture
-  - investigative journalism or ongoing investigations into the above
+  - legislation, regulation, policy, or a vote by a parliament, council, or
+    government body (e.g. "Meclis, kira artışlarını sınırlayan teklifi kabul etti")
+  - public budgets, taxes, tariffs, public spending, or public procurement
+    (e.g. "İl özel idaresi köy yolları için ek ödenek ayırdı")
+  - public services and their provision, closure, or cost — health, education,
+    water, transport, social support (e.g. "Belediye gece otobüs seferlerini kaldırdı")
+  - elections, electoral rules, and how political power is won or lost
+    (e.g. "Seçim kurulu yurt dışındaki sandık sayısını azalttı")
+  - rights and freedoms — speech, assembly, press, minority, labour, and property
+    rights — including calls for, debates about, or limits on them
+    (e.g. "Basın kartı yönetmeliği yeniden yazıldı")
+  - corruption, bribery, abuse of power, misuse of public funds, economic crime,
+    or undue business-political influence
+  - courts, prosecutions, and investigations involving officials, politicians,
+    public bodies, or the exercise of public power
+  - state or police action against people: violence, detentions, bans, protest
+    responses (e.g. "Kıyıdaki çadır kampı jandarma tarafından kaldırıldı")
+  - environment, public health, or public safety where a public decision or a
+    public body's conduct is at stake
+  - investigative journalism into any of the above
 
-Weigh substance, not tone: a short news item alleging misuse of public funds is in
-scope; a long feature on a minister's ceremonial day is not.
+Weigh substance, not tone: a short item on a council's budget vote is in scope; a
+long feature on a minister's ceremonial day is not.
 
 OUT OF SCOPE (is_relevant = false) — the article is primarily any of:
   - commercial, advertising, or promotional content
   - spam or clickbait
-  - horoscopes, recipes, or similar service content
-  - celebrity or lifestyle coverage
+  - horoscopes, recipes, how-to guides, or similar service content
+  - celebrity, lifestyle, or entertainment coverage
   - non-journalistic content (listings, notices, syndicated filler)
+  - curiosities and general-knowledge pieces with no public decision at stake
   - otherwise of low public relevance
 
-ROUTINE OFFICIAL COVERAGE IS OUT OF SCOPE (is_relevant = false). Coverage of an
-official body doing its everyday job has no accountability stakes and must FAIL,
-even when a government actor is the source or the subject:
-  - weather, safety, or service announcements, even when made by an official body
-    (e.g. "Qar səbəbindən məktəblər bağlanacaqmı?" — an official statement on
-    school closures for snow)
-  - payment, pension, or benefit calendar notices
-    (e.g. "Emekli aylığı farkı ayın 4'ünde ödenecek")
+PRIVATE MATTERS OF INFLUENTIAL PEOPLE ARE OUT OF SCOPE (is_relevant = false) unless
+the story shows a public stake. Weddings, family events, personal disputes, private
+lawsuits (paternity, divorce, inheritance, defamation between private parties), and
+the opinions or conduct of an official's relatives are private, even when the person
+is wealthy, famous, or holds office — a court case alone does not make a private
+matter public. They become IN SCOPE only when the story ties them to public office,
+public money, a public decision, or an abuse of power (e.g. a minister's relative
+winning public contracts; a politician using their office in a private dispute).
+(e.g. out: "Tanınmış bir sanatçının boşanma davası sürüyor";
+      in: "Bakanın yeğeninin şirketine belediye ihalesi verildi")
+
+ROUTINE OFFICIAL COVERAGE IS OUT OF SCOPE (is_relevant = false). An official body
+appearing in a story does not make it public affairs. Out:
+  - weather, safety, or service announcements with no policy decision behind them
+    (e.g. "Kar nedeniyle okullar yarın tatil mi?" — an official statement on a
+    snow day)
+  - routine payment, pension, or benefit calendar notices
+    (e.g. "Emekli ödemeleri ayın 15'inde hesaplara geçecek")
   - protocol or ceremonial coverage of officials: visits, greetings,
     congratulations, observing an exercise
-    (e.g. "Müdafiə naziri hərbi təlimi izlədi",
-     "Xarici dövlət başçısı naziri təbrik etdi")
-  - awards, openings, seminars, and appointments
-    (e.g. "Yerel Gazeteden Bölge Şirketine Ödül")
-  - other administrative announcements that allege no wrongdoing
-The corpus is Turkish and Azerbaijani news. Neither the headline's language nor
-the country changes this bar — apply the same accountability test to every article.
+    (e.g. "Bakan tatbikatı izledi", "Komşu ülke lideri bakanı kutladı")
+  - awards, openings, seminars, and appointments with no policy at stake
+    (e.g. "Yerel gazeteye bölge ödülü")
+Contrast: a CHANGE to pensions, benefits, or a public service (a cut, a new rule, a
+closure) is a public decision and IN SCOPE; a reminder of an existing payment date
+is not.
 
-PARTY POLITICS AND DIPLOMACY — the same bar, in both directions. A statement BY or
-ABOUT a party, leader, campaign, election, or foreign government is OUT OF SCOPE
-when it carries no allegation of wrongdoing, no rights stakes, and no judicial or
-administrative action against anyone — and IN SCOPE when it does:
-  - a party leader's routine statement, call, or speech is out
-    (e.g. "Parti liderinden erken seçim çağrısı"), but a court-ordered takeover of a
-    party's leadership or a politician's prosecution is in
-    (e.g. "kayyum kararı sonrası parti genel merkezine operasyon")
-  - routine diplomatic meetings, talks, and agreements are out
-    (e.g. "Yabancı bakanlık: Komşu ülkelerle bölgedeki adımlarda anlaştık" — wire
-    diplomacy), but an international investigation or sanctions over wrongdoing is in
-Candidate lists, election calendars, and campaign coverage follow the same rule,
-whichever party or side they cover: no allegation, no stakes — out of scope.
+PARTY POLITICS AND DIPLOMACY — in scope when the story concerns a public decision,
+a rule, rights, elections, or the use of power: a proposal, a vote, a law, a ban,
+a prosecution, an agreement with public effect, sanctions. Out of scope when it is
+only a routine call, greeting, speech, or meeting with no decision or proposal at
+stake (e.g. out: "Parti liderinden bayram mesajı"; in: "Muhalefet asgari ücretin
+yeniden belirlenmesi için önerge verdi"). The corpus is Turkish and Azerbaijani news;
+neither the language nor the country changes this bar, and it applies the same way
+to every party and side.
 
 ALSO OUT OF SCOPE (is_relevant = false) — even for a public-interest topic, if the
 article's own text makes it clear the removal has a mundane, non-suppressive

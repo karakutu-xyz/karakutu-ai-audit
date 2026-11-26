@@ -8,10 +8,19 @@ particular the two rules that keep the service inside its authority:
   * silence (nothing live, nothing dead) must never raise anything at all.
 """
 
-from audit.domain import Verdict
+import pytest
+
+from audit.domain import StageName, Verdict
 from audit.search.base import SearchResult
-from audit.search.fetch import DeadCandidate
-from audit.workflow.pipeline import _decide
+from audit.search.rewrite import RewriteSignal
+from audit.search.fetch import DeadCandidate, FetchOutcome, LivePage, UnreadableCandidate
+from audit.workflow import pipeline, related_removals
+from audit.workflow.pipeline import (
+    LOW_INTEREST_RELOCATION_FLOOR, _best_partial_relocation, _decide,
+    _low_interest_response,
+)
+from audit.workflow.relevance import RelevanceResult
+from audit.workflow.similarity import SimilarCandidate, SimilarityEvidence
 from audit.workflow.web_search import WebSearchEvidence
 
 RELOCATED = SearchResult(url="https://news.example.org/yazi/12346/x", title="t", snippet="s")
@@ -371,3 +380,203 @@ def test_a_dead_cited_source_is_named_as_such_in_the_flag_findings():
     verdict, findings = _decide(evidence)
     assert verdict is Verdict.POSSIBLE_CENSORSHIP
     assert "cited source — HTTP 404" in findings and "not a finding of censorship" in findings
+
+
+def partial_candidate(**changes):
+    return SimilarCandidate(**{
+        "url": "https://paper.example/copy", "title": "Invented copy",
+        "status": "live", "same_publisher": True, "fit": "partial",
+        "old_in_new": LOW_INTEREST_RELOCATION_FLOOR, "new_in_old": 0.41,
+        **changes,
+    })
+
+
+def low_interest_response(sim):
+    return _low_interest_response(
+        sim,
+        RelevanceResult(is_relevant=False, confidence=0.9, reasoning="Invented scope reason"),
+        related_removals.RelatedRemovalsEvidence(reason="invented archive unavailable"),
+        stages=[], classification=None,
+    )
+
+
+@pytest.mark.parametrize("changes", [
+    {"same_publisher": False, "old_in_new": 0.98},
+    {"fit": "unmeasured", "old_in_new": 0.98},
+    {"fit": "sibling", "old_in_new": 0.01, "new_in_old": 0.01},
+    {"fit": "verbatim", "old_in_new": 1.0},
+    {"status": "dead", "old_in_new": 0.98},
+    {"status": "unreadable", "old_in_new": 0.98},
+    {"old_in_new": None},
+    {"new_in_old": None},
+    {"final_url": "https://elsewhere.example/copy", "old_in_new": 0.98},
+])
+def test_low_interest_ignores_candidates_without_live_measured_partial_fit(changes):
+    sim = SimilarityEvidence(candidates=[partial_candidate(**changes)])
+    assert _best_partial_relocation(sim) is None
+    response = low_interest_response(sim)
+    assert response.verdict is Verdict.LIKELY_LOW_PUBLIC_INTEREST
+    assert response.findings == (
+        "Removed article judged not of public interest: Invented scope reason "
+        "Related removals: not checked (invented archive unavailable)."
+    )
+
+
+@pytest.mark.parametrize("old_in_new, verdict", [
+    (LOW_INTEREST_RELOCATION_FLOOR, Verdict.LIKELY_MOVED),
+    (LOW_INTEREST_RELOCATION_FLOOR - 0.001, Verdict.LIKELY_LOW_PUBLIC_INTEREST),
+])
+def test_low_interest_floor_and_best_partial(old_in_new, verdict):
+    best = partial_candidate(old_in_new=old_in_new)
+    sim = SimilarityEvidence(candidates=[
+        partial_candidate(url="https://paper.example/less", old_in_new=0.34, new_in_old=0.99),
+        partial_candidate(url="https://other.example/copy", same_publisher=False, old_in_new=0.98),
+        partial_candidate(url="https://paper.example/unmeasured", fit="unmeasured", old_in_new=0.98),
+        best,
+    ])
+    assert _best_partial_relocation(sim) == best
+    response = low_interest_response(sim)
+    assert response.verdict is verdict
+    assert response.short_circuited_at is StageName.RELEVANCE
+    assert response.flags == []
+    assert best.url in response.findings
+    assert "https://paper.example/less" not in response.findings
+    assert "https://other.example/copy" not in response.findings
+    assert "https://paper.example/unmeasured" not in response.findings
+    assert "41%" in response.findings
+    assert "Invented scope reason" in response.findings
+    assert response.findings.endswith(
+        "Related removals: not checked (invented archive unavailable)."
+    )
+    if verdict is Verdict.LIKELY_MOVED:
+        assert "substantial but partial" in response.findings
+        assert "out of scope" in response.findings
+        assert "key-facts comparison of web search was not run" in response.findings
+        assert "floor" not in response.findings
+    else:
+        assert "Relocation note:" in response.findings
+        assert f"below the {LOW_INTEREST_RELOCATION_FLOOR:.0%} floor" in response.findings
+        assert "holds 49% of the original's text" in response.findings
+
+
+def test_a_same_host_redirect_still_counts_for_the_low_interest_exit():
+    best = partial_candidate(final_url="https://paper.example/copy-renamed")
+    sim = SimilarityEvidence(candidates=[best])
+    assert _best_partial_relocation(sim) == best
+    assert low_interest_response(sim).verdict is Verdict.LIKELY_MOVED
+
+
+def test_a_share_just_below_the_floor_never_reads_as_the_floor():
+    sim = SimilarityEvidence(candidates=[partial_candidate(old_in_new=0.4996)])
+    findings = low_interest_response(sim).findings
+    assert "holds 49% of the original's text" in findings
+    assert "holds 50%" not in findings
+
+
+def test_low_interest_reuses_existing_decision_with_archive_evidence(monkeypatch):
+    candidate = partial_candidate()
+    hit = SearchResult(url=candidate.url, title=candidate.title, snippet="", source="archive")
+    sim = SimilarityEvidence(
+        candidates=[candidate], hits=[hit], reason="Invented similarity reason",
+        fetched=FetchOutcome(
+            live=[LivePage(
+                url=hit.url, final_url=hit.url, status=200,
+                title=hit.title, text="Invented text",
+            )],
+            unreadable=[UnreadableCandidate(
+                url="https://paper.example/blocked", title="Invented blocked page", reason="blocked",
+            )],
+        ),
+    )
+    decide = pipeline._decide
+    seen = []
+
+    def capture(web):
+        seen.append(web)
+        return decide(web)
+
+    monkeypatch.setattr(pipeline, "_decide", capture)
+    response = low_interest_response(sim)
+    assert response.verdict is Verdict.LIKELY_MOVED
+    assert len(seen) == 1
+    web = seen[0]
+    assert web.relocated_to == hit
+    assert web.matches == [hit]
+    assert web.relocation_old_in_new == candidate.old_in_new
+    assert web.relocation_new_in_old == candidate.new_in_old
+    assert web.relocation_covers_key_facts is True
+    assert web.hits_searched == web.archive_candidates == 1
+    assert web.live_pages_read == web.unreadable_count == 1
+    assert web.reasoning == sim.reason
+
+
+@pytest.mark.parametrize(("gap", "day_text"), [(0, "on the same day"), (1, "1 day apart"), (2, "2 days apart")])
+def test_rewrite_findings_round_down_and_explain_wording(gap, day_text):
+    web = WebSearchEvidence(
+        relocated_to=RELOCATED, relocation_old_in_new=0.0999, relocation_new_in_old=0.0499,
+        relocation_rewrite=RewriteSignal(
+            title_overlap=0.4099, word_overlap=0.4999, own_words=25, date_gap_days=gap,
+        ),
+    )
+    verdict, findings = _decide(web)
+    assert verdict is Verdict.LIKELY_MOVED
+    assert "Same-publisher rewrite" in findings
+    assert "40% of the original's headline words" in findings
+    assert "49% of the original's distinctive words" in findings
+    assert f"published {day_text}." in findings
+    assert "wording differs: 9% of the original's text" in findings
+    assert "4% of the copy's text" in findings
+    assert "human auditor should compare the two pages" in findings
+
+
+def test_rewrite_signal_does_not_change_missing_key_facts_branch():
+    web = WebSearchEvidence(
+        relocated_to=RELOCATED, relocation_old_in_new=0.09, relocation_new_in_old=0.04,
+        relocation_covers_key_facts=False, omissions=["the invented spending total"],
+    )
+    baseline = _decide(web)
+    web.relocation_rewrite = RewriteSignal(
+        title_overlap=0.8, word_overlap=0.7, own_words=25, date_gap_days=1,
+    )
+    assert _decide(web) == baseline
+    assert baseline[0] is Verdict.POSSIBLE_CENSORSHIP
+    assert "materially omits: the invented spending total" in baseline[1]
+
+
+@pytest.mark.parametrize("containment", [0.0, None])
+def test_stub_rewrite_findings_do_not_quote_containment(containment):
+    web = WebSearchEvidence(
+        relocated_to=RELOCATED, relocation_old_in_new=containment,
+        relocation_new_in_old=containment,
+        relocation_rewrite=RewriteSignal(
+            title_overlap=1, word_overlap=None, own_words=0, date_gap_days=1,
+        ),
+    )
+    verdict, findings = _decide(web)
+    assert verdict is Verdict.LIKELY_MOVED
+    assert "original's text was too short to compare" in findings
+    assert "published 1 day apart" in findings
+    assert "wording differs" not in findings
+    assert "0%" not in findings.replace("100%", "")
+
+
+@pytest.mark.parametrize("partial_share", [0.50, 0.49])
+def test_low_interest_prefers_qualifying_partial_then_rewrite(partial_share):
+    partial = partial_candidate(old_in_new=partial_share)
+    rewrite = partial_candidate(
+        url="https://paper.example/rewrite", old_in_new=0.01, new_in_old=0.02,
+        rewrite=True, title_overlap=0.6, word_overlap=0.7, own_words=30, date_gap_days=2,
+    )
+    response = low_interest_response(SimilarityEvidence(
+        candidates=[partial, rewrite], rewrite=rewrite,
+    ))
+    assert response.verdict is Verdict.LIKELY_MOVED
+    if partial_share >= 0.50:
+        assert partial.url in response.findings
+        assert rewrite.url not in response.findings
+        assert "rewrite" not in response.findings
+    else:
+        assert rewrite.url in response.findings
+        assert partial.url not in response.findings
+        assert "same-publisher rewrite from the similarity step decides" in response.findings
+        assert "key-facts comparison of web search was not run" in response.findings

@@ -4,6 +4,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
+from audit.record import ARTICLE_URL_MAX_BYTES, AuditResult as AuditResult
+from audit.record import RecordErrorCode
 from audit.clients.karakutu import ArchiveState
 from audit.search.base import SearchState
 from audit.domain import Article, AuditRequest, AuditResponse, StageName, Verdict
@@ -27,6 +29,8 @@ class ArticleInput(Article, TextInput):
     @field_validator("url")
     @classmethod
     def web_url(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > ARTICLE_URL_MAX_BYTES:
+            raise ValueError("invalid_url")
         try:
             parsed = urlsplit(value)
             if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
@@ -79,7 +83,7 @@ class ValidationField(BaseModel):
 
 class SafeError(BaseModel):
     code: str
-    reason: ArchiveState | Literal["not_configured"] | None = None
+    reason: ArchiveState | RecordErrorCode | Literal["not_configured"] | None = None
     fields: list[ValidationField] | None = None
     correlation_id: str | None = None
     codes: list[str] | None = None

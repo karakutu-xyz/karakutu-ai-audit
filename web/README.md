@@ -149,7 +149,7 @@ records are preserved. The verdict area contains the single authored
 “not a finding of censorship” line; stored source/JSON may include its original
 guardrail wording.
 
-Article detail reads `/api/articles/:ref` and the latest `/api/runs/:id` through
+Article detail reads `/api/articles/:ref` and the latest `/api/runs/:id/details` through
 hooks. Its story uses the latest computed `RunStory`, preferring the full run's
 summary as its records arrive. Completed steps show footnotes derived only from
 recognized fields in that run's stored step output/evidence: fetched URLs and

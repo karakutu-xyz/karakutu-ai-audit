@@ -24,19 +24,50 @@ function items(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
 
+// The fetch layer's reasons have fixed forms. Only those are shown: runs saved before the
+// fixed non-HTML wording stored the response's own content type, which is upstream text.
+const FETCH_REASONS = [
+  /^HTTP \d{3}( \(blocked\/erroring, not gone\))?$/,
+  /^[A-Za-z][A-Za-z0-9_]{0,59} \(unreachable, not provably gone\)$/,
+  /^not HTML \((PDF|image|video|audio|another content type)\)$/,
+  /^200 but only \d{1,9} chars of prose$/,
+  /^refused: (not a public http\(s\) address|redirected to a non-public address|resolves to a non-public address)$/,
+  /^non-article URL \(PDF\/image\/archive\), not a news page$/,
+];
+
+export function fetchReason(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  if (FETCH_REASONS.some((pattern) => pattern.test(value))) return value;
+  return value.startsWith("not HTML (") ? "not HTML" : undefined;
+}
+
 // Only recognized stored fields are projected; arbitrary record text is not scanned.
 export function evidenceSummary(step: Step): EvidenceLine[] {
   const lines: EvidenceLine[] = [];
+  // One line per page and prefix: the fetch trace and a step's candidate list can both name
+  // a page (older runs keep the reason only in the trace), so their fields are merged.
+  const pages = new Map<string, { line: EvidenceLine; host: string; prefix: string;
+    status?: number; measured?: string; reason?: string }>();
   function page(value: unknown, prefix = "") {
     const item = typeof value === "string" ? { url: value } : record(value);
     const url = externalUrl(item.url);
     if (!url) return;
-    const status = typeof item.status === "number" ? ` · HTTP ${item.status}` : "";
-    const measured = containment(item.old_in_new);
-    lines.push({
-      url,
-      text: `${prefix}${new URL(url).host}${status}${measured ? ` · ${measured}` : ""}`,
-    });
+    const key = `${prefix}\u0000${url}`;
+    let entry = pages.get(key);
+    if (!entry) {
+      entry = { line: { url, text: "" }, host: new URL(url).host, prefix };
+      pages.set(key, entry);
+      lines.push(entry.line);
+    }
+    if (entry.status === undefined && typeof item.status === "number") entry.status = item.status;
+    entry.measured ??= containment(item.old_in_new) || undefined;
+    entry.reason ??= fetchReason(item.reason);
+    const status = entry.status === undefined ? "" : ` · HTTP ${entry.status}`;
+    // Why a page could not be read, unless it only repeats the HTTP status.
+    const reason = entry.reason && !(status && entry.reason.startsWith(`HTTP ${entry.status}`))
+      ? ` · ${entry.reason}` : "";
+    entry.line.text = `${entry.prefix}${entry.host}${status}${
+      entry.measured ? ` · ${entry.measured}` : ""}${reason}`;
   }
   const details = record(record(step.output).details);
   for (const event of step.evidence ?? []) {
