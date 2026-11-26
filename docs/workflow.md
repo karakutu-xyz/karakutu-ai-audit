@@ -132,9 +132,15 @@ Each step row opens to its recorded explanation, the **Step input** beside the e
 
 ## Run lifecycle and operator controls
 
-Live runs start only by auditing a saved live article (origin `article`); benchmark
-submissions stay in the benchmark category. Historical `api` and `webhook` origins
-remain readable. Karakutu polling intake is not yet built.
+Live runs audit saved live articles: manual requests use origin `article`, and
+opt-in automatic audits use origin `poll`. Benchmark submissions stay in the
+benchmark category; historical `api` and `webhook` origins remain readable.
+Archive polling registers metadata every five minutes by default, then optionally
+queues oldest first attempts within the configured backlog budget. Any existing
+run, including failed, stopped or interrupted work, prevents an automatic retry.
+Polling uses the same text loader, article lock and submission path as Run audit;
+workflow snapshots and verdict rules are unchanged. See
+[Archive polling](data-and-api.md#archive-polling) for scheduling and status.
 
 Submission stores `queued` before execution. A free concurrency slot moves a run
 to `running`; a completed workflow becomes `succeeded`, or `failed` for

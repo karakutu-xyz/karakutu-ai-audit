@@ -296,6 +296,7 @@ components:
           - api
           - webhook
           - article
+          - poll
           title: Origin
           type: string
         status:
@@ -840,6 +841,94 @@ components:
       - source
       title: ModelStepValue
       type: object
+    PollCycle:
+      properties:
+        finished_at:
+          format: date-time
+          title: Finished At
+          type: string
+        found:
+          minimum: 0.0
+          title: Found
+          type: integer
+        new:
+          minimum: 0.0
+          title: New
+          type: integer
+        outcome:
+          enum:
+          - ok
+          - skipped
+          title: Outcome
+          type: string
+        queued:
+          minimum: 0.0
+          title: Queued
+          type: integer
+        reason:
+          anyOf:
+          - enum:
+            - disabled
+            - unchecked
+            - ok
+            - wallet_missing
+            - wallet_unreadable
+            - auth_unavailable
+            - unreachable
+            - rejected
+            type: string
+          - enum:
+            - archive_error
+            - poll_error
+            - import_in_progress
+            - queue_paused
+            type: string
+          - type: "null"
+          title: Reason
+        started_at:
+          format: date-time
+          title: Started At
+          type: string
+      required:
+      - started_at
+      - finished_at
+      - outcome
+      - reason
+      - found
+      - new
+      - queued
+      title: PollCycle
+      type: object
+    PollingStatus:
+      properties:
+        auto_audit_enabled:
+          title: Auto Audit Enabled
+          type: boolean
+        auto_audit_max_per_poll:
+          maximum: 50.0
+          minimum: 1.0
+          title: Auto Audit Max Per Poll
+          type: integer
+        enabled:
+          title: Enabled
+          type: boolean
+        interval_minutes:
+          maximum: 1440.0
+          minimum: 0.0
+          title: Interval Minutes
+          type: integer
+        last:
+          anyOf:
+          - $ref: '#/components/schemas/PollCycle'
+          - type: "null"
+      required:
+      - enabled
+      - interval_minutes
+      - auto_audit_enabled
+      - auto_audit_max_per_poll
+      - last
+      title: PollingStatus
+      type: object
     PromptActivateInput:
       additionalProperties: false
       properties:
@@ -1286,6 +1375,7 @@ components:
           - api
           - webhook
           - article
+          - poll
           - benchmark
           title: Origin
           type: string
@@ -1365,6 +1455,7 @@ components:
           - api
           - webhook
           - article
+          - poll
           title: Origin
           type: string
         output:
@@ -1622,6 +1713,7 @@ components:
           - api
           - webhook
           - article
+          - poll
           title: Origin
           type: string
         reactions:
@@ -1767,6 +1859,8 @@ components:
           - openai_compatible
           title: Model Provider
           type: string
+        polling:
+          $ref: '#/components/schemas/PollingStatus'
         prompts_editable:
           title: Prompts Editable
           type: boolean
@@ -1813,6 +1907,7 @@ components:
       - archive_reads_enabled
       - writes_enabled
       - prompts_editable
+      - polling
       title: ServiceStatus
       type: object
     StageName:
@@ -3485,6 +3580,7 @@ paths:
             - api
             - webhook
             - article
+            - poll
             type: string
           - type: "null"
           title: Origin

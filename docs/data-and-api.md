@@ -17,7 +17,7 @@ number formatting, key order and `\u0000` escapes. Test mode and demo seeding re
 | `model_assignments` | Append-only step, nullable model override, author, note and timestamp. Newest insertion per step wins. |
 | `prompt_activations` | Append-only name/version reference, kind (`seed`, `activate`, `rollback`, `default_update`), author, note and timestamp. The newest activation selects the active version. |
 
-`benchmark` and `live` are separate categories in the same local database. Routes assign the category; a caller-supplied category is rejected. A benchmark may exercise real LM Studio and search without becoming live data. New live runs come only from auditing a saved live article with `POST /api/articles/{ref}/audit` (origin `article`), which keeps the article's category. Historical runs with origin `api` or `webhook` remain readable and filterable. Export does not reclassify data. Intake from Karakutu will be by polling, which is not yet built.
+`benchmark` and `live` are separate categories in the same local database. Routes assign the category; a caller-supplied category is rejected. A benchmark may exercise real LM Studio and search without becoming live data. Manual audits use `POST /api/articles/{ref}/audit` (origin `article`), which keeps the article's category. Opt-in archive auto-audits use origin `poll` and category `live`. Historical runs with origin `api` or `webhook` remain readable and filterable. Export does not reclassify data. Karakutu intake uses background polling; manual archive import remains available.
 
 The in-process task queue persists a queued record before starting work, then each
 finished step. One process owns it; `MAX_CONCURRENT_RUNS` bounds simultaneous model
@@ -29,6 +29,50 @@ instead become terminal `cancelled` runs, keeping recorded steps with no verdict
 or output. Queue pause is in memory, leaves running work alone, and resets to open
 on every restart. Benchmark POSTs create distinct runs; saved-article audits reject
 concurrent audits of the same article. An external durable worker is not implemented.
+
+### Archive polling
+
+In live mode with an enabled archive client and `POLL_INTERVAL_MINUTES > 0`,
+the lifespan starts one background task after a one-second startup delay. It runs
+one cycle at a time and waits the configured interval after each cycle. Shutdown
+cancels it with the other tasks. Test mode never creates a poller task.
+
+Each cycle uses the same Unix-second archive audit listing and metadata-only
+`import_articles` as manual Import. The first window is 30 days. Later windows
+start one day before this process's last successful listing/import, clamped to
+2–30 days ending now. Restart resets the window to 30 days. An overlapping manual
+import skips the cycle with `import_in_progress`. Archive failures use fixed
+archive state labels or `archive_error`; other cycle failures use `poll_error` and
+the next cycle still runs. No upstream bodies or exception messages enter status
+or logs. Listing counts include invalid/duplicate entries; `new` counts only
+newly registered articles.
+
+With `AUTO_AUDIT_ENABLED=true`, the store selects live archive refs with no run of
+any status or origin, ordered by the existing first-registration `created_at`
+timestamp, then the archive id in numeric order (one poll registers a whole listing at
+once, so this tiebreak decides most of the order). Import does not store a separate
+archive detection timestamp.
+The budget is `AUTO_AUDIT_MAX_PER_POLL` minus queued/running `poll` runs, keeping
+that backlog at most N. At most N new runs are submitted in one cycle even if
+older work finishes during it. Queue pause allows metadata registration but skips
+automatic submissions (`queue_paused`). Each candidate uses `fill_archive_text`,
+then re-checks the article and absence of any run under the shared article lock
+before submission with origin `poll`. Missing text creates no run. Failed,
+stopped and interrupted runs are never retried automatically. Manual audits may
+still re-run articles. Automatic work uses the current workflow and normal engine,
+including real model/search calls when configured; it never writes to the archive.
+
+Registration adds no text storage. Opening or auditing loads only the latest
+version's text through the unchanged loader; default archive evidence remains
+summaries and hashes, with full bodies only for `RECORD_FULL_EVIDENCE=true`.
+
+`GET /api/status` includes `polling`: `enabled`, `interval_minutes` (0 when off),
+`auto_audit_enabled` (false when polling is off), `auto_audit_max_per_poll`, and
+`last` (null until a cycle finishes). `last` holds RFC 3339 `started_at` and
+`finished_at`, `outcome` (`ok` or `skipped`), `reason` (a fixed label or null),
+`found`, `new` and `queued`. Counts remain visible on a partial failed cycle.
+This state stays in memory and resets on restart. Settings displays it; Articles
+continues to offer manual selection and Run audit.
 
 ### Schema changes
 
@@ -373,7 +417,8 @@ local import/enrichment never mutates the archive.
 
 Audit runs are asynchronous and persisted. Start live runs from saved articles or
 submit fabricated cases through the benchmark route. Push intake and article publishing
-jobs are removed; no route writes back to Karakutu. Polling intake is not yet built.
+jobs are removed; no route writes back to Karakutu. Background polling registers
+metadata and optionally queues first audits (see [Archive polling](#archive-polling)).
 
 All audit-submission POSTs, benchmark submission and individual cancellation return the
 lean `AuditResult` defined in [the v2 result contract](audit-record-schema.md).

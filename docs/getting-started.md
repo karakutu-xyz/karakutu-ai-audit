@@ -115,8 +115,18 @@ parts fit together, read [Architecture](architecture.md). Every variable and its
    imports articles from archive audits created in that period, initially as
    metadata. The control appears in live mode when archive reads are enabled.
 
-   Intake from Karakutu will be by polling, which is not yet built. Use archive
-   import to load saved articles for auditing now.
+   Polling is on by default when archive reads are configured: metadata is
+   registered shortly after startup and every five minutes. Set
+   `POLL_INTERVAL_MINUTES=0` to turn it off, or choose 1–1440 minutes. Test mode
+   never polls. Settings shows polling, auto-audit and the last cycle's counts.
+
+   Auto-audit is off by default. Set `AUTO_AUDIT_ENABLED=true` to queue first
+   audits of live archive articles with no previous run. This makes real model
+   and search calls per article when those integrations are configured. Set
+   `AUTO_AUDIT_MAX_PER_POLL` (default 5, range 1–50) to cap new work per cycle;
+   queued/running auto-audits subtract from that budget so the backlog stays at
+   most N. A paused queue prevents automatic submissions. Failed, stopped and
+   interrupted attempts require a manual re-run.
 
 6. **Audit an article.** Open an imported article and choose **Run first audit**
    (or **Re-run audit**). If a token is configured, enter it under

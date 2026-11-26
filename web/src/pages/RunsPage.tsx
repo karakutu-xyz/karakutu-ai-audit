@@ -4,6 +4,7 @@ import { Link, navigate, useRoute, useScrollRestoration } from "../router";
 import { VERDICTS, type RunSummary } from "../types";
 import {
   ARTICLE_ORIGIN_LABEL,
+  POLL_ORIGIN_LABEL,
   date,
   ledgerLabel,
   originLabel,
@@ -100,7 +101,7 @@ export function RunsPage({
   const requestedOrigin = query.get("origin") ?? "";
   const origin = benchmark
     ? "benchmark"
-    : ["benchmark", "live", "api", "webhook", "article"].includes(requestedOrigin)
+    : ["benchmark", "live", "api", "webhook", "article", "poll"].includes(requestedOrigin)
       ? requestedOrigin
       : "";
   const verdict = VERDICTS.includes(query.get("verdict") ?? "")
@@ -218,6 +219,7 @@ export function RunsPage({
               <option value="api">Live · API</option>
               <option value="webhook">Live · Webhook</option>
               <option value="article">{ARTICLE_ORIGIN_LABEL}</option>
+              <option value="poll">{POLL_ORIGIN_LABEL}</option>
             </select>
           </label>
         )}

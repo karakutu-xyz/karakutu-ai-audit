@@ -475,7 +475,7 @@ class Store:
     def create_run(self, *, workflow_id: str, category: str, origin: str, input: dict,
                    label: str | None = None, expected_verdict: str | None = None,
                    synthetic: bool = False, article_ref: str | None = None) -> dict:
-        if category not in {"benchmark", "live"} or origin not in {"benchmark", "api", "webhook", "article"}:
+        if category not in {"benchmark", "live"} or origin not in {"benchmark", "api", "webhook", "article", "poll"}:
             raise ValueError("invalid run origin")
         run_id = "run_" + uuid4().hex
         with Session(self.engine) as session, session.begin():
@@ -677,6 +677,28 @@ class Store:
                 history.append(values)
             return {**summary, **{key: getattr(article, key) for key in
                     ("content", "language", "archive_id", "snapshot")}, "runs": history}
+
+    def has_article_run(self, ref: str) -> bool:
+        """Any attempt is terminal for automatic intake, regardless of origin/status."""
+        with Session(self.engine) as session:
+            return session.scalar(select(Run.id).where(Run.article_ref == ref).limit(1)) is not None
+
+    def active_poll_runs(self) -> int:
+        with Session(self.engine) as session:
+            return session.scalar(select(func.count()).select_from(Run).where(
+                Run.origin == "poll", Run.status.in_(["queued", "running"])))
+
+    def unaudited_archive_refs(self) -> list[str]:
+        # Registration time is the existing import timestamp; no article text is loaded. One
+        # import registers a whole listing at once, so ties fall back to the archive id in
+        # numeric order (shorter digit strings first), which follows the archive's own order.
+        with Session(self.engine) as session:
+            return list(session.scalars(select(ArticleRow.ref).where(
+                ArticleRow.category == "live", ArticleRow.archive_id.is_not(None),
+                ArticleRow.ref.startswith("ka-"),
+                ~select(Run.id).where(Run.article_ref == ArticleRow.ref).exists(),
+            ).order_by(ArticleRow.created_at, func.length(ArticleRow.archive_id),
+                       ArticleRow.archive_id, ArticleRow.ref)))
 
     def import_articles(self, items: list[dict]) -> dict:
         counts = {"imported": 0, "updated": 0, "skipped": 0}

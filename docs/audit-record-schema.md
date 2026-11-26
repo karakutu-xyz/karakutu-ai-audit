@@ -24,7 +24,7 @@ fields are required; nullable fields explicitly carry JSON null when unavailable
 | `record_id` | `run_<32 hex>.r<revision>` for a record; null otherwise. |
 | `lineage` | Initial, re-audit or correction relationship; null without a record. |
 | `article` | Local `ref`, nullable `archive_id`, original `url`, and `content_sha256` of the exact submitted text before redaction. No title or text. |
-| `run` | `id`, `origin`, `category`, `status`, `created_at`, nullable `finished_at`, and `workflow_id`. Times are RFC 3339 with an explicit offset. |
+| `run` | `id`, `origin` (`article`, `poll`, historical `api`/`webhook`; `benchmark` in review responses), `category`, `status`, `created_at`, nullable `finished_at`, and `workflow_id`. Times are RFC 3339 with an explicit offset. |
 | `verdict` | Stored verdict, or null until an output is stored. |
 | `flags` | Stored `AuditFlag` values, or an empty list. |
 | `findings` | Stored findings, capped at 2,000 UTF-8 bytes, or null. |

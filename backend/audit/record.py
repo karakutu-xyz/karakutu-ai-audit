@@ -79,7 +79,7 @@ class ArticleIdentity(FixedObject):
 
 class ResultRun(FixedObject):
     id: str
-    origin: Literal["api", "webhook", "article", "benchmark"]
+    origin: Literal["api", "webhook", "article", "poll", "benchmark"]
     category: Literal["live", "benchmark"]
     status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
     created_at: DateTime
@@ -503,7 +503,7 @@ def record_json_schema() -> dict:
     run = schema["$defs"]["ResultRun"]["properties"]
     run["status"] = {"type": "string", "enum": ["succeeded", "failed"]}
     run["category"] = {"type": "string", "const": "live"}
-    run["origin"] = {"type": "string", "enum": ["api", "webhook", "article"]}
+    run["origin"] = {"type": "string", "enum": ["api", "webhook", "article", "poll"]}
     run["finished_at"] = TypeAdapter(DateTime).json_schema()
     return {**schema, "$schema": "https://json-schema.org/draft/2020-12/schema",
             "$id": "urn:karakutu-ai-audit:audit-record:2",

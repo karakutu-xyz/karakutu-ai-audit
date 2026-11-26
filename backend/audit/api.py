@@ -27,6 +27,7 @@ from audit.config import MODEL_STEPS, Settings, canonical_request_host
 from audit.db import ArticleStoreError, PromptStoreError, Store
 from audit.domain import AuditRequest, Verdict
 from audit.engine import AuditEngine
+from audit.poller import ArchivePoller
 from audit.record import RecordError, build_result
 from audit.provenance import build_base, models_from_config, with_prompts
 from audit.schemas import (
@@ -281,6 +282,11 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
                 "model_provider": settings.model_provider, "response_format": settings.response_format})
             app.state.workflow_base = build_base(audit_engine.public_config)
             app.state.workflow = store.save_workflow(with_prompts(app.state.workflow_base, active_texts(), current_models()))
+            app.state.poller = ArchivePoller(
+                settings, app.state, archive_client(), fill_archive_text, submit)
+            if app.state.poller.enabled:
+                task = asyncio.create_task(app.state.poller.run())
+                app.state.tasks.add(task)
             yield
         finally:
             tasks = list(app.state.tasks)
@@ -344,6 +350,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
                 "search": await search_state(),
                 "archive_reads_enabled": bool(settings.archive_base_url),
                 "archive": archive_state(),
+                "polling": app.state.poller.status(),
                 "writes_enabled": False, "prompts_editable": bool(settings.api_auth_token)}
 
     def current_overrides(assignments=None):
@@ -472,7 +479,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
                    limit: int = Query(default=50, ge=1, le=200), offset: int = Query(default=0, ge=0),
                    verdict: Verdict | None = None, workflow_id: str | None = None,
                    status: Literal["queued", "running", "succeeded", "failed", "cancelled"] | None = None,
-                   origin: Literal["benchmark", "api", "webhook", "article"] | None = None):
+                   origin: Literal["benchmark", "api", "webhook", "article", "poll"] | None = None):
         return app.state.store.runs(category=category, limit=limit, offset=offset,
                                     verdict=verdict.value if verdict else None, workflow_id=workflow_id,
                                     status=status, origin=origin)
