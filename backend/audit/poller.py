@@ -18,9 +18,19 @@ async def store_in_thread(function, *args):
     task = asyncio.create_task(asyncio.to_thread(function, *args))
     try:
         return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        await task
-        raise
+    except asyncio.CancelledError as cancelled:
+        # A worker failure must never replace shutdown cancellation. Keep the
+        # connection/lock alive even if cancellation is requested again while draining.
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not task.cancelled():
+            task.exception()  # Retrieve a failed worker's exception without exposing it.
+        raise cancelled
 
 
 class ArchivePoller:
@@ -63,6 +73,8 @@ class ArchivePoller:
                      "queued": 0, "unreadable": 0}
             try:
                 reason = await self._cycle(cycle)
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 # Do not retain exceptions or log their text, including persistence errors.
                 reason = "poll_error"
@@ -102,17 +114,29 @@ class ArchivePoller:
         budget = self.settings.auto_audit_max_per_poll - store.active_poll_runs()
         if budget <= 0:
             return None
+        attempts, reads = 0, 0
+        read_limit = self.settings.auto_audit_max_per_poll
         for ref in await store_in_thread(store.unaudited_archive_refs):
-            if cycle["queued"] >= budget:
+            if (cycle["queued"] >= budget or reads >= read_limit
+                    or attempts >= 2 * read_limit):
                 break
             if self.state.queue_paused:
                 return "queue_paused"
             article = store.article(ref)
             if article is None:
+                attempts += 1
                 continue
+            retry_at = self.state.article_fill_attempts.get((ref, article["url"]))
+            if retry_at is not None and self.state.article_fill_clock() < retry_at:
+                cycle["unreadable"] += 1
+                continue
+            attempts += 1
+            reads += 1
             refreshed = await self.fill_archive_text(ref, article, refresh=True)
             if refreshed is None or not refreshed["content"].strip():
                 cycle["unreadable"] += 1
+                if getattr(self.client, "state", None) in ARCHIVE_FAILURES:
+                    return self.archive_failure()
                 continue
             async with self.state.article_lock:
                 # Manual audits may win while the archive read is in flight. Even a

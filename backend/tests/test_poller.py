@@ -7,13 +7,15 @@ import threading
 import httpx
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import TimeoutError as PoolTimeout
 from sqlalchemy.orm import Session
 
 from audit.api import ARCHIVE_TEXT_RETRY_SECONDS, create_app
 from audit.clients.karakutu import KarakutuClient
 from audit.clients.models import ArticleRecord
 from audit.config import Settings
-from audit.db import ArticleRow, Run
+import audit.db as db
+from audit.db import IMPORT_BATCH_SIZE, ArticleRow, Run, Store
 from test_api import FakeEngine
 
 
@@ -199,7 +201,7 @@ async def test_import_in_progress_and_queue_paused_and_missing_text(tmp_path):
         app.state.queue_paused = False
         archive.empty = True
         cycle = await poller.run_cycle()
-        assert cycle["queued"] == 0 and cycle["unreadable"] == 8
+        assert cycle["queued"] == 0 and cycle["unreadable"] == 5
         assert runs(app) == []
 
 
@@ -478,7 +480,8 @@ async def test_import_and_candidate_query_run_in_worker_threads(
         assert store.articles()["total"] == 2000
 
 
-async def test_cancelled_import_holds_lock_until_worker_finishes(tmp_path, monkeypatch):
+@pytest.mark.parametrize("fails", [False, True])
+async def test_cancelled_import_holds_lock_until_worker_finishes(tmp_path, monkeypatch, fails):
     async with service(tmp_path) as (app, archive, _):
         loop = asyncio.get_running_loop()
         entered, release = asyncio.Event(), threading.Event()
@@ -488,6 +491,8 @@ async def test_cancelled_import_holds_lock_until_worker_finishes(tmp_path, monke
         def held_import(items):
             loop.call_soon_threadsafe(entered.set)
             assert release.wait(timeout=5)
+            if fails:
+                raise RuntimeError("PRIVATE persistence failure")
             return original(items)
 
         monkeypatch.setattr(store, "import_articles", held_import)
@@ -497,13 +502,18 @@ async def test_cancelled_import_holds_lock_until_worker_finishes(tmp_path, monke
             task.cancel()
             await asyncio.sleep(0)
             assert not task.done() and app.state.article_import_lock.locked()
+            task.cancel()  # Repeated cancellation must also drain the worker.
+            await asyncio.sleep(0)
+            assert not task.done() and app.state.article_import_lock.locked()
         finally:
             release.set()
         with pytest.raises(asyncio.CancelledError):
             await task
+        assert task.cancelled() and app.state.poller.last is None
         assert not app.state.article_import_lock.locked()
-        assert store.articles()["total"] == len(archive.items)
-        assert (await app.state.poller.run_cycle())["new"] == 0
+        assert store.articles()["total"] == (0 if fails else len(archive.items))
+        monkeypatch.setattr(store, "import_articles", original)
+        assert (await app.state.poller.run_cycle())["new"] == (len(archive.items) if fails else 0)
 
 
 async def test_listing_page_cap_is_incomplete():
@@ -516,5 +526,203 @@ async def test_listing_page_cap_is_incomplete():
         assert len(await archive.audits_created_between(0, 1, statuses=(0,))) == 3000
         assert await archive.audits_created_between(
             0, 1, statuses=(0,), require_complete=True) is None
+    finally:
+        await archive.close()
+
+
+async def test_lifespan_shutdown_drains_failing_import(tmp_path, monkeypatch):
+    engine = FakeEngine()
+    engine.archive = Archive()
+    app = create_app(Settings(data_dir=tmp_path), engine)
+    loop = asyncio.get_running_loop()
+    entered, release = asyncio.Event(), threading.Event()
+
+    def fail_import(_items):
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(timeout=5)
+        raise RuntimeError("PRIVATE persistence failure")
+
+    context = app.router.lifespan_context(app)
+    await context.__aenter__()
+    task, = app.state.tasks
+    app.state.poller.startup_delay = 0
+    monkeypatch.setattr(app.state.store, "import_articles", fail_import)
+    shutdown = None
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        shutdown = asyncio.create_task(context.__aexit__(None, None, None))
+        await asyncio.sleep(0)
+        assert task.cancelling() and not shutdown.done()
+        release.set()
+        await asyncio.wait_for(asyncio.shield(shutdown), timeout=5)
+        assert task.cancelled() and engine.closed
+        assert app.state.poller.last is None
+    finally:
+        release.set()
+        if shutdown is None:
+            await context.__aexit__(None, None, None)
+        elif not shutdown.done():
+            task.cancel()
+            await shutdown
+
+
+@pytest.mark.parametrize("memory", [False, True])
+async def test_large_import_releases_connection_and_writer_between_batches(
+    tmp_path, database_url, monkeypatch, memory,
+):
+    store = Store("sqlite:///:memory:" if memory else database_url)
+    items = [{"article_id": i, "url": f"https://paper.example/fiction-{i}"}
+             for i in range(1, 3001)]
+    # Duplicates straddle batches, including a normalized spelling of the same URL.
+    items += [items[0], {**items[0], "url": items[0]["url"] + "#duplicate"}]
+    loop = asyncio.get_running_loop()
+    committed, release = asyncio.Event(), threading.Event()
+    original = store._import_article_batch
+    batches = []
+
+    def batch(batch_items, seen, counts):
+        original(batch_items, seen, counts)
+        batches.append(len(batch_items))
+        if len(batches) == 1:
+            loop.call_soon_threadsafe(committed.set)
+            assert release.wait(timeout=5)
+
+    monkeypatch.setattr(store, "_import_article_batch", batch)
+    task = asyncio.create_task(asyncio.to_thread(store.import_articles, items))
+    try:
+        await asyncio.wait_for(committed.wait(), timeout=5)
+        # The import worker is still running, but the first transaction is committed.
+        # These foreground calls must finish before we allow the second batch.
+        assert not task.done()
+        assert store.articles()["total"] == IMPORT_BATCH_SIZE
+        foreground = [{"article_id": 4000, "url": "https://paper.example/foreground"}]
+        assert store.import_articles(foreground) == {"imported": 1, "updated": 0, "skipped": 0}
+        assert store.article("ka-4000") is not None
+        release.set()
+        assert await task == {"imported": 3000, "updated": 0, "skipped": 2}
+        assert max(batches) == IMPORT_BATCH_SIZE
+        assert sum(batches) == len(items) + 1
+        assert len(batches) == 32  # 31 import transactions, plus the foreground write.
+        assert store.articles()["total"] == 3001
+        assert store.import_articles(items) == {"imported": 0, "updated": 0, "skipped": 3002}
+        changed = [{**item, "title": "Invented updated title"} for item in items]
+        assert store.import_articles(changed) == {"imported": 0, "updated": 3000, "skipped": 2}
+    finally:
+        release.set()
+        await task
+        store.close()
+
+
+async def test_memory_import_connection_is_exclusive_until_batch_commit(monkeypatch):
+    create_engine = db.create_engine
+
+    def no_wait_engine(*args, **kwargs):
+        # A zero checkout timeout makes contention observable without timing a wait.
+        return create_engine(*args, **kwargs, pool_timeout=0)
+
+    monkeypatch.setattr(db, "create_engine", no_wait_engine)
+    store = Store("sqlite:///:memory:")
+    begin_write = db.begin_write
+    loop = asyncio.get_running_loop()
+    entered, release = asyncio.Event(), threading.Event()
+
+    def held_write(connection):
+        begin_write(connection)
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(timeout=5)
+
+    monkeypatch.setattr(db, "begin_write", held_write)
+    task = asyncio.create_task(asyncio.to_thread(store.import_articles, [
+        {"article_id": 1, "url": "https://paper.example/fiction-1"}]))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        # A shared StaticPool connection would let this session interfere with the
+        # worker's active transaction. QueuePool waits for its exclusive checkout.
+        with pytest.raises(PoolTimeout):
+            store.articles()
+        release.set()
+        assert (await task)["imported"] == 1
+        assert store.articles()["total"] == 1
+    finally:
+        release.set()
+        await task
+        store.close()
+
+
+@pytest.mark.parametrize("empty", [False, True])
+async def test_unreadable_sweep_bounds_reads_and_skips_cooldown(tmp_path, empty):
+    async with service(tmp_path, auto_audit_enabled=True,
+                       auto_audit_max_per_poll=5) as (app, archive, _):
+        archive.items = [{"article_id": i, "url": f"https://paper.example/fiction-{i}"}
+                         for i in range(1, 101)]
+        archive.empty, archive.read_failure = empty, not empty
+        clock = 0
+        app.state.article_fill_clock = lambda: clock
+        poller = app.state.poller
+        cycle = await poller.run_cycle()
+        assert cycle["new"] == 100 and cycle["queued"] == 0 and cycle["unreadable"] == 5
+        assert archive.reads == [str(i) for i in range(1, 6)]
+        # Cooling candidates consume no reads and cannot starve later candidates.
+        await poller.run_cycle()
+        assert archive.reads == [str(i) for i in range(1, 11)]
+        clock = ARCHIVE_TEXT_RETRY_SECONDS
+        archive.empty = archive.read_failure = False
+        assert (await poller.run_cycle())["queued"] == 5
+        assert archive.reads[-5:] == [str(i) for i in range(1, 6)]
+
+
+@pytest.mark.parametrize("failure", ["timeout", "unavailable", "rejected"])
+async def test_text_outage_stops_sweep_preserving_metadata(tmp_path, failure):
+    def handle(request):
+        if request.url.path == "/audits":
+            return httpx.Response(200, json={"items": [{"article": {
+                "id": i, "link": f"https://paper.example/fiction-{i}"}}
+                for i in range(1, 21)]})
+        reads.append(request.url.path)
+        if failure == "timeout":
+            raise httpx.ReadTimeout("PRIVATE upstream failure")
+        return httpx.Response(503 if failure == "unavailable" else 403)
+
+    reads = []
+    archive = KarakutuClient("https://archive.example")
+    await archive.http.aclose()
+    archive.http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    try:
+        async with service(tmp_path, archive=archive, auto_audit_enabled=True) as (app, _, _):
+            cycle = await app.state.poller.run_cycle()
+            assert reads == ["/articles/1"]
+            assert cycle["new"] == 20 and cycle["unreadable"] == 1
+            assert cycle["outcome"] == "skipped"
+            assert cycle["reason"] == ("rejected" if failure == "rejected" else "unreachable")
+            assert app.state.store.articles()["total"] == 20
+            assert app.state.poller.last_success is not None and runs(app) == []
+    finally:
+        await archive.close()
+
+
+@pytest.mark.parametrize("malformed,readable", [
+    ([], 0), ("invalid", 0), ({}, 0), ({"items": None}, 0),
+    ({"items": {}}, 0), ({"items": "invalid"}, 0), ({"items": [None, "invalid", []]}, 0),
+    ({"items": [None, {"article": {"id": 2, "link": "https://paper.example/fiction-2"}}]}, 1),
+])
+async def test_malformed_listing_page_is_incomplete_but_import_keeps_readable_rows(
+    malformed, readable,
+):
+    def handle(request):
+        if request.url.params["status"] == "0":
+            return httpx.Response(200, json=malformed)
+        return httpx.Response(200, json={"items": [{"article": {
+            "id": 1, "link": "https://paper.example/fiction-1"}}]})
+
+    archive = KarakutuClient("https://archive.example")
+    await archive.http.aclose()
+    archive.http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    try:
+        assert await archive.audits_created_between(
+            0, 1, statuses=(0, 1), require_complete=True) is None
+        rows = await archive.audits_created_between(0, 1, statuses=(0, 1))
+        assert len(rows) == 1 + readable and rows[-1]["article_id"] == 1
+        partial = await archive.audits_created_between(0, 1, statuses=(0,))
+        assert len(partial) == readable
     finally:
         await archive.close()

@@ -136,8 +136,14 @@ class KarakutuClient:
                     complete = False
                     break
                 any_ok = True
-                items = body.get('items') or []
+                if not isinstance(body, dict) or not isinstance(body.get('items'), list):
+                    complete = False
+                    break
+                items = body['items']
                 for item in items:
+                    if not isinstance(item, dict):
+                        complete = False
+                        continue
                     art = item.get('article') or {}
                     rows.append({'audit_id':item.get('id'),'article_id':art.get('id'),'url':art.get('link') or '', 'title':art.get('title') or '', 'newspaper':art.get('newspaper') or '', 'status':item.get('status',status),'decision':item.get('decision'),'created_at':item.get('created_at'),'publish_date':art.get('publish_date')})
                 if len(items) < 100:

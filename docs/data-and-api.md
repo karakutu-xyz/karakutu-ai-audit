@@ -42,7 +42,9 @@ Each cycle uses the same Unix-second archive audit listing and metadata-only
 start one day before this process's last successful listing/import, clamped to
 2–30 days ending now. Restart resets the window to 30 days. An overlapping manual
 import skips the cycle with `import_in_progress`. Polling requires every status and
-page to succeed and reach the end before the page cap; incomplete listings register
+page to succeed and reach the end before the page cap. Each page must be an object
+with an `items` list of objects; malformed pages are incomplete. Manual Import
+keeps readable entries from partial or malformed listings. Incomplete polling listings register
 nothing, queue nothing and leave the successful window unchanged. They use a fixed
 archive failure state or `archive_incomplete`. Listing exceptions use a fixed
 archive failure state or `archive_error`; other cycle failures use `poll_error` and
@@ -50,11 +52,17 @@ the next cycle still runs. No upstream bodies or exception messages enter status
 or logs. Listing counts include invalid/duplicate entries; `new` counts only
 newly registered articles. Both polling and manual Import persist metadata in a worker
 thread under the shared import lock; candidate queries also run off the event loop.
-Each store operation owns its session. SQLite permits cross-thread connections;
+Imports commit at most 100 listing rows per transaction, releasing the writer lock
+and connection between batches so foreground reads and writes can proceed. URL
+deduplication spans the whole listing and counts retain their existing meaning.
+Earlier committed batches remain saved if a later batch fails; the poll window
+advances only after the whole import succeeds. Each batch owns its session.
+SQLite permits cross-thread connections;
 in-memory SQLite uses one exclusively checked-out pooled connection rather than
 sharing an active connection between sessions.
 PostgreSQL uses its connection pool and transaction writer lock. Shutdown waits for
 an in-flight worker operation before closing the store or releasing the import lock.
+Cancellation still exits the poller if that worker fails while shutdown is waiting.
 
 With `AUTO_AUDIT_ENABLED=true`, the store selects live archive refs with no run of
 any status or origin, ordered by numeric archive id (length, then id, then ref).
@@ -62,14 +70,19 @@ Archive ids increase as articles are detected, so this queues oldest detections 
 even when a newest-first listing gives newer articles earlier local registration times.
 The budget is `AUTO_AUDIT_MAX_PER_POLL` minus queued/running `poll` runs, keeping
 that backlog at most N. At most N new runs are submitted in one cycle even if
-older work finishes during it. Queue pause allows metadata registration but skips
+older work finishes during it. Each cycle also allows at most N archive text reads
+and 2×N candidate attempts outside cooldown, including failed or empty reads.
+Candidates in cooldown consume neither a read nor an attempt, allowing later
+candidates to progress. The first failed read leaving the archive client unavailable
+or rejected stops the sweep with its fixed failure reason; metadata import counts
+and the successful import window remain saved. Queue pause allows metadata registration but skips
 automatic submissions (`queue_paused`). Each candidate refreshes the latest archive
 version through `fill_archive_text`, including when text is already cached, updating
 changed title, text and version references without changing historical run inputs. It
 then re-checks the article and absence of any run under the shared article lock
 before submission with origin `poll`. A failed refresh or missing text creates no run
 and increments `unreadable`, even when stale text is cached. Failed reads share a
-ten-minute cooldown per ref/URL, then become retryable. Failed,
+ten-minute cooldown per ref/URL, including empty text, then become retryable. Failed,
 stopped and interrupted runs are never retried automatically. Manual audits may
 still re-run articles. Automatic work uses the current workflow and normal engine,
 including real model/search calls when configured; it never writes to the archive.

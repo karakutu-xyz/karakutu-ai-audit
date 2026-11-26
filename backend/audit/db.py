@@ -36,6 +36,7 @@ def now() -> str:
 # and key order) and accepts the \u0000 escape, so captured evidence is stored exactly.
 JSON_VALUE = JSON()
 WRITER_LOCK = 684219705
+IMPORT_BATCH_SIZE = 100
 
 
 def begin_write(connection: Connection):
@@ -702,10 +703,16 @@ class Store:
                        ArticleRow.archive_id, ArticleRow.ref)))
 
     def import_articles(self, items: list[dict]) -> dict:
+        """Release the writer lock and connection between bounded metadata batches."""
         counts = {"imported": 0, "updated": 0, "skipped": 0}
+        seen: set[str] = set()
+        for offset in range(0, len(items), IMPORT_BATCH_SIZE):
+            self._import_article_batch(items[offset:offset + IMPORT_BATCH_SIZE], seen, counts)
+        return counts
+
+    def _import_article_batch(self, items: list[dict], seen: set[str], counts: dict):
         with Session(self.engine) as session, session.begin():
             begin_write(session.connection())
-            seen = set()
             for item in items:
                 item = without_nul(item) if isinstance(item, dict) else item
                 archive_id = item.get("article_id")
@@ -774,7 +781,6 @@ class Store:
                         row.updated_at = now()
                     counts["updated" if changed else "skipped"] += 1
                     session.flush()
-        return counts
 
     def fill_article(self, ref: str, record, *, expected_url: str,
                      expected_archive_id: str | None, refresh=False) -> bool:

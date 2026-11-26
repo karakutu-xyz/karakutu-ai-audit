@@ -716,18 +716,20 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
                         or (not refresh and identity in attempts and retry_at is None)):
                     return None if refresh else article_or_404(ref)
                 stored = False
+                readable = False
                 try:
                     record = await client.get_article(result["archive_id"] or ref[3:])
                     if record is not None:
                         stored = app.state.store.fill_article(
                             ref, record, expected_url=result["url"],
                             expected_archive_id=result["archive_id"], refresh=refresh)
+                        readable = stored and bool(article_or_404(ref)["content"].strip())
                 except Exception:
                     # Keep saved metadata without exposing upstream content/errors.
                     pass
                 finally:
                     # Cancellation is retryable too, rather than poisoning this identity.
-                    attempts[identity] = (None if stored else
+                    attempts[identity] = (None if readable else
                         app.state.article_fill_clock() + ARCHIVE_TEXT_RETRY_SECONDS)
                 if refresh and not stored:
                     return None

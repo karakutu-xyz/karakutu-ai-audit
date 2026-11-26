@@ -139,11 +139,20 @@ Archive polling registers metadata every five minutes by default, then optionall
 queues first attempts in numeric archive-id order (oldest detections first), independent
 of local registration time, within the configured backlog budget. Any existing
 run, including failed, stopped or interrupted work, prevents an automatic retry.
-Polling requires a complete listing before registering or queueing anything. It
+Polling requires a complete, structurally valid listing before registering or
+queueing anything. Metadata imports commit in batches of at most 100 listing rows,
+releasing the writer lock and connection between batches for foreground requests;
+URL deduplication spans all batches. It
 refreshes the latest archive text even when cached, then uses the same article lock
 and submission path as Run audit. Failed text reads create no run, increment the
-cycle's `unreadable` count and become retryable after a ten-minute cooldown;
-workflow snapshots and verdict rules are unchanged. See
+cycle's `unreadable` count and become retryable after a ten-minute cooldown,
+including reads with empty text. Each cycle makes at most
+`AUTO_AUDIT_MAX_PER_POLL` text reads and twice that many candidate attempts outside
+cooldown. Cooling candidates cost no read or attempt. A read that leaves the
+archive client unavailable or rejected ends the sweep with a fixed reason while
+keeping the metadata import result. Cancellation exits the poller after draining
+any persistence worker, including a failed worker. Workflow snapshots and verdict
+rules are unchanged. See
 [Archive polling](data-and-api.md#archive-polling) for scheduling and status.
 
 Submission stores `queued` before execution. A free concurrency slot moves a run
