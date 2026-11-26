@@ -293,8 +293,13 @@ def test_calibration_separates_copies_siblings_and_footer(record_property):
     table = calibration()
     for name, measured in table.items():
         record_property(name, {"raw": measured.raw, "cleaned": measured.cleaned})
-    for name in ("verbatim copy", "copy with different furniture"):
-        assert table[name].old_in_new >= MOVED_THRESHOLD
+    assert table["verbatim copy"].old_in_new >= MOVED_THRESHOLD
+    # Furniture the copy does not carry stays in the removed article's score: a copy on
+    # another page template is a partial fit, never lifted to the move bar.
+    different = table["copy with different furniture"]
+    assert PARTIAL_MIN <= different.old_in_new < MOVED_THRESHOLD
+    assert different.old_in_new == different.raw_old_in_new
+    assert different.boilerplate_paragraphs == (0, 0)
     assert table["shortened copy (first half)"].old_in_new >= PARTIAL_MIN
     assert PARTIAL_MIN <= table["rewrite"].old_in_new < MOVED_THRESHOLD
     for name in ("sibling", "footer-only unrelated page"):
@@ -421,9 +426,12 @@ def test_cap_uses_shingle_volume_and_allows_exactly_half(kept_tokens, capped):
     shared = " ".join(f"furniture{n}" for n in range(20))
     kept = " ".join(f"article{n}" for n in range(kept_tokens))
     assert MAX_REMOVED_SHARE == 0.5
-    measured = measure(prose([shared, kept]), kept, frozenset(paragraph_keys([shared])))
+    # The candidate carries the furniture after its text, so only the removed article's
+    # lines are learned furniture it may lose, and raw scores stay below 1.0.
+    candidate = prose([kept, shared])
+    measured = measure(prose([shared, kept]), candidate, frozenset(paragraph_keys([shared])))
     assert measured.boilerplate_capped is capped
-    assert measured.boilerplate_paragraphs == (1, 0)
+    assert measured.boilerplate_paragraphs == (1, 1)
     if capped:
         assert measured.cleaned == measured.raw
     else:
@@ -489,6 +497,50 @@ def test_overlapping_footer_variants_are_all_marked():
     measured = measure(removed, copy, boilerplate)
     assert measured.cleaned == (1.0, 1.0)
     assert not measured.boilerplate_capped
+
+
+def test_a_paragraph_the_copy_lacks_is_never_stripped_from_the_original():
+    # Two follow-up stories repeat the original's fifth paragraph word for word, so it is
+    # learned. The relocated page is the original without it: a partial copy, not a move.
+    background = BODY[4]
+    removed = prose(BODY)
+    copy = prose(BODY[:4] + BODY[5:])
+    voters = [prose(OTHER_A + [background]), prose(OTHER_B + [background])]
+    boilerplate = build_boilerplate(removed, voters)
+    assert boilerplate == paragraph_keys([background])
+    measured = measure(removed, copy, boilerplate)
+    assert measured.boilerplate_paragraphs == (0, 0)
+    assert measured.cleaned[0] == measured.raw[0]
+    assert PARTIAL_MIN <= measured.old_in_new < MOVED_THRESHOLD
+    # A copy that does carry the paragraph may still lose it on both sides.
+    exact = measure(removed, removed, boilerplate)
+    assert exact.boilerplate_paragraphs == (1, 1)
+    assert exact.old_in_new >= MOVED_THRESHOLD
+
+
+def test_a_carried_short_variant_cannot_hide_a_longer_variant_the_copy_lacks():
+    # Both footer variants are learned; the original has the longer one, the copy only the
+    # shorter one inside it. Dropping the short one from the original must not take the
+    # longer one's extra words out of the score with it.
+    short = "Explore our publication archives and contact the reader desk"
+    long = short + " for general subscription assistance and delivery questions"
+    removed = prose(BODY + [long])
+    copy = prose(BODY + [short])
+    measured = measure(removed, copy, frozenset(paragraph_keys([short, long])))
+    assert not measured.boilerplate_capped
+    assert measured.old_in_new == measured.raw_old_in_new < MOVED_THRESHOLD
+
+
+def test_a_carried_line_next_to_a_missing_learned_line_keeps_the_gap_visible():
+    # Both short lines are learned; the copy carries the second but lacks the first. The
+    # shingles that run from the missing line into the carried one are evidence of the gap.
+    body = " ".join(f"body{n}" for n in range(400))
+    missing = "kilo lima mike november"
+    carried = "oscar papa quebec romeo"
+    keys = frozenset(paragraph_keys([missing, carried]))
+    measured = measure(prose([body, missing, carried]), prose([body, carried]), keys)
+    assert not measured.boilerplate_capped
+    assert measured.old_in_new == measured.raw_old_in_new < MOVED_THRESHOLD
 
 
 def test_a_revised_site_footer_does_not_demote_an_exact_copy():

@@ -10,7 +10,9 @@ their shared paragraph keys; shared volume is symmetric, including repeated line
 Learned paragraphs are matched as token sequences anywhere in a page (overlapping
 occurrences included). Each side's own shingles, those touching no learned token, are
 looked for in the WHOLE other side, so a different paragraph break or a revised site
-footer cannot hide evidence of a copy. If more than 50% of the removed article's
+footer cannot hide evidence of a copy. The removed article loses only learned paragraphs
+the candidate also carries: follow-ups repeating its background paragraph must not let a
+copy missing that paragraph score as complete. If more than 50% of the removed article's
 shingles touch learned text, measurement keeps BOTH raw scores and records the cap. This also protects against copies with
 arbitrarily long distinct teasers voting a majority of the body into furniture.
 Residual limitation: unrelated articles quoting a lede below the cap can still
@@ -42,8 +44,9 @@ Containments = tuple[float | None, float | None]
 class Measurement:
     """Scores, matched line counts and cap status; never paragraph text or keys.
 
-    Counts are ordered (removed article, candidate), including repeated lines.
-    When capped, counts describe proposed removals; neither side is stripped.
+    Counts are ordered (removed article, candidate), including repeated lines; the removed
+    article's count covers only learned lines the candidate carries. When capped, counts
+    describe proposed removals; neither side is stripped.
     """
 
     old_in_new: float | None
@@ -116,24 +119,17 @@ def _key_index(boilerplate: frozenset[str]) -> dict[tuple[str, ...], list[tuple[
     return index
 
 
-def _clean_shingles(text: str, boilerplate: frozenset[str]) -> tuple[frozenset, int]:
-    """Shingles of `text` that touch no token of a boilerplate paragraph, and the share
-    of the text's shingles removed.
+def _spans(toks: list[str], keys: frozenset[str]) -> list[tuple[int, int]]:
+    """Every occurrence of a learned key in `toks`, as (start, end) token positions.
 
-    Boilerplate is found as a token sequence anywhere in the token stream, not as whole
-    lines, so identical text loses identical shingles whatever its paragraph breaks (a
-    footer run into the last body paragraph on one page and set apart on another). Each
-    position is checked against the few sequences that start with its tokens, and every
-    occurrence is marked, overlapping ones included. No regular expression; the cost is
-    bounded by the page size times the length of the keys that match there.
+    Each position is checked against the few sequences that start with its tokens, and
+    the longest key starting there is taken; a match that starts inside the previous one
+    is its own occurrence, so overlapping ones are all found. No regular expression; the
+    cost is bounded by the page size times the length of the keys that match there.
     """
-    toks = tokens(text)
-    index = _key_index(boilerplate)
+    index = _key_index(keys)
     heads = {len(head) for head in index}
-    # Every occurrence is marked, overlapping ones included (a match that starts inside
-    # the previous one may extend past it). A difference array keeps marking linear;
-    # matching costs at most the length of the few keys sharing a position's head.
-    depth = [0] * (len(toks) + 1)
+    found = []
     for i in range(len(toks)):
         longest = 0
         for size in heads:
@@ -141,15 +137,28 @@ def _clean_shingles(text: str, boilerplate: frozenset[str]) -> tuple[frozenset, 
                 if len(seq) > longest and tuple(toks[i:i + len(seq)]) == seq:
                     longest = len(seq)
         if longest:
-            depth[i] += 1
-            depth[i + longest] -= 1
-    marked = []
-    running = 0
-    for i in range(len(toks)):
+            found.append((i, i + longest))
+    return found
+
+
+def _covered(size: int, spans: list[tuple[int, int]]) -> list[bool]:
+    """Which of `size` token positions lie inside any span (difference array, linear)."""
+    depth = [0] * (size + 1)
+    for start, end in spans:
+        depth[start] += 1
+        depth[end] -= 1
+    marked, running = [], 0
+    for i in range(size):
         running += depth[i]
         marked.append(running > 0)
+    return marked
+
+
+def _kept(text: str, toks: list[str], spans: list[tuple[int, int]]) -> tuple[frozenset, int]:
+    """Shingles of `text` that touch no spanned token, and how many shingles were dropped."""
     if not toks:
         return frozenset(), 0
+    marked = _covered(len(toks), spans)
     k = SHINGLE_K
     if len(toks) < k:
         windows = [(0, len(toks))]
@@ -157,6 +166,57 @@ def _clean_shingles(text: str, boilerplate: frozenset[str]) -> tuple[frozenset, 
         windows = [(i, i + k) for i in range(len(toks) - k + 1)]
     kept = frozenset(tuple(toks[a:b]) for a, b in windows if not any(marked[a:b]))
     return kept, len(shingles(text)) - len(kept)
+
+
+def _clean_shingles(text: str, boilerplate: frozenset[str]) -> tuple[frozenset, int]:
+    """Shingles of `text` that touch no token of a boilerplate paragraph, and the share
+    of the text's shingles removed.
+
+    Boilerplate is found as a token sequence anywhere in the token stream, not as whole
+    lines, so identical text loses identical shingles whatever its paragraph breaks (a
+    footer run into the last body paragraph on one page and set apart on another).
+    """
+    toks = tokens(text)
+    return _kept(text, toks, _spans(toks, boilerplate))
+
+
+def _clean_removed(
+    removed_prose: str, boilerplate: frozenset[str], carried: frozenset[str],
+) -> frozenset:
+    """The removed article's shingles after dropping only paragraphs the candidate carries.
+
+    An occurrence of a carried paragraph is kept when it overlaps, or lies within one
+    shingle's reach of, an occurrence of a learned paragraph the candidate lacks. Dropping
+    it would also drop the shingles that span into the missing paragraph, so a short footer
+    variant inside a longer one, or a carried line right after a missing one, would take
+    the missing words' evidence out of the score with it.
+
+    Residual: any other omission shorter than a shingle right next to carried furniture
+    loses the shingles that span into the furniture, as it did before this rule.
+    """
+    toks = tokens(removed_prose)
+    reach = SHINGLE_K - 1
+    missing = _covered(len(toks), [
+        (max(0, a - reach), min(len(toks), b + reach))
+        for a, b in _spans(toks, boilerplate - carried)
+    ])
+    spans = [(a, b) for a, b in _spans(toks, carried) if not any(missing[a:b])]
+    return _kept(removed_prose, toks, spans)[0]
+
+
+def _carried(text: str, boilerplate: frozenset[str]) -> frozenset[str]:
+    """Learned paragraphs that occur in `text` as token sequences, whatever its paragraph
+    breaks; keys only, never text spans."""
+    toks = tokens(text)
+    index = _key_index(boilerplate)
+    heads = {len(head) for head in index}
+    found = set()
+    for i in range(len(toks)):
+        for size in heads:
+            for seq in index.get(tuple(toks[i:i + size]), ()):
+                if tuple(toks[i:i + len(seq)]) == seq:
+                    found.add(" ".join(seq))
+    return frozenset(found)
 
 
 def own_text_words(removed_prose: str, boilerplate: frozenset[str]) -> frozenset[str]:
@@ -174,18 +234,28 @@ def measure(
     other side.
 
     Boilerplate is matched as token sequences, not whole lines, so identical text stays
-    identical even when the two pages break paragraphs differently. Strips nothing when the boilerplate would
-    remove more than MAX_REMOVED_SHARE of the removed article's shingles (the cap). An
+    identical even when the two pages break paragraphs differently. The removed article
+    loses only learned paragraphs the candidate also carries, so a copy missing one keeps
+    that gap in its score; the candidate loses every learned paragraph it has. Strips
+    nothing when the learned boilerplate would remove more than MAX_REMOVED_SHARE of the
+    removed article's shingles (the cap). Counts are ordered as in `Measurement`. An
     unmeasurable side stays unmeasurable; an empty cleaned candidate measures zero while
     the removed article keeps text; an empty cleaned removed article falls back to raw.
     """
     raw = directional_containments(removed_prose, page_text)
     if not boilerplate:
         return Measurement(*raw, *raw, (0, 0))
-    counts = (_matched(removed_prose, boilerplate), _matched(page_text, boilerplate))
-    old_clean, old_removed = _clean_shingles(removed_prose, boilerplate)
-    if old_removed > MAX_REMOVED_SHARE * len(shingles(removed_prose)):
+    # The removed article loses only learned paragraphs the candidate also carries. Other
+    # live pages repeating a paragraph (follow-ups quoting the same background) do not make
+    # it furniture for a candidate that lacks it: dropping it there would hide exactly the
+    # text the candidate is missing and lift a partial copy to the move bar.
+    carried = _carried(page_text, boilerplate)
+    counts = (_matched(removed_prose, carried), _matched(page_text, boilerplate))
+    # The cap still weighs everything learned, so its meaning does not depend on the page.
+    _, learned_removed = _clean_shingles(removed_prose, boilerplate)
+    if learned_removed > MAX_REMOVED_SHARE * len(shingles(removed_prose)):
         return Measurement(*raw, *raw, counts, boilerplate_capped=True)
+    old_clean = _clean_removed(removed_prose, boilerplate, carried)
     if raw[0] is None:
         # A side unmeasurable to begin with stays unmeasurable: no evidence, no call.
         return Measurement(*raw, *raw, counts)

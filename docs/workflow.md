@@ -81,6 +81,13 @@ is looked for in the whole other side. A footer then cannot inflate either score
 different paragraph break cannot make identical text differ, and cleaning cannot hide
 the removed article's text that a candidate carries (for example after the site revised
 its footer; an archived footer that no longer matches today's is simply not dropped).
+The removed article loses a learned paragraph only when the candidate also carries it;
+a learned paragraph the candidate lacks counts in the old-in-new score as missing text,
+like any other. A background paragraph that follow-up stories repeat word for word is
+learned, but its absence from a relocated copy can no longer be hidden by dropping it.
+The same applies to furniture: a copy on a different page template, with another footer
+or none, keeps the learned footer it lacks in its score (below the cap described next,
+where it was dropped before) and may fall below the move bar.
 If the learned text covers more than 50% of the removed article's shingles, neither
 side is stripped: both scores stay raw and `boilerplate_capped` is true. This cap also
 protects against copies with long distinct teasers voting most of the body into
@@ -90,8 +97,9 @@ boilerplate. With fewer than two other pages, scores stay raw
 (`backend/tests/test_boilerplate.py`) and kept; the original-URL check in the source step
 (50%) is not cleaned.
 Review details retain raw and cleaned scores, the cap flag and matched paragraph
-counts in removed-article/candidate order, including pages set aside as siblings.
-When capped, counts show proposed removals; neither side was stripped.
+counts in removed-article/candidate order, including pages set aside as siblings;
+the removed article's count covers only learned lines the candidate carries. The cap
+still weighs everything learned. When capped, counts show proposed removals; neither side was stripped.
 
 Residual limitation: unrelated articles can quote the same lede and vote it into
 boilerplate when it covers at most half the removed text. In the invented regression,
