@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Run audit on an imported article now works in live mode without enabling API/webhook intake. Normal token rules still apply: a token is required whenever the app is reachable from other machines.
 - Same-site boilerplate is now dropped from the removed article only when the candidate page also carries it. Before, a paragraph that two other live pages repeated (for example a background paragraph in follow-up stories) was dropped even when the candidate lacked it, so a copy missing that paragraph could score 100% and get `MOVED` with a false "100% contained" finding. The missing paragraph now counts like any other missing text in the overlap score. A copy on a different page template than the rest of the site (another footer or none) keeps the missing footer in its score the same way and may no longer reach `MOVED` at the similarity step. This changes verdicts; new runs get a new workflow ID.
 - Auditing an imported archive article now loads its text from the archive when it is missing, as opening it does; before, the audit answered 422 `article_has_no_content` until the article had been opened once.
 - The getting-started guide is now one ordered path from the demo to a real article audit: the model to load and how the containers reach it, the two settings real audits need (live ingestion and an API token), entering the token in the UI, archive import, the one-at-a-time queue, a run's result versus its details, search status, a second stack beside the main one, and troubleshooting.

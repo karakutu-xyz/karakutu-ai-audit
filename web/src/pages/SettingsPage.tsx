@@ -80,7 +80,7 @@ export function SettingsPage() {
               label: "Live ingestion",
               value: status.live_ingestion_enabled
                 ? "Enabled"
-                : "Disabled · live runs require API or webhook ingestion",
+                : "Disabled · API and webhook intake off",
             },
             {
               label: "Prompts editable via API",

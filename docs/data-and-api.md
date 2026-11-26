@@ -135,7 +135,8 @@ include source and removal metadata; counting identifies them by `origin=demo`.
 `GET /api/articles?status=not_audited` lists the three never-audited articles on a fresh
 test-mode startup. `POST /api/articles/{ref}/audit` starts a first audit or re-run
 through the offline `DemoEngine`, including demo articles in the `live` category while
-live ingestion is disabled. Like benchmark submissions, it needs no token unless one is
+live ingestion is disabled. In both run modes, article audits follow the normal token
+rules independently of live intake: they need no token unless one is
 configured; with a configured token, missing/wrong bearer credentials return 401. Existing
 queued/running demo examples still return 409 `run_in_progress` until completed,
 interrupted or cancelled. Every new run keeps its own history and captured workflow/prompts/models.
@@ -258,10 +259,12 @@ run and inserts atomically. A conflict returns 409
 Missing content returns 422 `{"error":{"code":"article_has_no_content"}}`;
 unknown articles return 404. All article routes pass through `RequestGuards`:
 configured tokens are required (missing/wrong gives 401), writes reject untrusted
-browser origins (403). In live mode, local benchmark writes remain available without
-a token; live-category article audits additionally require enabled live ingestion
-and a token, otherwise 404. Test-mode article audits accept either category, need a
-token only when one is configured, and use the offline engine, as described above.
+browser origins (403). Article audits in either category follow these normal token
+rules in both run modes, independently of `LIVE_INGESTION_ENABLED`. Local article
+audits and benchmark submissions need no token when none is configured; non-loopback
+binds or allowed hosts require a token at startup. Live intake gates only
+`POST /api/audit` and `POST /api/webhooks/audit`. Test-mode article audits use the
+offline engine, as described above.
 Lazy archive fill stores text only if the article still has the URL and archive id it
 was fetched for; a response that arrives after a concurrent import moved the article is
 dropped, and the next detail read fetches again.
@@ -417,7 +420,15 @@ Definitions now use `format_version` 3; unchanged setups receive a new workflow 
 
 ## Privacy and access
 
-All routes with article/run data require the bearer token when `API_AUTH_TOKEN` is configured. Live submission additionally requires `LIVE_INGESTION_ENABLED=true`; startup refuses enabled live ingestion without a token, or a configured token shorter than 32 characters. A disabled live route returns 404 before auth or body validation. On the default loopback workstation, the benchmark/review UI is available without a token. Non-loopback allowed hosts require a token at startup; Tilt binds only to loopback.
+Every `/api` call requires the bearer token when `API_AUTH_TOKEN` is configured.
+Auditing a saved article follows these normal token rules, independently of live
+intake. Only `POST /api/audit` and `POST /api/webhooks/audit` additionally require
+`LIVE_INGESTION_ENABLED=true`; startup refuses enabled intake without a token,
+or a configured token shorter than 32 characters. Disabled intake routes return
+404 before auth or body validation. On the default loopback workstation, article
+audits and the benchmark/review UI are available without a token. Non-loopback
+`KARAKUTU_BIND_ADDRESS` or `ALLOWED_HOSTS` entries require a token at startup;
+Tilt binds only to loopback.
 
 `ALLOWED_HOSTS` and `ALLOWED_ORIGINS` add comma-separated entries to the loopback defaults. Whitespace around entries is trimmed and empty items are dropped. Hosts always include `localhost`, `127.0.0.1` and the existing `testserver` test host. Origins always include `http://localhost:2200`, `http://127.0.0.1:2200`, `http://localhost:2201` and `http://127.0.0.1:2201`. Empty environment values preserve those defaults exactly.
 

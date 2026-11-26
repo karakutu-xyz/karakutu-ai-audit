@@ -236,8 +236,8 @@ already marked).
 `benchmark`); `live` runs come from the gated `POST /api/audit` (origin `api`) and
 `POST /api/webhooks/audit` (origin `webhook`) routes. `POST /api/articles/{ref}/audit` gives a
 stored article its first audit or a re-run in either category: the run keeps the article's
-category and uses origin `article`. Outside test mode, auditing a `live` article needs the same
-live gate as the live routes.
+category and uses origin `article`. Article audits follow the normal token rules in both run
+modes and do not depend on live intake being enabled.
 
 **Workflow version:** an immutable snapshot of code, settings, prompts and models, named by
 its fingerprint (`wf_…`). See [Provenance](#provenance-and-the-workflow-fingerprint).

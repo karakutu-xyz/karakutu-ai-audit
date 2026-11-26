@@ -165,11 +165,11 @@ an explicit 404/410 original probe record. No archive link is fabricated.
 The primary action posts through `api/client.ts`. A successful response inserts
 the new run into the displayed history immediately and refetches the article,
 restarting polling. A conflict explains that an audit is already running and
-refetches; access errors point to Connection settings; disabled live audits get
-a fixed message. Raw error bodies are never shown. Token/epoch changes abort
-pending submissions and reset action state. Review uses the exact latest run;
-run detail links its title back when `article_ref` is present. Removed text is
-clamped to twelve rendered lines, with a toggle only when it overflows; snapshot
+refetches; access errors point to Connection settings. Article audits follow the
+normal token rules independently of live intake. Raw error bodies are never shown.
+Token/epoch changes abort pending submissions and reset action state. Review uses
+the exact latest run; run detail links its title back when `article_ref` is present.
+Removed text is clamped to twelve rendered lines, with a toggle only when it overflows; snapshot
 versions show their saved titles and check dates. The rail follows the story
 below 1000px and sits beside it on wider screens.
 Archive HTML displays as readable text paragraphs; stored content, API responses and model inputs remain unchanged.

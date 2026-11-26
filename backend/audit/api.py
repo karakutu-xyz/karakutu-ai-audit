@@ -723,20 +723,14 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
         result["links"] = {"original_url": result["url"], "archive_url": None}
         return result
 
-    def require_audit_allowed(article: dict) -> None:
-        if article["category"] == "live" and not test_mode and not (settings.live_ingestion_enabled and settings.api_auth_token):
-            raise HTTPException(404)
-
     @app.post("/api/articles/{ref}/audit", status_code=202, response_model=AuditResult,
              responses=result_responses)
     async def article_audit(ref: str):
-        # Check access before any archive read, then load missing text as the detail view does.
+        # RequestGuards applies access rules before the route reads missing archive text.
         article = article_or_404(ref)
-        require_audit_allowed(article)
         await fill_archive_text(ref, article)
         async with app.state.article_lock:
             article = article_or_404(ref)
-            require_audit_allowed(article)
             # Store re-reads the article and checks for active work under the database writer lock.
             return submit(None, article["category"], "article", article_ref=ref)
 

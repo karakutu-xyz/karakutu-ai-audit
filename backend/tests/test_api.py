@@ -110,12 +110,17 @@ def test_benchmark_workflow_reaction_export_and_restart(tmp_path, database_url):
 
 
 @pytest.mark.parametrize("route", ["/api/audit", "/api/webhooks/audit"])
-def test_live_disabled_precedes_auth_and_validation(tmp_path, route, database_url):
-    with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN), FakeEngine())) as client:
+@pytest.mark.parametrize("configured", [False, True])
+def test_live_disabled_precedes_auth_and_validation(tmp_path, route, configured, database_url):
+    config = settings(tmp_path, database_url=database_url,
+                      api_auth_token=TOKEN if configured else "", live_ingestion_enabled=False)
+    with TestClient(create_app(config, FakeEngine())) as client:
         response = client.post(route, content="not-json", headers={"Authorization": "Bearer wrong", "Origin": "https://untrusted.invalid"})
         assert response.status_code == 404
         assert response.json() == {"error": {"code": "not_found"}}
         assert client.post(route + "/", content="not-json").status_code == 404
+        assert client.post(route, json=BODY, headers=AUTH).status_code == 404
+        assert client.app.state.store.runs()["total"] == 0
 
 
 def test_auth_precedes_validation_and_protects_all_api_routes(tmp_path, database_url):

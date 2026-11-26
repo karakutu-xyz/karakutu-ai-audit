@@ -2285,32 +2285,31 @@ test("article rail offers Stop audit only while the latest audit is queued or ru
   }
 });
 
-test("article audits respect the live gate while test and benchmark audits stay enabled", () => {
-  const harness = articleDetailHarness();
-  const message = "Live audits are switched off on this server.";
-  for (const [mode, category, enabled, disabled] of [
-    ["live", "live", false, true],
-    ["live", "live", true, false],
-    ["test", "live", false, false],
-    ["live", "benchmark", false, false],
+test("article audits stay available independently of live intake", async () => {
+  for (const [mode, category, enabled] of [
+    ["live", "live", false],
+    ["live", "live", true],
+    ["test", "live", false],
+    ["live", "benchmark", false],
   ]) {
+    const harness = articleDetailHarness(fictionalArticle({ category }));
     harness.api.status = { mode, live_ingestion_enabled: enabled };
-    harness.setArticle(fictionalArticle({ category }));
     const html = harness.render();
     const button = html.match(/<button[^>]*article-audit-button[^>]*>/)?.[0];
     assert.ok(button);
-    assert.equal(button.includes('disabled=""'), disabled);
-    assert.equal(html.includes(message), disabled);
-    assert.equal(button.includes('aria-describedby="live-audit-help"'), disabled);
-    if (disabled) {
-      harness.start();
-      assert.equal(harness.requests.length, 0);
-      assert.equal(harness.client.articleAuditError(
-        new harness.client.ApiError(404), true,
-      ), message);
-    }
+    assert.ok(!button.includes('disabled=""'));
+    assert.ok(!html.includes("Live audits are switched off on this server."));
+    assert.ok(!button.includes("aria-describedby"));
+    const action = harness.start();
+    assert.equal(harness.requests.length, 1);
+    assert.equal(harness.requests[0].ref, harness.article.ref);
+    harness.requests[0].reject(new harness.client.ApiError(404));
+    await action;
+    assert.ok(harness.render().includes(
+      "This resource is unavailable. Refresh the list and try again.",
+    ));
+    harness.unmount();
   }
-  harness.unmount();
 });
 
 test("audit story numbers evidence footnotes from 1 across steps", () => {

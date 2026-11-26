@@ -27,7 +27,8 @@ names setup reports. Production checklist:
   and ALLOWED_ORIGINS to its TLS origin. Retain loopback KARAKUTU_BIND_ADDRESS.
 - Set SEARCH_PROVIDER deliberately and generate SEARXNG_SECRET for bundled search.
   Compose overrides SEARXNG_URL to its internal service address.
-- Leave LIVE_INGESTION_ENABLED=false unless intake is authorized. Set
+- Leave LIVE_INGESTION_ENABLED=false unless API/webhook intake is authorized;
+  manual article audits do not need it. Set
   ARCHIVE_BASE_URL and your own read wallet only if using archive evidence.
 - Preserve the named /data volume, plan backups and run exactly one API process.
 
