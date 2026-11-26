@@ -151,7 +151,8 @@ including reads with empty text. Each cycle makes at most
 cooldown. Cooling candidates cost no read or attempt. A sweep that stops on that
 limit resumes after its last candidate next cycle, so unreadable older articles
 cannot block newer ones. A read that leaves the
-archive client unavailable or rejected ends the sweep with a fixed reason while
+archive client unavailable or rejected ends the sweep with a fixed reason (the
+next sweep resumes after that article) while
 keeping the metadata import result. Cancellation exits the poller after draining
 any persistence worker, including a failed worker. Workflow snapshots and verdict
 rules are unchanged. See

@@ -156,6 +156,9 @@ class ArchivePoller:
             if refreshed is None or not refreshed["content"].strip():
                 cycle["unreadable"] += 1
                 if getattr(self.client, "state", None) in ARCHIVE_FAILURES:
+                    # Stop this cycle, but resume after this candidate next time: one
+                    # article the archive refuses must not block every later one.
+                    self.sweep_after = ref
                     return self.archive_failure()
                 continue
             async with self.state.article_lock:

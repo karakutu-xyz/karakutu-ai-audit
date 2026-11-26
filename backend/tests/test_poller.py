@@ -700,6 +700,36 @@ async def test_unreadable_older_articles_cannot_starve_a_readable_one(tmp_path):
         assert [r.article_ref for r in runs(app) if r.origin == "poll"] == ["ka-11"]
 
 
+async def test_refused_article_reads_cannot_starve_a_readable_one(tmp_path):
+    # The archive refuses the two oldest articles (the client then reports a failure
+    # state and the cycle stops); the next cycles must still move on to the third.
+    async with service(tmp_path, auto_audit_enabled=True,
+                       auto_audit_max_per_poll=5) as (app, archive, _):
+        archive.items = [{"article_id": i, "url": f"https://paper.example/fiction-{i}"}
+                         for i in range(1, 4)]
+        original = archive.get_article
+
+        async def get_article(article_id):
+            if int(article_id) <= 2:
+                archive.reads.append(article_id)
+                archive.state = "rejected"
+                return None
+            archive.state = "ok"
+            return await original(article_id)
+
+        archive.get_article = get_article
+        clock = 0
+        app.state.article_fill_clock = lambda: clock
+        poller = app.state.poller
+        outcomes = []
+        for _ in range(4):
+            cycle = await poller.run_cycle()
+            outcomes.append((cycle["reason"], cycle["queued"]))
+            clock += ARCHIVE_TEXT_RETRY_SECONDS
+        assert ("rejected", 0) in outcomes
+        assert [r.article_ref for r in runs(app) if r.origin == "poll"] == ["ka-3"]
+
+
 @pytest.mark.parametrize("failure", ["timeout", "unavailable", "rejected"])
 async def test_text_outage_stops_sweep_preserving_metadata(tmp_path, failure):
     def handle(request):

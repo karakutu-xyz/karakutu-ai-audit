@@ -76,7 +76,8 @@ Candidates in cooldown consume neither a read nor an attempt, allowing later
 candidates to progress. When a sweep stops on the read or attempt limit, the next
 cycle resumes after the last candidate it tried and wraps around, so unreadable
 older articles cannot use up every cycle's reads. The first failed read leaving the archive client unavailable
-or rejected stops the sweep with its fixed failure reason; metadata import counts
+or rejected stops the sweep with its fixed failure reason (the next sweep resumes
+after that article); metadata import counts
 and the successful import window remain saved. Queue pause allows metadata registration but skips
 automatic submissions (`queue_paused`). Each candidate refreshes the latest archive
 version through `fill_archive_text`, including when text is already cached, updating
