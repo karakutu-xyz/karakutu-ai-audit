@@ -1,8 +1,8 @@
 """Read-only archive audit service with durable local run history.
 
-Live ingestion is separately gated from benchmarks. No route writes to the archive.
-All /api routes are authenticated when a token is configured; live routes always
-require one. Middleware applies these gates before parsing any submitted values.
+Saved articles and benchmarks can be audited. No route writes to the archive.
+All /api routes are authenticated when a token is configured. Middleware applies
+access rules before parsing any submitted values.
 """
 import asyncio
 import difflib
@@ -41,7 +41,6 @@ from audit.schemas import (
 from audit.workflow.prompt_registry import DEFAULTS, REGISTRY, validation_codes
 
 MAX_BODY_BYTES = 2 * 1024 * 1024
-LIVE_PATHS = frozenset({"/api/audit", "/api/webhooks/audit"})
 
 
 def unified_prompt_diff(before: str, after: str, fromfile: str, tofile: str) -> str:
@@ -88,9 +87,6 @@ class RequestGuards:
             return await reject(403, "model_writes_require_token")
         if prompt_write and not self.settings.api_auth_token:
             return await reject(403, "prompt_writes_require_token")
-        live = path in LIVE_PATHS
-        if live and (not self.settings.live_ingestion_enabled or not self.settings.api_auth_token):
-            return await reject(404, "not_found")
         # A local app without authentication must reject DNS-rebinding hosts,
         # including on GET endpoints that can expose saved articles.
         hosts = headers.get(b"host", [])
@@ -348,7 +344,6 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
                 "search": await search_state(),
                 "archive_reads_enabled": bool(settings.archive_base_url),
                 "archive": archive_state(),
-                "live_ingestion_enabled": bool(settings.live_ingestion_enabled and settings.api_auth_token),
                 "writes_enabled": False, "prompts_editable": bool(settings.api_auth_token)}
 
     def current_overrides(assignments=None):
@@ -723,20 +718,14 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
         result["links"] = {"original_url": result["url"], "archive_url": None}
         return result
 
-    def require_audit_allowed(article: dict) -> None:
-        if article["category"] == "live" and not test_mode and not (settings.live_ingestion_enabled and settings.api_auth_token):
-            raise HTTPException(404)
-
     @app.post("/api/articles/{ref}/audit", status_code=202, response_model=AuditResult,
              responses=result_responses)
     async def article_audit(ref: str):
-        # Check access before any archive read, then load missing text as the detail view does.
+        # RequestGuards applies access rules before the route reads missing archive text.
         article = article_or_404(ref)
-        require_audit_allowed(article)
         await fill_archive_text(ref, article)
         async with app.state.article_lock:
             article = article_or_404(ref)
-            require_audit_allowed(article)
             # Store re-reads the article and checks for active work under the database writer lock.
             return submit(None, article["category"], "article", article_ref=ref)
 
@@ -744,16 +733,6 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
              responses=result_responses)
     async def benchmark(body: RunInput):
         return submit(body, "benchmark", "benchmark")
-
-    @app.post("/api/audit", status_code=202, response_model=AuditResult,
-             responses=result_responses)
-    async def audit(body: RunInput):
-        return submit(body, "live", "api")
-
-    @app.post("/api/webhooks/audit", status_code=202, response_model=AuditResult,
-             responses=result_responses)
-    async def webhook(body: RunInput):
-        return submit(body, "live", "webhook")
 
     @app.post("/api/runs/{run_id}/reactions", status_code=201, response_model=Reaction)
     async def reaction(run_id: str, body: ReactionInput):

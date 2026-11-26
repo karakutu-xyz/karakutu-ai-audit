@@ -17,7 +17,7 @@ number formatting, key order and `\u0000` escapes. Test mode and demo seeding re
 | `model_assignments` | Append-only step, nullable model override, author, note and timestamp. Newest insertion per step wins. |
 | `prompt_activations` | Append-only name/version reference, kind (`seed`, `activate`, `rollback`, `default_update`), author, note and timestamp. The newest activation selects the active version. |
 
-`benchmark` and `live` are separate categories in the same local database. Routes assign the category; a caller-supplied category is rejected. A benchmark may exercise real LM Studio and search without becoming live data. Live runs come only from the gated `POST /api/audit` (origin `api`) and `POST /api/webhooks/audit` (origin `webhook`) routes, and from auditing an existing live article with `POST /api/articles/{ref}/audit` (origin `article`), which keeps the article's category. Export does not reclassify data. No production article subscription is configured.
+`benchmark` and `live` are separate categories in the same local database. Routes assign the category; a caller-supplied category is rejected. A benchmark may exercise real LM Studio and search without becoming live data. New live runs come only from auditing a saved live article with `POST /api/articles/{ref}/audit` (origin `article`), which keeps the article's category. Historical runs with origin `api` or `webhook` remain readable and filterable. Export does not reclassify data. Intake from Karakutu will be by polling, which is not yet built.
 
 The in-process task queue persists a queued record before starting work, then each
 finished step. One process owns it; `MAX_CONCURRENT_RUNS` bounds simultaneous model
@@ -27,9 +27,8 @@ queue. On shutdown/restart, incomplete runs become failed with `interrupted`,
 preserving completed step evidence. Re-submit explicitly to retry. Operator stops
 instead become terminal `cancelled` runs, keeping recorded steps with no verdict
 or output. Queue pause is in memory, leaves running work alone, and resets to open
-on every restart. This does not promise exactly-once webhook delivery: duplicate
-POSTs create distinct runs. An external durable worker and idempotent webhook
-delivery are deferred until a live producer exists.
+on every restart. Benchmark POSTs create distinct runs; saved-article audits reject
+concurrent audits of the same article. An external durable worker is not implemented.
 
 ### Schema changes
 
@@ -134,9 +133,9 @@ outlet names and content but no runs, allowing first-audit testing. All demo art
 include source and removal metadata; counting identifies them by `origin=demo`.
 `GET /api/articles?status=not_audited` lists the three never-audited articles on a fresh
 test-mode startup. `POST /api/articles/{ref}/audit` starts a first audit or re-run
-through the offline `DemoEngine`, including demo articles in the `live` category while
-live ingestion is disabled. Like benchmark submissions, it needs no token unless one is
-configured; with a configured token, missing/wrong bearer credentials return 401. Existing
+through the offline `DemoEngine`, including demo articles in the `live` category.
+In both run modes, article audits follow the normal token rules: they need no token
+unless one is configured; with a configured token, missing/wrong bearer credentials return 401. Existing
 queued/running demo examples still return 409 `run_in_progress` until completed,
 interrupted or cancelled. Every new run keeps its own history and captured workflow/prompts/models.
 Articles without a scripted case select an existing demo scenario deterministically
@@ -175,8 +174,6 @@ The generated [OpenAPI contract](../openapi.yaml) (YAML; the running API still s
 | `GET /api/workflow` | Current immutable workflow snapshot. |
 | `GET /api/workflows/{id}` | Snapshot used by a historical run. |
 | `POST /api/benchmarks/runs` | Submit a benchmark, return 202 and its lean queued `AuditResult`. |
-| `POST /api/audit` | Submit a **live** run; disabled by default. |
-| `POST /api/webhooks/audit` | Submit a **live** webhook run; disabled by default. |
 | `GET /api/articles` | Paginated articles with latest audit status/verdict, run count and activity. |
 | `GET /api/articles/{ref}` | Stored content, archive metadata/links and newest-first run history with computed summaries; unknown refs return 404. |
 | `POST /api/articles/{ref}/audit` | First audit or re-run; 202 `AuditResult`, origin `article`; preserves every previous run. |
@@ -258,10 +255,10 @@ run and inserts atomically. A conflict returns 409
 Missing content returns 422 `{"error":{"code":"article_has_no_content"}}`;
 unknown articles return 404. All article routes pass through `RequestGuards`:
 configured tokens are required (missing/wrong gives 401), writes reject untrusted
-browser origins (403). In live mode, local benchmark writes remain available without
-a token; live-category article audits additionally require enabled live ingestion
-and a token, otherwise 404. Test-mode article audits accept either category, need a
-token only when one is configured, and use the offline engine, as described above.
+browser origins (403). Article audits in either category follow these normal token
+rules in both run modes. Local article audits and benchmark submissions need no token
+when none is configured; non-loopback binds or allowed hosts require a token at startup.
+Test-mode article audits use the offline engine, as described above.
 Lazy archive fill stores text only if the article still has the URL and archive id it
 was fetched for; a response that arrives after a concurrent import moved the article is
 dropped, and the next detail read fetches again.
@@ -374,7 +371,9 @@ error text. Concurrent detail reads share a lock and one attempt; a service rest
 permits another attempt for still-empty articles. All archive calls are GET-only;
 local import/enrichment never mutates the archive.
 
-This is an intentionally changed API: the old synchronous `/api/audit` response and `/api/v1/articles/...` publishing jobs are archived. New `/api/audit` is asynchronous, persisted and live-gated. Consumers must explicitly migrate; no silent compatibility facade publishes to Karakutu.
+Audit runs are asynchronous and persisted. Start live runs from saved articles or
+submit fabricated cases through the benchmark route. Push intake and article publishing
+jobs are removed; no route writes back to Karakutu. Polling intake is not yet built.
 
 All audit-submission POSTs, benchmark submission and individual cancellation return the
 lean `AuditResult` defined in [the v2 result contract](audit-record-schema.md).
@@ -417,7 +416,12 @@ Definitions now use `format_version` 3; unchanged setups receive a new workflow 
 
 ## Privacy and access
 
-All routes with article/run data require the bearer token when `API_AUTH_TOKEN` is configured. Live submission additionally requires `LIVE_INGESTION_ENABLED=true`; startup refuses enabled live ingestion without a token, or a configured token shorter than 32 characters. A disabled live route returns 404 before auth or body validation. On the default loopback workstation, the benchmark/review UI is available without a token. Non-loopback allowed hosts require a token at startup; Tilt binds only to loopback.
+Every `/api` call requires the bearer token when `API_AUTH_TOKEN` is configured.
+Auditing a saved article follows these normal token rules. Startup refuses a
+configured token shorter than 32 characters. On the default loopback workstation, article
+audits and the benchmark/review UI are available without a token. Non-loopback
+`KARAKUTU_BIND_ADDRESS` or `ALLOWED_HOSTS` entries require a token at startup;
+Tilt binds only to loopback.
 
 `ALLOWED_HOSTS` and `ALLOWED_ORIGINS` add comma-separated entries to the loopback defaults. Whitespace around entries is trimmed and empty items are dropped. Hosts always include `localhost`, `127.0.0.1` and the existing `testserver` test host. Origins always include `http://localhost:2200`, `http://127.0.0.1:2200`, `http://localhost:2201` and `http://127.0.0.1:2201`. Empty environment values preserve those defaults exactly.
 

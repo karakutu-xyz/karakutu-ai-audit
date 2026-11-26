@@ -47,9 +47,9 @@ web and archive boxes are not used at all (see [Test and live mode](#test-and-li
 
 ## Life of a run
 
-1. A client posts an article to `POST /api/benchmarks/runs` (or a live route, if enabled), or
+1. A client posts a benchmark to `POST /api/benchmarks/runs`, or
    asks for an audit of a stored article with `POST /api/articles/{ref}/audit`. `submit` in
-   [`api.py`](../backend/audit/api.py#L513) saves a `queued` run and links it to its article in
+   [`api.py`](../backend/audit/api.py#L551) saves a `queued` run and links it to its article in
    the same transaction. The run records the current workflow, prompts and step models at this
    moment.
 2. An `asyncio` task waits for a free slot (`MAX_CONCURRENT_RUNS`, default 1), marks the run
@@ -182,7 +182,7 @@ is how you compare two versions of the workflow on the same benchmark cases. Mor
 
 ## Test and live mode
 
-`RUN_MODE`, read in `Settings.from_env` in [`config.py`](../backend/audit/config.py#L309), chooses the mode at startup.
+`RUN_MODE`, read in `Settings.from_env` in [`config.py`](../backend/audit/config.py#L313), chooses the mode at startup.
 
 | | Test | Live |
 | --- | --- | --- |
@@ -233,11 +233,11 @@ already marked).
 - `cancelled`: stopped by an operator; retains recorded steps without a verdict.
 
 **Category and origin:** `benchmark` runs come from the UI or `scripts/benchmark.py` (origin
-`benchmark`); `live` runs come from the gated `POST /api/audit` (origin `api`) and
-`POST /api/webhooks/audit` (origin `webhook`) routes. `POST /api/articles/{ref}/audit` gives a
-stored article its first audit or a re-run in either category: the run keeps the article's
-category and uses origin `article`. Outside test mode, auditing a `live` article needs the same
-live gate as the live routes.
+`benchmark`). `POST /api/articles/{ref}/audit` gives a stored article its first audit or
+re-run in either category: the run keeps the article's category and uses origin `article`.
+New `live` runs come only from auditing saved live articles, with the normal token rules
+in both run modes. Historical runs with origin `api` or `webhook` remain readable and
+filterable. Intake from Karakutu will be by polling, which is not yet built.
 
 **Workflow version:** an immutable snapshot of code, settings, prompts and models, named by
 its fingerprint (`wf_…`). See [Provenance](#provenance-and-the-workflow-fingerprint).

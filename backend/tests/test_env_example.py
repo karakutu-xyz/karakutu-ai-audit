@@ -195,6 +195,26 @@ def test_settings_not_in_example_are_rejected(tmp_path):
     assert "Would start" not in result.stdout
 
 
+@pytest.mark.parametrize("value", ["true", "false", "obsolete"])
+def test_obsolete_push_setting_does_not_block_live_preflight(tmp_path, value):
+    text = ("RUN_MODE=live\nMODEL_ENABLED=true\nSEARCH_PROVIDER=disabled\n"
+            f"API_AUTH_TOKEN=\nLIVE_INGESTION_ENABLED={value}\n")
+    result = runner(tmp_path, text)
+    assert result.returncode == 0, result.stderr
+    assert "Would start one API" in result.stdout
+    assert "Would start SearXNG" not in result.stdout
+    assert "LIVE_INGESTION_ENABLED" not in parsed_records(parse_settings(tmp_path / ".env"))
+    # make env uses this same preflight and must leave existing settings untouched.
+    report = setup(tmp_path, "--mode", "live")
+    assert "live: no required values unset" in report.stdout
+    assert (tmp_path / ".env").read_text() == text
+    # make live runs this check before any Docker command.
+    env = {key: value for key, value in os.environ.items() if key not in example_blocks()}
+    checked = subprocess.run([sys.executable, str(SCRIPTS / "compose_live.py"), "--check"],
+                             cwd=tmp_path, env=env, text=True, capture_output=True)
+    assert checked.returncode == 0, checked.stderr
+
+
 def test_caller_values_win_over_the_file_even_when_empty(tmp_path):
     path = tmp_path / ".env"
     path.write_text("RUN_MODE=test\nAPI_AUTH_TOKEN=\nKARAKUTU_API_PORT=2200\n"

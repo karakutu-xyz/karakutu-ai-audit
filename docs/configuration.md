@@ -13,7 +13,7 @@ example: the API defaults to live with model/search disabled; the example retain
 live with LM Studio and SearXNG enabled. `make test` selects offline mode regardless
 of the file. For a local demo use `RUN_MODE=test make dev`; a file with no RUN_MODE
 makes the local runner default to test. Production means live behind a TLS proxy.
-Test ignores model/search/archive/live-intake settings. Optional integrations are
+Test ignores model/search/archive settings. Optional integrations are
 not prerequisites for a benchmark; disabling the model yields `AUDIT_FAILED`.
 
 Tooling settings are marked in the purpose column. Make-specific variables are
@@ -57,10 +57,9 @@ assignments are not project configuration. `MODEL_MAX_TOKENS` is an output count
 | `ARCHIVE_BASE_URL` | Trusted read-only archive API; empty disables archive reads. | empty (disabled) | test: ignored; live/production: optional | no | Your archive operator, e.g. https://archive.example |
 | `ARCHIVE_WALLET_PATH` | Host path to your read-auth keyfile outside the repo, for local and Docker use; Docker always uses /run/secrets/archive_wallet inside the API. | empty | test: ignored; live/production: only when archive requires auth | yes | Your own protected keyfile outside the repo |
 | `ARCHIVE_WALLET_JSON` | Inline read-auth wallet JSON; prefer a keyfile path; quote JSON in shell. | empty | test: ignored; live/production: alternative to wallet path | yes | Your own wallet; host secret store |
-| `API_AUTH_TOKEN` | Bearer token (at least 32 characters); protects all /api data when set. | empty | test/live: remote access or editing; live: ingestion; production: required | yes | make env API_TOKEN=1 or openssl rand -hex 32 |
+| `API_AUTH_TOKEN` | Bearer token (at least 32 characters); protects all /api data when set. | empty | test/live: remote access or editing; production: required | yes | make env API_TOKEN=1 or openssl rand -hex 32 |
 | `ALLOWED_HOSTS` | Extra comma-separated hosts without schemes/ports; remote hosts need token. | localhost,127.0.0.1,testserver | test/live: remote access; production: public proxy hostname | no | Your hostname, e.g. audit.example |
 | `ALLOWED_ORIGINS` | Extra comma-separated browser origins, no trailing slash. | http://localhost and http://127.0.0.1 on 2200/2201 | test/live: non-default origins; production: public TLS origin | no | Your browser origin, e.g. https://audit.example |
-| `LIVE_INGESTION_ENABLED` | Enable authenticated live submissions; benchmarks remain separate. | false | test: ignored; live/production: only for live intake; token required | no | Enable deliberately after review |
 | `CONTAINER_MODEL_BASE_URL` | Container-visible model URL; overrides MODEL_BASE_URL. Tooling only. | http://host.docker.internal:1234/v1 | test: ignored; live/production: reachable model endpoint | no | Docker host LM Studio or Scaleway console endpoint |
 | `KARAKUTU_BIND_ADDRESS` | Compose API/UI publish address; API validates it; local runner stays loopback. | Compose: 127.0.0.1; API: empty | test/live/production: loopback recommended; remote requires token | no | Keep loopback behind TLS proxy |
 | `KARAKUTU_API_PORT` | Published API/local runner port. Tooling only, not read by API. | 2200 | test/live/production: optional | no | Free local port |
@@ -202,7 +201,7 @@ exported environment without printing them.
 - `KARAKUTU_WEB_PORT` → Makefile, backend/audit/config.py, compose.yaml,
   scripts/run-local.sh.
 - `ALLOWED_HOSTS`, `ALLOWED_ORIGINS`, `ARCHIVE_BASE_URL`, `ARCHIVE_WALLET_JSON`,
-  `ARCHIVE_WALLET_PATH`, `DATABASE_URL`, `DATA_DIR`, `LIVE_INGESTION_ENABLED`,
+  `ARCHIVE_WALLET_PATH`, `DATABASE_URL`, `DATA_DIR`,
   `RECORD_FULL_EVIDENCE`, `MAX_CONCURRENT_RUNS`, `MODEL_API_KEY`, `MODEL_BASE_URL`, `MODEL_ENABLED`,
   `MODEL_MAX_TOKENS`, `MODEL_NAME`, `MODEL_NAME_CLASSIFICATION`,
   `MODEL_NAME_RELATED_REMOVALS`, `MODEL_NAME_RELEVANCE`, `MODEL_NAME_SOURCE`,

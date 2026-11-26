@@ -141,8 +141,6 @@ def issues(values: Mapping[str, str], mode: str) -> dict[str, str]:
     if search == "searxng":
         require("SEARXNG_SECRET", "set a search signing secret (openssl rand -hex 32)")
         require("SEARXNG_URL", "local search URL", "http://127.0.0.1:2202")
-    if values.get("LIVE_INGESTION_ENABLED", "false").lower() in {"true", "1"}:
-        require("API_AUTH_TOKEN", "live ingestion requires a bearer token")
     return result
 
 
@@ -175,6 +173,8 @@ def main() -> None:
         parser.error("path is required")
     try:
         values = read_settings(args.path)
+        # Obsolete push-intake setting: accept old files without importing the key.
+        values.pop("LIVE_INGESTION_ENABLED", None)
         allowed = documented_keys(args.example)
     except UnicodeError:
         raise SystemExit("invalid .env encoding") from None

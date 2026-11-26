@@ -27,11 +27,11 @@ def looks_like_an_article_url(url: str) -> bool:
 
 # --- SSRF guard ---------------------------------------------------------------
 #
-# `/api/audit` is unauthenticated and fetches URLs the CALLER supplies: the removed
-# article's own URL (the step-4 premise probe) and every link extracted from the caller's
-# `content`. The per-URL outcome is then reported back — live / dead / unreadable plus a
-# containment percentage — which turns the audit endpoint into a probe oracle for anything
-# the server can reach but the caller cannot.
+# Article audits and benchmarks fetch URLs from article content (supplied by a
+# benchmark caller or the archive) and from search results, including the original
+# article URL and extracted links. The per-URL outcome is reported back — live / dead /
+# unreadable plus a containment percentage — so unguarded fetching would expose a
+# probe oracle for anything the server can reach but the caller cannot.
 #
 # Two layers:
 #   1. `is_public_web_url` — a network-free check on the URL string: non-HTTP schemes,

@@ -1,8 +1,9 @@
-"""`/api/audit` is unauthenticated and fetches URLs the CALLER supplies.
+"""Article audits and benchmarks fetch untrusted URLs from article content and search.
 
-Step 4 probes `removed_article.url` directly and fetches links parsed out of the caller's
-`content`, and the per-URL outcome (live / dead / unreadable, plus a containment percentage)
-comes back in the response. Unguarded, that is an internal-network probe oracle: point it at
+The workflow probes the original URL and links parsed out of article content supplied
+by a benchmark caller or the archive, and fetches search results. The per-URL outcome
+(live / dead / unreadable, plus a containment percentage) comes back in the response.
+Unguarded, that is an internal-network probe oracle: point it at
 `http://169.254.169.254/latest/meta-data/` and read the answer off the audit.
 
 Two properties are pinned here:

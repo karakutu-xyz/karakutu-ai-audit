@@ -223,7 +223,6 @@ class Settings:
     api_auth_token: str = ""
     allowed_hosts: frozenset[str] = DEFAULT_ALLOWED_HOSTS
     allowed_origins: frozenset[str] = DEFAULT_ALLOWED_ORIGINS
-    live_ingestion_enabled: bool = False
     max_concurrent_runs: int = 1
     # The host address Docker publishes the API and UI on (KARAKUTU_BIND_ADDRESS); empty when
     # the service is not started by Compose. Only checked, never bound by the app itself.
@@ -252,8 +251,8 @@ class Settings:
             raise ValueError("Test mode requires its own test database (*-test.sqlite3 or under data/demo/); "
                              "live mode must not use a test database or one holding demo data")
         if test and (self.model_enabled or self.search_provider != "disabled" or self.archive_base_url
-                     or self.archive_wallet_path or self.archive_wallet_json or self.live_ingestion_enabled):
-            raise ValueError("Test mode runs without model, search, archive or live ingestion")
+                     or self.archive_wallet_path or self.archive_wallet_json):
+            raise ValueError("Test mode runs without model, search or archive")
         object.__setattr__(self, "allowed_hosts", DEFAULT_ALLOWED_HOSTS | frozenset(
             _host(host) for host in self.allowed_hosts))
         object.__setattr__(self, "allowed_origins", DEFAULT_ALLOWED_ORIGINS | frozenset(
@@ -280,8 +279,6 @@ class Settings:
                 raise ValueError("Non-loopback KARAKUTU_BIND_ADDRESS requires API_AUTH_TOKEN")
         if self.api_auth_token and len(self.api_auth_token) < 32:
             raise ValueError("API_AUTH_TOKEN must contain at least 32 characters")
-        if self.live_ingestion_enabled and not self.api_auth_token:
-            raise ValueError("Live ingestion requires API_AUTH_TOKEN")
         if self.search_provider not in {"disabled", "searxng"}:
             raise ValueError("SEARCH_PROVIDER must be disabled or searxng")
         if self.model_provider not in {"lmstudio", "openai_compatible"}:
@@ -355,6 +352,5 @@ class Settings:
             web_port=_port("KARAKUTU_WEB_PORT"),
             allowed_hosts=frozenset(_entries("ALLOWED_HOSTS")),
             allowed_origins=frozenset(_entries("ALLOWED_ORIGINS")),
-            live_ingestion_enabled=_bool("LIVE_INGESTION_ENABLED"),
             max_concurrent_runs=int(os.getenv("MAX_CONCURRENT_RUNS", "1")),
         )

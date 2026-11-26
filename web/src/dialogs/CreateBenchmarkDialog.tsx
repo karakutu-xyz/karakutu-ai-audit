@@ -149,7 +149,7 @@ export function CreateBenchmarkDialog({
           {error && <ErrorBox message={error} />}
           <p className="form-note">
             <Icon name="grid" size={15} /> This creates a benchmark. Live audits
-            enter through the API or webhook.
+            start from a saved article.
           </p>
         </div>
         <div className="modal-footer">

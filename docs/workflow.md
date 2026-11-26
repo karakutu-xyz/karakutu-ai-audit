@@ -132,6 +132,10 @@ Each step row opens to its recorded explanation, the **Step input** beside the e
 
 ## Run lifecycle and operator controls
 
+Live runs start only by auditing a saved live article (origin `article`); benchmark
+submissions stay in the benchmark category. Historical `api` and `webhook` origins
+remain readable. Karakutu polling intake is not yet built.
+
 Submission stores `queued` before execution. A free concurrency slot moves a run
 to `running`; a completed workflow becomes `succeeded`, or `failed` for
 `AUDIT_FAILED`. Shutdown/restart still marks incomplete work failed with
