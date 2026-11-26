@@ -28,7 +28,7 @@ from audit.config import MODEL_STEPS, Settings, canonical_request_host
 from audit.db import ArticleStoreError, PromptStoreError, Store
 from audit.domain import AuditRequest, Verdict
 from audit.engine import AuditEngine
-from audit.poller import ArchivePoller, store_in_thread
+from audit.poller import ARCHIVE_TEXT_RETRY_SECONDS, ArchivePoller, store_in_thread
 from audit.record import RecordError, build_result
 from audit.provenance import build_base, models_from_config, with_prompts
 from audit.schemas import (
@@ -43,7 +43,6 @@ from audit.schemas import (
 from audit.workflow.prompt_registry import DEFAULTS, REGISTRY, validation_codes
 
 MAX_BODY_BYTES = 2 * 1024 * 1024
-ARCHIVE_TEXT_RETRY_SECONDS = 10 * 60
 
 
 def unified_prompt_diff(before: str, after: str, fromfile: str, tofile: str) -> str:

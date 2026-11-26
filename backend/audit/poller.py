@@ -6,6 +6,8 @@ from typing import get_args
 from audit.clients.karakutu import ArchiveState
 
 
+# A failed text read, or an article that cannot be submitted, waits this long before retry.
+ARCHIVE_TEXT_RETRY_SECONDS = 10 * 60
 ARCHIVE_FAILURES = frozenset(get_args(ArchiveState)) - {"ok", "unchecked"}
 
 
@@ -172,6 +174,15 @@ class ArchivePoller:
                 if (article is None or article["category"] != "live"
                         or not article["content"].strip() or store.has_article_run(ref)):
                     continue
-                self.submit(None, "live", "poll", article_ref=ref)
+                try:
+                    self.submit(None, "live", "poll", article_ref=ref)
+                except Exception:
+                    # Saved data this article cannot be audited with (for example an
+                    # unusable date) creates no run. Count it, cool it down like a failed
+                    # read and keep going, so it cannot block every later candidate.
+                    cycle["unreadable"] += 1
+                    self.state.article_fill_attempts[(ref, article["url"])] = (
+                        self.state.article_fill_clock() + ARCHIVE_TEXT_RETRY_SECONDS)
+                    continue
                 cycle["queued"] += 1
         return None

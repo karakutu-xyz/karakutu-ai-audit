@@ -85,7 +85,9 @@ changed title, text and version references without changing historical run input
 then re-checks the article and absence of any run under the shared article lock
 before submission with origin `poll`. A failed refresh or missing text creates no run
 and increments `unreadable`, even when stale text is cached. Failed reads share a
-ten-minute cooldown per ref/URL, including empty text, then become retryable. Failed,
+ten-minute cooldown per ref/URL, including empty text, then become retryable. An
+article whose saved data cannot start a run (for example an unusable date) is
+counted as `unreadable` and cooled down the same way; the sweep moves on. Failed,
 stopped and interrupted runs are never retried automatically. Manual audits may
 still re-run articles. Automatic work uses the current workflow and normal engine,
 including real model/search calls when configured; it never writes to the archive.

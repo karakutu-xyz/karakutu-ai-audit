@@ -700,6 +700,27 @@ async def test_unreadable_older_articles_cannot_starve_a_readable_one(tmp_path):
         assert [r.article_ref for r in runs(app) if r.origin == "poll"] == ["ka-11"]
 
 
+async def test_an_article_that_cannot_be_submitted_does_not_block_later_ones(tmp_path):
+    # Readable text but saved data the run cannot be created from (an unusable date):
+    # no run, counted, cooled down, and the sweep goes on to the next article.
+    async with service(tmp_path, auto_audit_enabled=True,
+                       auto_audit_max_per_poll=5) as (app, archive, _):
+        archive.items = [
+            {"article_id": 1, "url": "https://paper.example/fiction-1", "publish_date": "not-a-date"},
+            {"article_id": 2, "url": "https://paper.example/fiction-2"},
+        ]
+        clock = 0
+        app.state.article_fill_clock = lambda: clock
+        poller = app.state.poller
+        cycle = await poller.run_cycle()
+        assert cycle["reason"] is None and cycle["queued"] == 1 and cycle["unreadable"] == 1
+        assert [r.article_ref for r in runs(app)] == ["ka-2"]
+        # Cooling down: the next cycle does not read it again.
+        reads = len(archive.reads)
+        await poller.run_cycle()
+        assert len(archive.reads) == reads and len(runs(app)) == 1
+
+
 async def test_refused_article_reads_cannot_starve_a_readable_one(tmp_path):
     # The archive refuses the two oldest articles (the client then reports a failure
     # state and the cycle stops); the next cycles must still move on to the third.
