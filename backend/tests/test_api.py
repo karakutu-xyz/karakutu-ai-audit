@@ -111,60 +111,81 @@ def test_benchmark_workflow_reaction_export_and_restart(tmp_path, database_url):
 
 @pytest.mark.parametrize("route", ["/api/audit", "/api/webhooks/audit"])
 @pytest.mark.parametrize("configured", [False, True])
-def test_live_disabled_precedes_auth_and_validation(tmp_path, route, configured, database_url):
+def test_removed_push_routes_create_no_runs(tmp_path, route, configured, database_url):
     config = settings(tmp_path, database_url=database_url,
-                      api_auth_token=TOKEN if configured else "", live_ingestion_enabled=False)
+                      api_auth_token=TOKEN if configured else "")
     with TestClient(create_app(config, FakeEngine())) as client:
-        response = client.post(route, content="not-json", headers={"Authorization": "Bearer wrong", "Origin": "https://untrusted.invalid"})
-        assert response.status_code == 404
-        assert response.json() == {"error": {"code": "not_found"}}
-        assert client.post(route + "/", content="not-json").status_code == 404
-        assert client.post(route, json=BODY, headers=AUTH).status_code == 404
+        headers = AUTH if configured else {}
+        for path in (route, route + "/"):
+            assert client.post(path, json=BODY, headers=headers).status_code in {404, 405}
+            assert client.post(path, content="not-json", headers=headers).status_code in {404, 405}
+        if configured:
+            # The normal all-API authentication guard still precedes route resolution.
+            assert client.post(route, json=BODY).status_code == 401
         assert client.app.state.store.runs()["total"] == 0
+        assert client.app.state.store.articles()["total"] == 0
 
 
 def test_auth_precedes_validation_and_protects_all_api_routes(tmp_path, database_url):
-    with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, live_ingestion_enabled=True), FakeEngine())) as client:
+    with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN), FakeEngine())) as client:
         for path in ["/api/status", "/api/workflow", "/api/workflows/missing", "/api/runs", "/api/runs/missing", "/api/runs/missing/details", "/api/runs/missing/export"]:
             assert client.get(path).status_code == 401
             assert client.get(path, headers={"Authorization": "Bearer wrong"}).status_code == 401
-        for path in ["/api/audit", "/api/webhooks/audit", "/api/benchmarks/runs", "/api/runs/missing/reactions"]:
+        for path in ["/api/benchmarks/runs", "/api/runs/missing/reactions"]:
             assert client.post(path, content="invalid-json").status_code == 401
             assert client.post(path, content="invalid-json", headers=AUTH).status_code == 422
         assert client.get("/health").status_code == 200
         assert client.get("/api/status", headers=AUTH).json()["writes_enabled"] is False
         assert client.get("/api/status", headers=AUTH).json()["mode"] == "live"
         assert client.get("/api/status", headers=AUTH).json()["model_name"] == "fabricated"
-        assert client.get("/api/status", headers=AUTH).json()["live_ingestion_enabled"] is True
         assert client.get("/api/status").headers["cache-control"] == "no-store"
         assert client.get("/api/status", headers=AUTH).headers["cache-control"] == "no-store"
         assert client.get("/api/runs", headers=[("Authorization", "Bearer " + TOKEN), ("Authorization", "Bearer " + TOKEN)]).status_code == 401
 
 
-def test_live_category_and_origin_are_server_assigned(tmp_path, database_url):
-    with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, live_ingestion_enabled=True), FakeEngine())) as client:
-        for route, origin in [("/api/audit", "api"), ("/api/webhooks/audit", "webhook"), ("/api/benchmarks/runs", "benchmark")]:
-            response = client.post(route, json=BODY, headers=AUTH)
+def test_categories_are_server_assigned_and_historical_origins_still_filter(tmp_path, database_url):
+    from test_articles import add_article
+
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN)
+    with TestClient(create_app(config, FakeEngine())) as client:
+        client.headers.update(AUTH)
+        store = client.app.state.store
+        # Retained runs from the removed push routes still read and filter normally.
+        for origin in ("api", "webhook"):
+            old = store.create_run(workflow_id=client.app.state.workflow["id"],
+                                   category="live", origin=origin, input=BODY)
+            store.complete_run(old["id"], {"response": {
+                "verdict": "INCONCLUSIVE", "stages": [], "findings": "Fictional output",
+                "flags": [], "short_circuited_at": None, "classification": None}})
+            assert client.get(f'/api/runs/{old["id"]}/details').json()["origin"] == origin
+            assert client.get(f'/api/runs/{old["id"]}').status_code == 200
+        ref = add_article(store, category="live")
+        for route, origin, category in [
+            (f"/api/articles/{ref}/audit", "article", "live"),
+            ("/api/benchmarks/runs", "benchmark", "benchmark"),
+        ]:
+            response = client.post(route, json=BODY)
             assert response.status_code == 202
             assert response.json()["run"]["origin"] == origin
-            assert response.json()["run"]["category"] == ("benchmark" if origin == "benchmark" else "live")
+            assert response.json()["run"]["category"] == category
             finished(client, response.json()["run"]["id"])
-        assert client.get("/api/runs?category=live", headers=AUTH).json()["total"] == 2
+        assert client.get("/api/runs?category=live").json()["total"] == 3
         for query, total in [
-            ("status=succeeded", 3),
+            ("status=succeeded", 4),
             ("origin=api", 1),
             ("status=succeeded&origin=api", 1),
             ("category=live&status=succeeded&origin=api", 1),
             ("category=benchmark&status=succeeded&origin=api", 0),
             ("status=failed&origin=api", 0),
             ("status=succeeded&origin=webhook", 1),
+            ("origin=article", 1),
         ]:
-            response = client.get("/api/runs?" + query, headers=AUTH)
+            response = client.get("/api/runs?" + query)
             assert response.status_code == 200
             assert response.json()["total"] == total
             assert len(response.json()["items"]) == total
         spoofed = {**BODY, "category": "live", "origin": "webhook", "workflow_id": "invented"}
-        assert client.post("/api/benchmarks/runs", json=spoofed, headers=AUTH).status_code == 422
+        assert client.post("/api/benchmarks/runs", json=spoofed).status_code == 422
 
 
 def test_safe_validation_body_limits_and_origin(tmp_path, database_url):
@@ -280,16 +301,17 @@ def test_openapi_documents_typed_run_workflow_and_reaction_outputs(tmp_path, dat
         ("/api/runs/{run_id}/details", "get", "200", "RunDetail"),
         ("/api/runs/{run_id}/export", "get", "200", "RunDetail"),
         ("/api/benchmarks/runs", "post", "202", "AuditResult"),
-        ("/api/audit", "post", "202", "AuditResult"),
         ("/api/articles/{ref}/audit", "post", "202", "AuditResult"),
         ("/api/runs/{run_id}/cancel", "post", "200", "AuditResult"),
-        ("/api/webhooks/audit", "post", "202", "AuditResult"),
         ("/api/runs/{run_id}/reactions", "post", "201", "Reaction"),
     ]
     for path, method, code, name in expected:
         response = schema["paths"][path][method]["responses"][code]
         assert response["content"]["application/json"]["schema"] == {"$ref": f"#/components/schemas/{name}"}
+    assert "/api/audit" not in schema["paths"]
+    assert "/api/webhooks/audit" not in schema["paths"]
     components = schema["components"]["schemas"]
+    assert "live_ingestion_enabled" not in components["ServiceStatus"]["properties"]
     assert {"RunStory", "RunDetail", "RunList", "RunStep", "AuditResponse", "WorkflowDefinition", "WorkflowSnapshot", "Reaction", "ServiceStatus", "Health"} <= set(components)
     assert components["RunList"]["properties"]["items"]["items"]["$ref"].endswith("/RunSummary")
     detail = components["RunDetail"]["properties"]
@@ -414,7 +436,7 @@ def test_test_mode_reports_mode_and_seeds_its_own_database(tmp_path, monkeypatch
         status = client.get("/api/status").json()
         assert status["mode"] == "test"
         assert status["model_enabled"] is False and status["search_provider"] == "disabled"
-        assert status["archive_reads_enabled"] is False and status["live_ingestion_enabled"] is False
+        assert status["archive_reads_enabled"] is False
     assert seeded == [config.database_url]
     assert config.database_url.endswith("/demo/audit-test.sqlite3")
     assert (tmp_path / "demo" / "audit-test.sqlite3").is_file()
@@ -1099,12 +1121,15 @@ def assert_lean_result(body):
     assert not {"steps", "input", "output", "model", "provenance", "request"} & body.keys()
 
 
-@pytest.mark.parametrize("path", ["/api/audit", "/api/webhooks/audit", "/api/benchmarks/runs"])
+@pytest.mark.parametrize("path", ["/api/articles/{ref}/audit", "/api/benchmarks/runs"])
 def test_submissions_and_single_result_are_lean(tmp_path, database_url, path):
-    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN,
-                      live_ingestion_enabled=True)
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN)
     with TestClient(create_app(config, FakeEngine())) as client:
         client.headers.update(AUTH)
+        if "{ref}" in path:
+            from test_articles import add_article
+            ref = add_article(client.app.state.store, category="live")
+            path = path.format(ref=ref)
         submitted = client.post(path, json=BODY)
         assert submitted.status_code == 202
         body = submitted.json()
@@ -1124,18 +1149,21 @@ def test_submissions_and_single_result_are_lean(tmp_path, database_url, path):
             assert result["record_id"] == run_id + ".r0"
             assert result["lineage"] == {"kind": "initial"}
         assert client.get(f"/api/runs/{run_id}/details").json() == details
-        assert details["input"]["removed_article"]["content"] == BODY["removed_article"]["content"]
+        expected = (BODY["removed_article"]["content"] if path == "/api/benchmarks/runs"
+                    else client.app.state.store.article(ref)["content"])
+        assert details["input"]["removed_article"]["content"] == expected
         assert details["steps"]
         assert client.get("/api/runs/missing").status_code == 404
         assert client.get("/api/runs/missing/details").status_code == 404
 
 
 def test_article_submission_and_reaudit_lineage(tmp_path, database_url):
-    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN,
-                      live_ingestion_enabled=True)
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN)
     with TestClient(create_app(config, FakeEngine())) as client:
         client.headers.update(AUTH)
-        first = client.post("/api/audit", json=BODY).json()
+        from test_articles import add_article
+        ref = add_article(client.app.state.store, category="live")
+        first = client.post(f"/api/articles/{ref}/audit").json()
         first_id = first["run"]["id"]
         finished(client, first_id)
         assert client.get(f"/api/runs/{first_id}").json()["lineage"] == {"kind": "initial"}
@@ -1285,8 +1313,7 @@ def test_unicode_url_byte_limit_at_submission(tmp_path, database_url):
 def test_old_oversized_url_is_withheld_on_read_reaudit_and_cancel(tmp_path, database_url):
     payload = deepcopy(BODY)
     payload["removed_article"]["url"] = "https://news.example/" + "🧵" * 4000
-    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN,
-                      live_ingestion_enabled=True)
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN)
     with TestClient(create_app(config, FakeEngine(wait=True))) as client:
         client.headers.update(AUTH)
         client.post("/api/queue/pause")
@@ -1309,14 +1336,13 @@ def test_old_oversized_url_is_withheld_on_read_reaudit_and_cancel(tmp_path, data
         assert client.get(f"/api/runs/{run_id}/details").json()["status"] == "cancelled"
 
 
-@pytest.mark.parametrize("path", ["/api/audit", "/api/webhooks/audit", "/api/benchmarks/runs",
+@pytest.mark.parametrize("path", ["/api/benchmarks/runs",
                                   "/api/articles/{ref}/audit", "/api/runs/{run_id}/cancel"])
 def test_mutations_map_builder_refusals_without_undoing_work(
         tmp_path, database_url, monkeypatch, path):
     from audit.record import RecordError
 
-    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN,
-                      live_ingestion_enabled=True)
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN)
     with TestClient(create_app(config, FakeEngine(wait=True))) as client:
         client.headers.update(AUTH)
         client.post("/api/queue/pause")
@@ -1348,8 +1374,7 @@ def test_imported_long_archive_identity_survives_result_routes(tmp_path, databas
     archive_id = "7" * 78
     ref = "ka-" + archive_id
     url = "https://news.example/fictional-import"
-    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN,
-                      live_ingestion_enabled=True)
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN)
     with TestClient(create_app(config, FakeEngine())) as client:
         client.headers.update(AUTH)
         store = client.app.state.store

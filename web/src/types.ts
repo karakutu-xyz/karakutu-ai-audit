@@ -144,7 +144,6 @@ export interface ServiceStatus {
   search: SearchState;
   archive_reads_enabled: boolean;
   archive: ArchiveState;
-  live_ingestion_enabled: boolean;
   writes_enabled: false;
   prompts_editable: boolean;
 }

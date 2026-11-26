@@ -41,7 +41,6 @@ def setup(target: Path, *, api_token: bool = False, mode: str | None = None) -> 
     print("Live with LM Studio: load a chat model; verify MODEL_BASE_URL and MODEL_NAME.")
     print("Docker live: verify CONTAINER_MODEL_BASE_URL is reachable from containers.")
     print("Optional archive: set ARCHIVE_BASE_URL and your read wallet if required.")
-    print("Optional live ingestion: set LIVE_INGESTION_ENABLED and API_AUTH_TOKEN.")
 
 
 def main() -> None:

@@ -105,7 +105,6 @@ class ServiceStatus(BaseModel):
     search: SearchState
     archive: ArchiveState
     archive_reads_enabled: bool
-    live_ingestion_enabled: bool
     writes_enabled: Literal[False]
     prompts_editable: bool
 

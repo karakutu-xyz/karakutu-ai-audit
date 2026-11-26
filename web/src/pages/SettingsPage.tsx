@@ -77,12 +77,6 @@ export function SettingsPage() {
               value: archiveLabels[status.archive],
             },
             {
-              label: "Live ingestion",
-              value: status.live_ingestion_enabled
-                ? "Enabled"
-                : "Disabled · API and webhook intake off",
-            },
-            {
               label: "Prompts editable via API",
               value: status.prompts_editable
                 ? "Yes · authenticated API only"

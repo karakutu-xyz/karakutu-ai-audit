@@ -1792,7 +1792,7 @@ function fictionalStory(overrides = {}) {
 function articleDetailHarness(initial = fictionalArticle()) {
   const runtime = hookRuntime();
   const api = { token: "", epoch: 0, articlesCache: new Map(),
-    status: { mode: "live", live_ingestion_enabled: true } };
+    status: { mode: "live" } };
   let article = initial;
   let run = null;
   let tree;
@@ -2205,8 +2205,8 @@ test("archive import submits the day count, reports counts or the safe error cod
   assert.ok(module.importError(new client.ApiError(403, "untrusted_origin"))
     .includes("ALLOWED_ORIGINS"));
   assert.ok(!module.importError(new client.ApiError(403, "untrusted_origin")).includes("token"));
-  assert.equal(module.importError(new client.ApiError(403, "live_ingestion_disabled")),
-    "The service could not complete this request. Please try again. (live_ingestion_disabled)");
+  assert.equal(module.importError(new client.ApiError(403, "fictional_refusal")),
+    "The service could not complete this request. Please try again. (fictional_refusal)");
   assert.equal(module.importError(new client.ApiError(422, "validation_error")),
     "Choose between 1 and 90 days. (validation_error)");
   assert.ok(module.importError(new client.ApiError(409, "import_in_progress"))
@@ -2285,15 +2285,15 @@ test("article rail offers Stop audit only while the latest audit is queued or ru
   }
 });
 
-test("article audits stay available independently of live intake", async () => {
-  for (const [mode, category, enabled] of [
-    ["live", "live", false],
-    ["live", "live", true],
-    ["test", "live", false],
-    ["live", "benchmark", false],
+test("saved live and benchmark articles can be audited in both modes", async () => {
+  for (const [mode, category] of [
+    ["live", "live"],
+    ["test", "live"],
+    ["live", "benchmark"],
+    ["test", "benchmark"],
   ]) {
     const harness = articleDetailHarness(fictionalArticle({ category }));
-    harness.api.status = { mode, live_ingestion_enabled: enabled };
+    harness.api.status = { mode };
     const html = harness.render();
     const button = html.match(/<button[^>]*article-audit-button[^>]*>/)?.[0];
     assert.ok(button);

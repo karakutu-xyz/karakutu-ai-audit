@@ -166,7 +166,8 @@ The primary action posts through `api/client.ts`. A successful response inserts
 the new run into the displayed history immediately and refetches the article,
 restarting polling. A conflict explains that an audit is already running and
 refetches; access errors point to Connection settings. Article audits follow the
-normal token rules independently of live intake. Raw error bodies are never shown.
+normal token rules: no token locally unless configured, and required for remote
+access. Raw error bodies are never shown.
 Token/epoch changes abort pending submissions and reset action state. Review uses
 the exact latest run; run detail links its title back when `article_ref` is present.
 Removed text is clamped to twelve rendered lines, with a toggle only when it overflows; snapshot

@@ -249,7 +249,6 @@ def test_every_demo_article_audits_and_reruns_offline(tmp_path, monkeypatch):
         engine = client.app.state.audit_engine
         assert isinstance(engine, DemoEngine)
         engine.step_delay = 0
-        assert not config.live_ingestion_enabled
         listing = client.get("/api/articles").json()["items"]
         assert len(listing) == 19
         assert {a["category"] for a in listing} == {"live", "benchmark"}
@@ -327,7 +326,7 @@ def test_live_mode_articles_never_seed_demo_data(tmp_path):
 @pytest.mark.parametrize("configured", [False, True])
 def test_live_mode_article_audit_uses_normal_token_rules(tmp_path, configured, database_url):
     config = settings(tmp_path, database_url=database_url,
-                      api_auth_token=TOKEN if configured else "", live_ingestion_enabled=False)
+                      api_auth_token=TOKEN if configured else "")
     assert config.mode == "live"
     with TestClient(create_app(config, FakeEngine())) as client:
         ref = add_article(client.app.state.store, category="live")
@@ -337,7 +336,6 @@ def test_live_mode_article_audit_uses_normal_token_rules(tmp_path, configured, d
             assert client.app.state.store.article(ref)["run_count"] == 0
             assert client.app.state.store.runs()["total"] == 0
         headers = AUTH if configured else {}
-        assert client.get("/api/status", headers=headers).json()["live_ingestion_enabled"] is False
         response = client.post(path, headers=headers)
         assert response.status_code == 202
         assert response.json()["run"]["origin"] == "article"
@@ -470,7 +468,7 @@ def test_archive_import_and_lazy_fill_once(tmp_path, fail, database_url):
             assert len(detail["snapshot"]["versions"]) == 2
             assert "news_text" not in str(detail["snapshot"])
             assert detail["links"]["archive_url"] is None
-        # Article audits need text, but do not depend on live intake being enabled.
+        # Article audits require saved text or a successful archive read.
         assert client.post("/api/articles/ka-42/audit").status_code == (422 if fail else 202)
         assert [c[0] for c in engine.archive.calls].count("detail") == 1
 
@@ -529,10 +527,10 @@ def test_audit_with_a_failed_archive_read_keeps_the_no_content_answer(tmp_path):
         assert [c[0] for c in engine.archive.calls].count("detail") == 1
 
 
-def test_audit_route_without_live_ingestion_fills_archive_text_once(tmp_path):
+def test_article_audit_fills_archive_text_once(tmp_path):
     engine = FakeEngine()
     engine.archive = FakeArchive()
-    config = settings(tmp_path, api_auth_token=TOKEN, live_ingestion_enabled=False)
+    config = settings(tmp_path, api_auth_token=TOKEN)
     with TestClient(create_app(config, engine)) as client:
         client.headers.update(AUTH)
         assert client.post("/api/articles/import").status_code == 200
@@ -567,12 +565,19 @@ async def test_archive_client_get_only():
         await archive.close()
 
 
-def test_all_submission_routes_link_same_article(tmp_path, database_url):
-    with TestClient(create_app(settings(tmp_path, database_url=database_url, api_auth_token=TOKEN, live_ingestion_enabled=True), FakeEngine())) as client:
-        runs = [client.post(path, headers=AUTH, json=BODY).json() for path in
-                ("/api/benchmarks/runs", "/api/audit", "/api/webhooks/audit")]
-        assert len({r["article"]["ref"] for r in runs}) == 1
-        assert client.get("/api/articles", headers=AUTH).json()["items"][0]["run_count"] == 3
+def test_benchmark_submission_and_article_reaudit_link_same_article(tmp_path, database_url):
+    config = settings(tmp_path, database_url=database_url, api_auth_token=TOKEN)
+    with TestClient(create_app(config, FakeEngine())) as client:
+        client.headers.update(AUTH)
+        first = client.post("/api/benchmarks/runs", json=BODY).json()
+        finished(client, first["run"]["id"])
+        ref = first["article"]["ref"]
+        second = client.post(f"/api/articles/{ref}/audit")
+        assert second.status_code == 202
+        assert second.json()["article"]["ref"] == ref
+        assert second.json()["run"]["category"] == "benchmark"
+        assert second.json()["run"]["origin"] == "article"
+        assert client.get("/api/articles").json()["items"][0]["run_count"] == 2
 
 
 def test_article_and_run_insert_rollback_together(tmp_path, database_url):

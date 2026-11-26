@@ -2,17 +2,25 @@ import pytest
 from audit.config import Settings
 
 
-def test_live_ingestion_requires_strong_token():
-    with pytest.raises(ValueError, match="requires"):
-        Settings(live_ingestion_enabled=True)
+def test_configured_token_requires_at_least_32_characters():
     with pytest.raises(ValueError, match="32"):
         Settings(api_auth_token="short")
-    assert Settings(live_ingestion_enabled=True, api_auth_token="a" * 32).live_ingestion_enabled
+    assert Settings(api_auth_token="a" * 32).api_auth_token == "a" * 32
+
+
+@pytest.mark.parametrize("value", ["true", "false", "obsolete"])
+def test_obsolete_push_setting_is_ignored_at_startup(monkeypatch, tmp_path, value):
+    monkeypatch.setattr("audit.config.load_dotenv", lambda **_: False)
+    monkeypatch.setenv("RUN_MODE", "live")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("LIVE_INGESTION_ENABLED", value)
+    monkeypatch.setenv("API_AUTH_TOKEN", "")
+    parsed = Settings.from_env()
+    assert parsed.mode == "live" and parsed.api_auth_token == ""
 
 
 def test_settings_read_environment_when_constructed(monkeypatch):
     monkeypatch.setenv("MODEL_NAME", "test-model")
-    monkeypatch.setenv("LIVE_INGESTION_ENABLED", "false")
     monkeypatch.setenv("API_AUTH_TOKEN", "")
     assert Settings.from_env().model_name == "test-model"
 
@@ -117,7 +125,7 @@ def test_noncanonical_ipv4_hosts_are_rejected(host):
 INTEGRATION_ENV = {
     "MODEL_ENABLED": "true", "SEARCH_PROVIDER": "searxng", "ARCHIVE_BASE_URL": "https://archive.example.invalid",
     "ARCHIVE_WALLET_PATH": "/fabricated/wallet-path", "ARCHIVE_WALLET_JSON": "{}",
-    "LIVE_INGESTION_ENABLED": "true", "API_AUTH_TOKEN": "a" * 32,
+    "API_AUTH_TOKEN": "a" * 32,
 }
 
 
@@ -140,17 +148,15 @@ def test_test_mode_ignores_every_integration_and_uses_its_own_database(monkeypat
     assert parsed.database_url == f"sqlite:///{tmp_path.resolve() / 'demo' / 'audit-test.sqlite3'}"
     assert not parsed.model_enabled and parsed.search_provider == "disabled"
     assert not (parsed.archive_base_url or parsed.archive_wallet_path or parsed.archive_wallet_json)
-    assert not parsed.live_ingestion_enabled
     assert parsed.api_auth_token == "a" * 32
 
 
 @pytest.mark.parametrize("override", [
     {"model_enabled": True}, {"search_provider": "searxng"}, {"archive_base_url": "https://archive.example.invalid"},
     {"archive_wallet_path": "/fabricated"}, {"archive_wallet_json": "{}"},
-    {"live_ingestion_enabled": True, "api_auth_token": "a" * 32},
 ])
 def test_test_mode_fails_closed_on_any_integration(override):
-    with pytest.raises(ValueError, match="Test mode"):
+    with pytest.raises(ValueError, match="^Test mode runs without model, search or archive$"):
         Settings(mode="test", **override)
 
 
@@ -308,7 +314,7 @@ def test_non_loopback_bind_address_requires_token(monkeypatch, mode, address):
     monkeypatch.setenv("RUN_MODE", mode)
     monkeypatch.setenv("KARAKUTU_BIND_ADDRESS", address)
     monkeypatch.setenv("API_AUTH_TOKEN", "")
-    for name in ("MODEL_ENABLED", "SEARCH_PROVIDER", "ARCHIVE_BASE_URL", "LIVE_INGESTION_ENABLED"):
+    for name in ("MODEL_ENABLED", "SEARCH_PROVIDER", "ARCHIVE_BASE_URL"):
         monkeypatch.delenv(name, raising=False)
     with pytest.raises(ValueError, match="^Non-loopback KARAKUTU_BIND_ADDRESS requires API_AUTH_TOKEN$"):
         Settings.from_env()
@@ -333,7 +339,7 @@ def test_custom_web_port_adds_its_loopback_origins(monkeypatch, mode):
     monkeypatch.setattr("audit.config.load_dotenv", lambda **_: False)
     monkeypatch.setenv("RUN_MODE", mode)
     monkeypatch.setenv("KARAKUTU_WEB_PORT", "23101")
-    for name in ("MODEL_ENABLED", "SEARCH_PROVIDER", "ARCHIVE_BASE_URL", "LIVE_INGESTION_ENABLED",
+    for name in ("MODEL_ENABLED", "SEARCH_PROVIDER", "ARCHIVE_BASE_URL",
                  "API_AUTH_TOKEN", "ALLOWED_ORIGINS", "ALLOWED_HOSTS"):
         monkeypatch.delenv(name, raising=False)
     origins = Settings.from_env().allowed_origins

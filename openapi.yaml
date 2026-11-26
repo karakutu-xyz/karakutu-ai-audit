@@ -1749,9 +1749,6 @@ components:
         archive_reads_enabled:
           title: Archive Reads Enabled
           type: boolean
-        live_ingestion_enabled:
-          title: Live Ingestion Enabled
-          type: boolean
         mode:
           enum:
           - test
@@ -1814,7 +1811,6 @@ components:
       - search
       - archive
       - archive_reads_enabled
-      - live_ingestion_enabled
       - writes_enabled
       - prompts_editable
       title: ServiceStatus
@@ -2492,72 +2488,6 @@ paths:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Internal Server Error
       summary: Article Audit
-  /api/audit:
-    post:
-      operationId: audit_api_audit_post
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RunInput'
-        required: true
-      responses:
-        "202":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AuditResult'
-          description: Successful Response
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Bad Request
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Forbidden
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Not Found
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Result withheld; the saved run and its details remain available. Submissions remain
-            queued and cancellations remain effective.
-        "413":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Request Entity Too Large
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Unprocessable Entity
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Internal Server Error
-      summary: Audit
   /api/benchmarks/runs:
     post:
       operationId: benchmark_api_benchmarks_runs_post
@@ -4015,72 +3945,6 @@ paths:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Internal Server Error
       summary: Status
-  /api/webhooks/audit:
-    post:
-      operationId: webhook_api_webhooks_audit_post
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RunInput'
-        required: true
-      responses:
-        "202":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AuditResult'
-          description: Successful Response
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Bad Request
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Forbidden
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Not Found
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Result withheld; the saved run and its details remain available. Submissions remain
-            queued and cancellations remain effective.
-        "413":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Request Entity Too Large
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Unprocessable Entity
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Internal Server Error
-      summary: Webhook
   /api/workflow:
     get:
       operationId: workflow_api_workflow_get

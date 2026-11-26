@@ -62,15 +62,14 @@ parts fit together, read [Architecture](architecture.md). Every variable and its
    already exist. An existing file is left unchanged. Fill in valid model,
    search and archive settings for your environment and keep the file private.
    With a filled, valid live `.env`, auditing imported articles works locally
-   with no `API_AUTH_TOKEN` and `LIVE_INGESTION_ENABLED=false`.
+   with no `API_AUTH_TOKEN` while the app is only reachable from this machine.
 
    A token of at least 32 characters is required whenever the app is reachable
    from other machines: a non-loopback `KARAKUTU_BIND_ADDRESS` or
    `ALLOWED_HOSTS` entry makes startup refuse an empty token. Generate one with
    `make env API_TOKEN=1` for a new file, or `openssl rand -hex 32` for an
    existing file, and put it on the `API_AUTH_TOKEN` line.
-   `LIVE_INGESTION_ENABLED` only opens authenticated API/webhook intake routes;
-   this workflow does not need them. Then run:
+   Then run:
 
    ```sh
    make live
@@ -116,10 +115,11 @@ parts fit together, read [Architecture](architecture.md). Every variable and its
    imports articles from archive audits created in that period, initially as
    metadata. The control appears in live mode when archive reads are enabled.
 
+   Intake from Karakutu will be by polling, which is not yet built. Use archive
+   import to load saved articles for auditing now.
+
 6. **Audit an article.** Open an imported article and choose **Run first audit**
-   (or **Re-run audit**). The earlier local override of
-   `LIVE_INGESTION_ENABLED=true` plus a throwaway token is no longer needed for
-   auditing imported articles. If a token is configured, enter it under
+   (or **Re-run audit**). If a token is configured, enter it under
    Connection settings as in step 4. Its text is loaded from the archive the
    first time it is opened or audited. If the read fails and no content is
    available, the audit returns HTTP 422 with `article_has_no_content`. A failed
@@ -194,10 +194,8 @@ parts fit together, read [Architecture](architecture.md). Every variable and its
     - For degraded search, see step 9. For an unreachable search service, check
       SearXNG and its configured URL; a refused request may mean JSON output is off.
     - An article audit 404 means the saved article was not found; refresh the
-      Articles list. Only `POST /api/audit` and `POST /api/webhooks/audit`
-      return 404 when live intake is off. The token message is resolved in
-      step 4. For HTTP 422 `article_has_no_content`, fix archive access and
-      retry as in steps 5–6.
+      Articles list. The token message is resolved in step 4. For HTTP 422
+      `article_has_no_content`, fix archive access and retry as in steps 5–6.
     - If `make live` needs `.env`, run `make env`; if `make test` fails on
       `!reset`, update Docker Compose. A port in use may belong to another mode.
     - If `make dev` reports stale web or Python dependencies, run
