@@ -315,7 +315,7 @@ test("ledger sends all filters to the server and renders the returned page", () 
 
 test("ledger maps origin choices and keeps benchmark category isolated", () => {
   const { RunsPage } = load(path.join(root, "pages/RunsPage.tsx"));
-  for (const origin of ["", "benchmark", "live", "api", "webhook", "article"]) {
+  for (const origin of ["", "benchmark", "live", "api", "webhook", "article", "poll"]) {
     visit(`https://workbench.invalid/runs?origin=${origin}`);
     render(RunsPage);
     const category = ["benchmark", "live"].includes(origin) ? origin : null;
@@ -1499,6 +1499,11 @@ test("history restoration expires after five seconds without moving later conten
   harness.runtime.unmount();
 });
 
+const pollingFixture = {
+  enabled: true, interval_minutes: 5, auto_audit_enabled: false,
+  auto_audit_max_per_poll: 5, last: null,
+};
+
 test("Settings waits for service and workflow content, or ends on either error", () => {
   const runtime = hookRuntime();
   let status = null;
@@ -1531,7 +1536,7 @@ test("Settings waits for service and workflow content, or ends on either error",
     assert.equal(readiness.at(-1), expected);
   };
   check(false);
-  status = { mode: "test" };
+  status = { mode: "test", polling: pollingFixture };
   check(false);
   workflow = { data: { id: "workflow_fictional" }, error: "" };
   check(true);
@@ -1556,7 +1561,8 @@ test("Settings waits for service and workflow content, or ends on either error",
     unreachable: "Archive unreachable",
     rejected: "Archive refused the request",
   })) {
-    status = { mode: "live", archive_reads_enabled: true, archive };
+    status = { mode: "live", archive_reads_enabled: true, archive,
+      polling: pollingFixture };
     const tree = runtime.render(() => page.SettingsPage());
     const html = renderToStaticMarkup(tree);
     assert.ok(html.includes(label), archive);
@@ -1570,10 +1576,35 @@ test("Settings waits for service and workflow content, or ends on either error",
     rejected: "SearXNG · refused the request (is JSON output enabled?)",
     degraded: "SearXNG · reachable, but its search engines are not answering (blocked or rate-limited)",
   })) {
-    status = { mode: "live", search_provider: "searxng", search };
+    status = { mode: "live", search_provider: "searxng", search,
+      polling: pollingFixture };
     const html = renderToStaticMarkup(runtime.render(() => page.SettingsPage()));
     assert.ok(html.includes(label), search);
     assert.ok(!html.includes(">searxng</"), search);
+  }
+  for (const [polling, expected] of [
+    [pollingFixture, ["Every 5 min", "Off", "Not yet"]],
+    [{ ...pollingFixture, enabled: false, interval_minutes: 0 }, ["Off"]],
+    [{ ...pollingFixture, auto_audit_enabled: true, last: {
+      started_at: "2026-11-01T00:00:00Z", finished_at: "2026-11-01T00:00:01Z",
+      outcome: "ok", reason: null, found: 7, new: 4, queued: 2, unreadable: 3,
+    } }, ["On (up to 5 per poll)", "found 7, new 4, queued 2", "unreadable 3"]],
+    ...["import_in_progress", "queue_paused", "archive_error", "archive_incomplete",
+      "poll_error"].map(
+      (reason) => [{ ...pollingFixture, last: {
+        started_at: "2026-11-01T00:00:00Z",
+        finished_at: "2026-11-01T00:00:01Z", outcome: "skipped", reason,
+        found: 0, new: 0, queued: 0, unreadable: 1,
+      } }, ["skipped:", {
+        import_in_progress: "Import in progress", queue_paused: "Queue paused",
+        archive_error: "Archive read failed", poll_error: "Polling failed",
+        archive_incomplete: "Archive listing incomplete",
+      }[reason], "unreadable 1"]],
+    ),
+  ]) {
+    status = { mode: "live", polling };
+    const html = renderToStaticMarkup(runtime.render(() => page.SettingsPage()));
+    for (const text of expected) assert.ok(html.includes(text), text);
   }
   runtime.unmount();
 });
@@ -1792,7 +1823,7 @@ function fictionalStory(overrides = {}) {
 function articleDetailHarness(initial = fictionalArticle()) {
   const runtime = hookRuntime();
   const api = { token: "", epoch: 0, articlesCache: new Map(),
-    status: { mode: "live", live_ingestion_enabled: true } };
+    status: { mode: "live" } };
   let article = initial;
   let run = null;
   let tree;
@@ -2205,8 +2236,8 @@ test("archive import submits the day count, reports counts or the safe error cod
   assert.ok(module.importError(new client.ApiError(403, "untrusted_origin"))
     .includes("ALLOWED_ORIGINS"));
   assert.ok(!module.importError(new client.ApiError(403, "untrusted_origin")).includes("token"));
-  assert.equal(module.importError(new client.ApiError(403, "live_ingestion_disabled")),
-    "The service could not complete this request. Please try again. (live_ingestion_disabled)");
+  assert.equal(module.importError(new client.ApiError(403, "fictional_refusal")),
+    "The service could not complete this request. Please try again. (fictional_refusal)");
   assert.equal(module.importError(new client.ApiError(422, "validation_error")),
     "Choose between 1 and 90 days. (validation_error)");
   assert.ok(module.importError(new client.ApiError(409, "import_in_progress"))
@@ -2285,32 +2316,31 @@ test("article rail offers Stop audit only while the latest audit is queued or ru
   }
 });
 
-test("article audits respect the live gate while test and benchmark audits stay enabled", () => {
-  const harness = articleDetailHarness();
-  const message = "Live audits are switched off on this server.";
-  for (const [mode, category, enabled, disabled] of [
-    ["live", "live", false, true],
-    ["live", "live", true, false],
-    ["test", "live", false, false],
-    ["live", "benchmark", false, false],
+test("saved live and benchmark articles can be audited in both modes", async () => {
+  for (const [mode, category] of [
+    ["live", "live"],
+    ["test", "live"],
+    ["live", "benchmark"],
+    ["test", "benchmark"],
   ]) {
-    harness.api.status = { mode, live_ingestion_enabled: enabled };
-    harness.setArticle(fictionalArticle({ category }));
+    const harness = articleDetailHarness(fictionalArticle({ category }));
+    harness.api.status = { mode };
     const html = harness.render();
     const button = html.match(/<button[^>]*article-audit-button[^>]*>/)?.[0];
     assert.ok(button);
-    assert.equal(button.includes('disabled=""'), disabled);
-    assert.equal(html.includes(message), disabled);
-    assert.equal(button.includes('aria-describedby="live-audit-help"'), disabled);
-    if (disabled) {
-      harness.start();
-      assert.equal(harness.requests.length, 0);
-      assert.equal(harness.client.articleAuditError(
-        new harness.client.ApiError(404), true,
-      ), message);
-    }
+    assert.ok(!button.includes('disabled=""'));
+    assert.ok(!html.includes("Live audits are switched off on this server."));
+    assert.ok(!button.includes("aria-describedby"));
+    const action = harness.start();
+    assert.equal(harness.requests.length, 1);
+    assert.equal(harness.requests[0].ref, harness.article.ref);
+    harness.requests[0].reject(new harness.client.ApiError(404));
+    await action;
+    assert.ok(harness.render().includes(
+      "This resource is unavailable. Refresh the list and try again.",
+    ));
+    harness.unmount();
   }
-  harness.unmount();
 });
 
 test("audit story numbers evidence footnotes from 1 across steps", () => {
@@ -2720,4 +2750,16 @@ test("step input accepts saved shapes beside exact system and user messages", ()
     assert.ok(!prompt.includes("Invented assistant context."));
     assert.ok(!prompt.includes("Invented response."));
   }
+});
+
+
+test("poll origin has a readable label and server filter", () => {
+  const { RunsPage } = load(path.join(root, "pages/RunsPage.tsx"));
+  assert.equal(format.originLabel({ category: "live", origin: "poll" }),
+    "Live · Auto-audit");
+  visit("https://workbench.invalid/runs?origin=poll");
+  const html = render(RunsPage);
+  assert.equal(capturedQuery.get("origin"), "poll");
+  assert.ok(html.includes('value="poll"'));
+  assert.ok(html.includes("Live · Auto-audit"));
 });

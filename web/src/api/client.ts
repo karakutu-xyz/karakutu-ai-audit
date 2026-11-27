@@ -92,16 +92,13 @@ export function auditArticle(ref: string, token: string, signal: AbortSignal) {
   });
 }
 
-export function articleAuditError(error: unknown, liveDisabled: boolean) {
+export function articleAuditError(error: unknown) {
   if (error instanceof ApiError) {
     if (error.status === 409) {
       return "An audit for this article is already running.";
     }
     if (error.status === 401 || error.status === 403) {
       return "Check the API token in Connection settings before starting an audit.";
-    }
-    if (error.status === 404 && liveDisabled) {
-      return "Live audits are switched off on this server.";
     }
   }
   return errorMessage(error);

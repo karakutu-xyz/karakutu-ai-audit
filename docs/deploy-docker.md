@@ -27,8 +27,12 @@ names setup reports. Production checklist:
   and ALLOWED_ORIGINS to its TLS origin. Retain loopback KARAKUTU_BIND_ADDRESS.
 - Set SEARCH_PROVIDER deliberately and generate SEARXNG_SECRET for bundled search.
   Compose overrides SEARXNG_URL to its internal service address.
-- Leave LIVE_INGESTION_ENABLED=false unless intake is authorized. Set
-  ARCHIVE_BASE_URL and your own read wallet only if using archive evidence.
+- Set ARCHIVE_BASE_URL and your own read wallet for archive imports and evidence.
+  Polling registers metadata every five minutes by default; set
+  POLL_INTERVAL_MINUTES=0 to disable it. Auto-audit is off by default. Enabling
+  AUTO_AUDIT_ENABLED queues first audits and makes model/search calls, bounded
+  by AUTO_AUDIT_MAX_PER_POLL minus queued/running auto-audits. Manual Run audit
+  remains available.
 - Preserve the named /data volume, plan backups and run exactly one API process.
 
 Keep secrets in the host's secret store/environment; if materializing `.env`, use

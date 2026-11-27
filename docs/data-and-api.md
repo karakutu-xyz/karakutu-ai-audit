@@ -17,7 +17,7 @@ number formatting, key order and `\u0000` escapes. Test mode and demo seeding re
 | `model_assignments` | Append-only step, nullable model override, author, note and timestamp. Newest insertion per step wins. |
 | `prompt_activations` | Append-only name/version reference, kind (`seed`, `activate`, `rollback`, `default_update`), author, note and timestamp. The newest activation selects the active version. |
 
-`benchmark` and `live` are separate categories in the same local database. Routes assign the category; a caller-supplied category is rejected. A benchmark may exercise real LM Studio and search without becoming live data. Live runs come only from the gated `POST /api/audit` (origin `api`) and `POST /api/webhooks/audit` (origin `webhook`) routes, and from auditing an existing live article with `POST /api/articles/{ref}/audit` (origin `article`), which keeps the article's category. Export does not reclassify data. No production article subscription is configured.
+`benchmark` and `live` are separate categories in the same local database. Routes assign the category; a caller-supplied category is rejected. A benchmark may exercise real LM Studio and search without becoming live data. Manual audits use `POST /api/articles/{ref}/audit` (origin `article`), which keeps the article's category. Opt-in archive auto-audits use origin `poll` and category `live`. Historical runs with origin `api` or `webhook` remain readable and filterable. Export does not reclassify data. Karakutu intake uses background polling; manual archive import remains available.
 
 The in-process task queue persists a queued record before starting work, then each
 finished step. One process owns it; `MAX_CONCURRENT_RUNS` bounds simultaneous model
@@ -27,9 +27,83 @@ queue. On shutdown/restart, incomplete runs become failed with `interrupted`,
 preserving completed step evidence. Re-submit explicitly to retry. Operator stops
 instead become terminal `cancelled` runs, keeping recorded steps with no verdict
 or output. Queue pause is in memory, leaves running work alone, and resets to open
-on every restart. This does not promise exactly-once webhook delivery: duplicate
-POSTs create distinct runs. An external durable worker and idempotent webhook
-delivery are deferred until a live producer exists.
+on every restart. Benchmark POSTs create distinct runs; saved-article audits reject
+concurrent audits of the same article. An external durable worker is not implemented.
+
+### Archive polling
+
+In live mode with an enabled archive client and `POLL_INTERVAL_MINUTES > 0`,
+the lifespan starts one background task after a one-second startup delay. It runs
+one cycle at a time and waits the configured interval after each cycle. Shutdown
+cancels it with the other tasks. Test mode never creates a poller task.
+
+Each cycle uses the same Unix-second archive audit listing and metadata-only
+`import_articles` as manual Import. The first window is 30 days. Later windows
+start one day before this process's last successful listing/import, clamped to
+2–30 days ending now. Restart resets the window to 30 days. An overlapping manual
+import skips the cycle with `import_in_progress`. Polling requires every status and
+page to succeed and reach the end before the page cap. Each page must be an object
+with an `items` list of objects; malformed pages are incomplete. Manual Import
+keeps readable entries from partial or malformed listings. Incomplete polling listings register
+nothing, queue nothing and leave the successful window unchanged. They use a fixed
+archive failure state or `archive_incomplete`. Listing exceptions use a fixed
+archive failure state or `archive_error`; other cycle failures use `poll_error` and
+the next cycle still runs. No upstream bodies or exception messages enter status
+or logs. Listing counts include invalid/duplicate entries; `new` counts only
+newly registered articles. Both polling and manual Import persist metadata in a worker
+thread under the shared import lock; candidate queries also run off the event loop.
+Imports commit at most 100 listing rows per transaction, releasing the writer lock
+and connection between batches so foreground reads and writes can proceed. URL
+deduplication spans the whole listing and counts retain their existing meaning.
+Earlier committed batches remain saved if a later batch fails; the poll window
+advances only after the whole import succeeds. Each batch owns its session.
+SQLite permits cross-thread connections;
+in-memory SQLite uses one exclusively checked-out pooled connection rather than
+sharing an active connection between sessions.
+PostgreSQL uses its connection pool and transaction writer lock. Shutdown waits for
+an in-flight worker operation before closing the store or releasing the import lock.
+Cancellation still exits the poller if that worker fails while shutdown is waiting.
+
+With `AUTO_AUDIT_ENABLED=true`, the store selects live archive refs with no run of
+any status or origin, ordered by numeric archive id (length, then id, then ref).
+Archive ids increase as articles are detected, so this queues oldest detections first
+even when a newest-first listing gives newer articles earlier local registration times.
+The budget is `AUTO_AUDIT_MAX_PER_POLL` minus queued/running `poll` runs, keeping
+that backlog at most N. At most N new runs are submitted in one cycle even if
+older work finishes during it. Each cycle also allows at most N archive text reads
+and 2×N candidate attempts outside cooldown, including failed or empty reads.
+Candidates in cooldown consume neither a read nor an attempt, allowing later
+candidates to progress. When a sweep stops on the read or attempt limit, the next
+cycle resumes after the last candidate it tried and wraps around, so unreadable
+older articles cannot use up every cycle's reads. The first failed read leaving the archive client unavailable
+or rejected stops the sweep with its fixed failure reason (the next sweep resumes
+after that article); metadata import counts
+and the successful import window remain saved. Queue pause allows metadata registration but skips
+automatic submissions (`queue_paused`). Each candidate refreshes the latest archive
+version through `fill_archive_text`, including when text is already cached, updating
+changed title, text and version references without changing historical run inputs. It
+then re-checks the article and absence of any run under the shared article lock
+before submission with origin `poll`. A failed refresh or missing text creates no run
+and increments `unreadable`, even when stale text is cached. Failed reads share a
+ten-minute cooldown per ref/URL, including empty text, then become retryable. An
+article whose saved data cannot start a run (for example an unusable date) is
+counted as `unreadable` and cooled down the same way; the sweep moves on. Failed,
+stopped and interrupted runs are never retried automatically. Manual audits may
+still re-run articles. Automatic work uses the current workflow and normal engine,
+including real model/search calls when configured; it never writes to the archive.
+
+Registration adds no text storage. Opening or auditing loads only the latest
+version's text; successful lazy reads still happen once per ref/URL, while automatic
+submissions always require a fresh read. Default archive evidence remains
+summaries and hashes, with full bodies only for `RECORD_FULL_EVIDENCE=true`.
+
+`GET /api/status` includes `polling`: `enabled`, `interval_minutes` (0 when off),
+`auto_audit_enabled` (false when polling is off), `auto_audit_max_per_poll`, and
+`last` (null until a cycle finishes). `last` holds RFC 3339 `started_at` and
+`finished_at`, `outcome` (`ok` or `skipped`), `reason` (a fixed label or null),
+`found`, `new`, `queued` and `unreadable`. Counts remain visible on a partial failed cycle.
+This state stays in memory and resets on restart. Settings displays it; Articles
+continues to offer manual selection and Run audit.
 
 ### Schema changes
 
@@ -134,9 +208,9 @@ outlet names and content but no runs, allowing first-audit testing. All demo art
 include source and removal metadata; counting identifies them by `origin=demo`.
 `GET /api/articles?status=not_audited` lists the three never-audited articles on a fresh
 test-mode startup. `POST /api/articles/{ref}/audit` starts a first audit or re-run
-through the offline `DemoEngine`, including demo articles in the `live` category while
-live ingestion is disabled. Like benchmark submissions, it needs no token unless one is
-configured; with a configured token, missing/wrong bearer credentials return 401. Existing
+through the offline `DemoEngine`, including demo articles in the `live` category.
+In both run modes, article audits follow the normal token rules: they need no token
+unless one is configured; with a configured token, missing/wrong bearer credentials return 401. Existing
 queued/running demo examples still return 409 `run_in_progress` until completed,
 interrupted or cancelled. Every new run keeps its own history and captured workflow/prompts/models.
 Articles without a scripted case select an existing demo scenario deterministically
@@ -175,8 +249,6 @@ The generated [OpenAPI contract](../openapi.yaml) (YAML; the running API still s
 | `GET /api/workflow` | Current immutable workflow snapshot. |
 | `GET /api/workflows/{id}` | Snapshot used by a historical run. |
 | `POST /api/benchmarks/runs` | Submit a benchmark, return 202 and its lean queued `AuditResult`. |
-| `POST /api/audit` | Submit a **live** run; disabled by default. |
-| `POST /api/webhooks/audit` | Submit a **live** webhook run; disabled by default. |
 | `GET /api/articles` | Paginated articles with latest audit status/verdict, run count and activity. |
 | `GET /api/articles/{ref}` | Stored content, archive metadata/links and newest-first run history with computed summaries; unknown refs return 404. |
 | `POST /api/articles/{ref}/audit` | First audit or re-run; 202 `AuditResult`, origin `article`; preserves every previous run. |
@@ -258,10 +330,10 @@ run and inserts atomically. A conflict returns 409
 Missing content returns 422 `{"error":{"code":"article_has_no_content"}}`;
 unknown articles return 404. All article routes pass through `RequestGuards`:
 configured tokens are required (missing/wrong gives 401), writes reject untrusted
-browser origins (403). In live mode, local benchmark writes remain available without
-a token; live-category article audits additionally require enabled live ingestion
-and a token, otherwise 404. Test-mode article audits accept either category, need a
-token only when one is configured, and use the offline engine, as described above.
+browser origins (403). Article audits in either category follow these normal token
+rules in both run modes. Local article audits and benchmark submissions need no token
+when none is configured; non-loopback binds or allowed hosts require a token at startup.
+Test-mode article audits use the offline engine, as described above.
 Lazy archive fill stores text only if the article still has the URL and archive id it
 was fetched for; a response that arrives after a concurrent import moved the article is
 dropped, and the next detail read fetches again.
@@ -339,7 +411,8 @@ failed query. These descriptions do not change verdicts, thresholds or prompts.
 `POST /api/articles/import` accepts a `days` query parameter (default 30, range 1–90).
 It calls the archive's paginated `audits_created_between` listing for that date window
 and imports URL/title/publisher display name/publication date and archive ID as live
-metadata, with origin `archive`. It does not fetch full article text or start audits.
+metadata, with origin `archive`. It retains its existing partial-list behavior when
+some archive pages succeed. It does not fetch full article text or start audits.
 Changed URLs/hosts are refreshed for an existing `ka-<id>` row. Import resolves both
 the archive identity and normalized URL in one transaction. An existing `ka-<id>`
 row takes priority: if a URL-derived row already holds its new URL, that row's runs
@@ -363,18 +436,24 @@ import retains an existing normalized URL's ref, category, title and content whe
 that article originated from a run/demo, adding archive/source metadata without
 breaking run links.
 
-Opening an empty `ka-*` article requests the archive article once per ref/URL pair
-per service lifetime with checks and versions expanded. A changed URL permits a fresh
+Opening an empty `ka-*` article requests the archive article with checks and versions
+expanded. A successful lazy read happens once per ref/URL pair per service lifetime;
+a failed read becomes retryable after a ten-minute cooldown. A changed URL permits a fresh
 attempt during the same service lifetime. It stores the latest version's `news_text` (or
 top-level text when no versions exist), language, version title/check date/hash
 metadata and the first dead-check date after the last 200, using the shared archive
 check logic. The archive's timestamp representation is retained as a string for
 `removed_at`. Failed reads return the saved article with empty content and no upstream
-error text. Concurrent detail reads share a lock and one attempt; a service restart
-permits another attempt for still-empty articles. All archive calls are GET-only;
+error text. Concurrent detail reads share a lock and the attempt cache. Manual Run
+audit keeps its missing-text behavior with the same retry cooldown; only automatic
+audits explicitly refresh already-cached text. A service restart clears the cache.
+All archive calls are GET-only;
 local import/enrichment never mutates the archive.
 
-This is an intentionally changed API: the old synchronous `/api/audit` response and `/api/v1/articles/...` publishing jobs are archived. New `/api/audit` is asynchronous, persisted and live-gated. Consumers must explicitly migrate; no silent compatibility facade publishes to Karakutu.
+Audit runs are asynchronous and persisted. Start live runs from saved articles or
+submit fabricated cases through the benchmark route. Push intake and article publishing
+jobs are removed; no route writes back to Karakutu. Background polling registers
+metadata and optionally queues first audits (see [Archive polling](#archive-polling)).
 
 All audit-submission POSTs, benchmark submission and individual cancellation return the
 lean `AuditResult` defined in [the v2 result contract](audit-record-schema.md).
@@ -417,7 +496,12 @@ Definitions now use `format_version` 3; unchanged setups receive a new workflow 
 
 ## Privacy and access
 
-All routes with article/run data require the bearer token when `API_AUTH_TOKEN` is configured. Live submission additionally requires `LIVE_INGESTION_ENABLED=true`; startup refuses enabled live ingestion without a token, or a configured token shorter than 32 characters. A disabled live route returns 404 before auth or body validation. On the default loopback workstation, the benchmark/review UI is available without a token. Non-loopback allowed hosts require a token at startup; Tilt binds only to loopback.
+Every `/api` call requires the bearer token when `API_AUTH_TOKEN` is configured.
+Auditing a saved article follows these normal token rules. Startup refuses a
+configured token shorter than 32 characters. On the default loopback workstation, article
+audits and the benchmark/review UI are available without a token. Non-loopback
+`KARAKUTU_BIND_ADDRESS` or `ALLOWED_HOSTS` entries require a token at startup;
+Tilt binds only to loopback.
 
 `ALLOWED_HOSTS` and `ALLOWED_ORIGINS` add comma-separated entries to the loopback defaults. Whitespace around entries is trimmed and empty items are dropped. Hosts always include `localhost`, `127.0.0.1` and the existing `testserver` test host. Origins always include `http://localhost:2200`, `http://127.0.0.1:2200`, `http://localhost:2201` and `http://127.0.0.1:2201`. Empty environment values preserve those defaults exactly.
 

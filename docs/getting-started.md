@@ -52,21 +52,24 @@ parts fit together, read [Architecture](architecture.md). Every variable and its
    After startup, `GET /api/status` reports `model_enabled` and `model_name`;
    this reports configuration, not ongoing model reachability.
 
-3. **Enable real audits and start live mode.** A plain example `.env` can run
-   live mode for browsing, but live audit routes return 404 until both
-   `LIVE_INGESTION_ENABLED=true` and an `API_AUTH_TOKEN` of at least 32
-   characters are configured. Create settings with a generated token:
+3. **Configure and start live mode.** Create settings if needed:
 
    ```sh
-   make env API_TOKEN=1
+   make env
    ```
 
-   This creates `.env` with a random search secret and token only if the file
-   does not already exist. If it exists, it is left unchanged. For an existing
-   file with an empty token, generate a value with `openssl rand -hex 32` and
-   put it on the `API_AUTH_TOKEN` line. Keep the file private. Edit `.env`:
-   set `LIVE_INGESTION_ENABLED=true` and confirm `API_AUTH_TOKEN` contains the
-   generated value. Then run:
+   This creates `.env` with a random search secret only if the file does not
+   already exist. An existing file is left unchanged. Fill in valid model,
+   search and archive settings for your environment and keep the file private.
+   With a filled, valid live `.env`, auditing imported articles works locally
+   with no `API_AUTH_TOKEN` while the app is only reachable from this machine.
+
+   A token of at least 32 characters is required whenever the app is reachable
+   from other machines: a non-loopback `KARAKUTU_BIND_ADDRESS` or
+   `ALLOWED_HOSTS` entry makes startup refuse an empty token. Generate one with
+   `make env API_TOKEN=1` for a new file, or `openssl rand -hex 32` for an
+   existing file, and put it on the `API_AUTH_TOKEN` line.
+   Then run:
 
    ```sh
    make live
@@ -78,7 +81,8 @@ parts fit together, read [Architecture](architecture.md). Every variable and its
    with changed `.env` values; `docker compose restart` does not reload them.
    `make logs` follows API logs and `make down` stops the stack.
 
-4. **Enter the UI token.** With authentication enabled the UI reports
+4. **Enter the UI token if configured.** Skip this step for local use with no
+   token. With authentication enabled the UI reports
    “Access requires an API token. Add it in Settings.” Open **Settings**, choose
    **Connection / API token**, paste the value into **API token (optional)**,
    and choose **Apply connection**. To display your local value for copying:
@@ -103,19 +107,35 @@ parts fit together, read [Architecture](architecture.md). Every variable and its
    must be able to read the wallet; do not make it world-readable. See
    [archive configuration](configuration.md#archive-read-state).
 
-   In authenticated `GET /api/status`, `archive_reads_enabled` indicates that
-   an endpoint is configured and `archive` reports its state, including `ok` or
+   In `GET /api/status` (with a bearer token when configured),
+   `archive_reads_enabled` indicates that an endpoint is configured and
+   `archive` reports its state, including `ok` or
    `unchecked`. **Settings** shows **Archive reads**. In **Articles**, set
    **Days** from 1 to 90 (default 30) and choose **Import from archive**. It
    imports articles from archive audits created in that period, initially as
    metadata. The control appears in live mode when archive reads are enabled.
 
+   Polling is on by default when archive reads are configured: metadata is
+   registered shortly after startup and every five minutes. Set
+   `POLL_INTERVAL_MINUTES=0` to turn it off, or choose 1–1440 minutes. Test mode
+   never polls. Settings shows polling, auto-audit and the last cycle's counts.
+
+   Auto-audit is off by default. Set `AUTO_AUDIT_ENABLED=true` to queue first
+   audits of live archive articles with no previous run. This makes real model
+   and search calls per article when those integrations are configured. Set
+   `AUTO_AUDIT_MAX_PER_POLL` (default 5, range 1–50) to cap new work per cycle;
+   queued/running auto-audits subtract from that budget so the backlog stays at
+   most N. A paused queue prevents automatic submissions. Failed, stopped and
+   interrupted attempts require a manual re-run.
+
 6. **Audit an article.** Open an imported article and choose **Run first audit**
-   (or **Re-run audit**). Its text is loaded from the archive the first time it
-   is opened or audited. If the read fails and no content is available, the
-   audit returns HTTP 422 with `article_has_no_content`. A failed fill is tried
-   once per article and URL per API process; restart after fixing archive access
-   to retry. The audit is queued and the page updates as steps finish.
+   (or **Re-run audit**). If a token is configured, enter it under
+   Connection settings as in step 4. Its text is loaded from the archive the
+   first time it is opened or audited. If the read fails and no content is
+   available, the audit returns HTTP 422 with `article_has_no_content`. A failed
+   fill becomes retryable after a ten-minute cooldown per article and URL. Fix
+   archive access, then open or audit the article again after that cooldown.
+   The audit is queued and the page updates as steps finish.
 
 7. **Allow time.** The default `MAX_CONCURRENT_RUNS=1` runs one audit at a
    time in the single API process; its allowed range is 1 to 8. A 12B model on
@@ -184,9 +204,9 @@ parts fit together, read [Architecture](architecture.md). Every variable and its
       [Outbound fetches and bot challenges](deploy-docker.md#outbound-fetches-and-bot-challenges).
     - For degraded search, see step 9. For an unreachable search service, check
       SearXNG and its configured URL; a refused request may mean JSON output is off.
-    - A live audit 404 means the live gate may be off (step 3). The token message
-      is resolved in step 4. For HTTP 422 `article_has_no_content`, fix archive
-      access and retry as in steps 5–6.
+    - An article audit 404 means the saved article was not found; refresh the
+      Articles list. The token message is resolved in step 4. For HTTP 422
+      `article_has_no_content`, fix archive access and retry as in steps 5–6.
     - If `make live` needs `.env`, run `make env`; if `make test` fails on
       `!reset`, update Docker Compose. A port in use may belong to another mode.
     - If `make dev` reports stale web or Python dependencies, run

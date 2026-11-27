@@ -55,7 +55,7 @@ def inventory() -> dict[str, set[str]]:
                             add("MODEL_NAME_" + step.upper(), path)
                     else:
                         assert path.name == "config.py" and ast.unparse(argument) == "name"
-                if (path.name == "config.py" and function in {"_bool", "_port", "_entries"}
+                if (path.name == "config.py" and function in {"_bool", "_port", "_entries", "_bounded_int"}
                         and node.args and isinstance(node.args[0], ast.Constant)):
                     add(node.args[0].value, path)
             elif (isinstance(node, ast.Subscript)
@@ -193,6 +193,26 @@ def test_settings_not_in_example_are_rejected(tmp_path):
     assert result.returncode != 0
     assert "FICTIONAL_UNDOCUMENTED" in result.stderr
     assert "Would start" not in result.stdout
+
+
+@pytest.mark.parametrize("value", ["true", "false", "obsolete"])
+def test_obsolete_push_setting_does_not_block_live_preflight(tmp_path, value):
+    text = ("RUN_MODE=live\nMODEL_ENABLED=true\nSEARCH_PROVIDER=disabled\n"
+            f"API_AUTH_TOKEN=\nLIVE_INGESTION_ENABLED={value}\n")
+    result = runner(tmp_path, text)
+    assert result.returncode == 0, result.stderr
+    assert "Would start one API" in result.stdout
+    assert "Would start SearXNG" not in result.stdout
+    assert "LIVE_INGESTION_ENABLED" not in parsed_records(parse_settings(tmp_path / ".env"))
+    # make env uses this same preflight and must leave existing settings untouched.
+    report = setup(tmp_path, "--mode", "live")
+    assert "live: no required values unset" in report.stdout
+    assert (tmp_path / ".env").read_text() == text
+    # make live runs this check before any Docker command.
+    env = {key: value for key, value in os.environ.items() if key not in example_blocks()}
+    checked = subprocess.run([sys.executable, str(SCRIPTS / "compose_live.py"), "--check"],
+                             cwd=tmp_path, env=env, text=True, capture_output=True)
+    assert checked.returncode == 0, checked.stderr
 
 
 def test_caller_values_win_over_the_file_even_when_empty(tmp_path):
@@ -410,6 +430,9 @@ def test_runner_live_check_and_mode_override(tmp_path):
     ("RUN_MODE=test\nKARAKUTU_BIND_ADDRESS=0.0.0.0\n", ["API_AUTH_TOKEN"]),
     ("RUN_MODE=test\nKARAKUTU_WEB_PORT=invalid\n", ["KARAKUTU_WEB_PORT"]),
     ("RUN_MODE=invalid\n", ["RUN_MODE"]),
+    ("RUN_MODE=live\nPOLL_INTERVAL_MINUTES=-1\n", ["POLL_INTERVAL_MINUTES"]),
+    ("RUN_MODE=live\nAUTO_AUDIT_MAX_PER_POLL=0\n", ["AUTO_AUDIT_MAX_PER_POLL"]),
+    ("RUN_MODE=live\nAUTO_AUDIT_ENABLED=invalid\n", ["AUTO_AUDIT_ENABLED"]),
 ])
 def test_runner_missing_values_fail_by_name(tmp_path, text, names):
     result = runner(tmp_path, text)

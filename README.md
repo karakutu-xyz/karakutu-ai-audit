@@ -13,8 +13,8 @@ article was removed.
 
 ## What it is
 
-- A **review UI** (React, TypeScript) to submit cases, watch each step and record whether you
-  agree with the result.
+- A **review UI** (React, TypeScript) to audit saved articles and benchmark cases,
+  watch each step and record whether you agree with the result.
 - An **API and workflow** (FastAPI, LangGraph) that runs six ordered steps, uses a language
   model to find and describe evidence, and picks the verdict with deterministic rules.
 - A **durable record** (SQLite by default, optional PostgreSQL) of every run: input, each step's evidence, exact model requests
@@ -53,7 +53,10 @@ and snapshot versions, alongside human review and its run history.
 Choose **Run first audit** or **Re-run audit** to start a new run; earlier runs
 stay in history. A running audit updates as steps finish. **Open full run** shows
 the exact saved records. Runs and Benchmarks remain available from the top bar;
-Connection settings holds the optional in-memory API token.
+Connection settings holds the optional in-memory API token. Live audits start from
+saved live articles. With archive reads configured, polling registers article metadata every five
+minutes. Auto-audit is off by default; enable it explicitly to queue first audits.
+Manual archive import and Run audit remain available.
 
 ## Documentation
 

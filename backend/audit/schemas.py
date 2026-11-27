@@ -94,6 +94,29 @@ class SafeErrorResponse(BaseModel):
     error: SafeError
 
 
+PollReason = ArchiveState | Literal[
+    "archive_error", "archive_incomplete", "poll_error", "import_in_progress", "queue_paused"]
+
+
+class PollCycle(BaseModel):
+    started_at: str = Field(json_schema_extra={"format": "date-time"})
+    finished_at: str = Field(json_schema_extra={"format": "date-time"})
+    outcome: Literal["ok", "skipped"]
+    reason: PollReason | None
+    found: int = Field(ge=0)
+    new: int = Field(ge=0)
+    queued: int = Field(ge=0)
+    unreadable: int = Field(ge=0)
+
+
+class PollingStatus(BaseModel):
+    enabled: bool
+    interval_minutes: int = Field(ge=0, le=1440)
+    auto_audit_enabled: bool
+    auto_audit_max_per_poll: int = Field(ge=1, le=50)
+    last: PollCycle | None
+
+
 class ServiceStatus(BaseModel):
     service: str
     mode: RunMode
@@ -105,9 +128,9 @@ class ServiceStatus(BaseModel):
     search: SearchState
     archive: ArchiveState
     archive_reads_enabled: bool
-    live_ingestion_enabled: bool
     writes_enabled: Literal[False]
     prompts_editable: bool
+    polling: PollingStatus
 
 
 class WorkflowStep(BaseModel):
@@ -156,7 +179,7 @@ class RunSummary(BaseModel):
     id: str
     workflow_id: str
     category: Literal["benchmark", "live"]
-    origin: Literal["benchmark", "api", "webhook", "article"]
+    origin: Literal["benchmark", "api", "webhook", "article", "poll"]
     status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
     created_at: str = Field(json_schema_extra={"format": "date-time"})
     finished_at: str | None
@@ -238,7 +261,7 @@ class ArticleRun(BaseModel):
     verdict: Verdict | None
     created_at: str
     finished_at: str | None
-    origin: Literal["benchmark", "api", "webhook", "article"]
+    origin: Literal["benchmark", "api", "webhook", "article", "poll"]
     category: Literal["live", "benchmark"]
     workflow_id: str
     label: str | None

@@ -296,6 +296,7 @@ components:
           - api
           - webhook
           - article
+          - poll
           title: Origin
           type: string
         status:
@@ -840,6 +841,100 @@ components:
       - source
       title: ModelStepValue
       type: object
+    PollCycle:
+      properties:
+        finished_at:
+          format: date-time
+          title: Finished At
+          type: string
+        found:
+          minimum: 0.0
+          title: Found
+          type: integer
+        new:
+          minimum: 0.0
+          title: New
+          type: integer
+        outcome:
+          enum:
+          - ok
+          - skipped
+          title: Outcome
+          type: string
+        queued:
+          minimum: 0.0
+          title: Queued
+          type: integer
+        reason:
+          anyOf:
+          - enum:
+            - disabled
+            - unchecked
+            - ok
+            - wallet_missing
+            - wallet_unreadable
+            - auth_unavailable
+            - unreachable
+            - rejected
+            type: string
+          - enum:
+            - archive_error
+            - archive_incomplete
+            - poll_error
+            - import_in_progress
+            - queue_paused
+            type: string
+          - type: "null"
+          title: Reason
+        started_at:
+          format: date-time
+          title: Started At
+          type: string
+        unreadable:
+          minimum: 0.0
+          title: Unreadable
+          type: integer
+      required:
+      - started_at
+      - finished_at
+      - outcome
+      - reason
+      - found
+      - new
+      - queued
+      - unreadable
+      title: PollCycle
+      type: object
+    PollingStatus:
+      properties:
+        auto_audit_enabled:
+          title: Auto Audit Enabled
+          type: boolean
+        auto_audit_max_per_poll:
+          maximum: 50.0
+          minimum: 1.0
+          title: Auto Audit Max Per Poll
+          type: integer
+        enabled:
+          title: Enabled
+          type: boolean
+        interval_minutes:
+          maximum: 1440.0
+          minimum: 0.0
+          title: Interval Minutes
+          type: integer
+        last:
+          anyOf:
+          - $ref: '#/components/schemas/PollCycle'
+          - type: "null"
+      required:
+      - enabled
+      - interval_minutes
+      - auto_audit_enabled
+      - auto_audit_max_per_poll
+      - last
+      title: PollingStatus
+      type: object
     PromptActivateInput:
       additionalProperties: false
       properties:
@@ -1286,6 +1381,7 @@ components:
           - api
           - webhook
           - article
+          - poll
           - benchmark
           title: Origin
           type: string
@@ -1365,6 +1461,7 @@ components:
           - api
           - webhook
           - article
+          - poll
           title: Origin
           type: string
         output:
@@ -1622,6 +1719,7 @@ components:
           - api
           - webhook
           - article
+          - poll
           title: Origin
           type: string
         reactions:
@@ -1749,9 +1847,6 @@ components:
         archive_reads_enabled:
           title: Archive Reads Enabled
           type: boolean
-        live_ingestion_enabled:
-          title: Live Ingestion Enabled
-          type: boolean
         mode:
           enum:
           - test
@@ -1770,6 +1865,8 @@ components:
           - openai_compatible
           title: Model Provider
           type: string
+        polling:
+          $ref: '#/components/schemas/PollingStatus'
         prompts_editable:
           title: Prompts Editable
           type: boolean
@@ -1814,9 +1911,9 @@ components:
       - search
       - archive
       - archive_reads_enabled
-      - live_ingestion_enabled
       - writes_enabled
       - prompts_editable
+      - polling
       title: ServiceStatus
       type: object
     StageName:
@@ -2492,72 +2589,6 @@ paths:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Internal Server Error
       summary: Article Audit
-  /api/audit:
-    post:
-      operationId: audit_api_audit_post
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RunInput'
-        required: true
-      responses:
-        "202":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AuditResult'
-          description: Successful Response
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Bad Request
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Forbidden
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Not Found
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Result withheld; the saved run and its details remain available. Submissions remain
-            queued and cancellations remain effective.
-        "413":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Request Entity Too Large
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Unprocessable Entity
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Internal Server Error
-      summary: Audit
   /api/benchmarks/runs:
     post:
       operationId: benchmark_api_benchmarks_runs_post
@@ -3555,6 +3586,7 @@ paths:
             - api
             - webhook
             - article
+            - poll
             type: string
           - type: "null"
           title: Origin
@@ -4015,72 +4047,6 @@ paths:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Internal Server Error
       summary: Status
-  /api/webhooks/audit:
-    post:
-      operationId: webhook_api_webhooks_audit_post
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RunInput'
-        required: true
-      responses:
-        "202":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AuditResult'
-          description: Successful Response
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Bad Request
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Forbidden
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Not Found
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Result withheld; the saved run and its details remain available. Submissions remain
-            queued and cancellations remain effective.
-        "413":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Request Entity Too Large
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Unprocessable Entity
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SafeErrorResponse'
-          description: Internal Server Error
-      summary: Webhook
   /api/workflow:
     get:
       operationId: workflow_api_workflow_get
