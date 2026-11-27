@@ -590,7 +590,7 @@ def test_article_and_run_insert_rollback_together(tmp_path, database_url):
     store.close()
 
 
-def test_latest_run_drives_status_verdict_activity_and_search(tmp_path, database_url):
+def test_latest_run_drives_status_verdict_but_not_article_order(tmp_path, database_url):
     store = Store(database_url)
     workflow(store)
     ref = add_article(store, source="Fictional Wire", created_at="2026-11-01")
@@ -600,11 +600,11 @@ def test_latest_run_drives_status_verdict_activity_and_search(tmp_path, database
     assert store.articles()["items"][0]["ref"] == other
     second = store.create_run(workflow_id="wf_test", category="benchmark", origin="article", input={}, article_ref=ref)
     store._update(second["id"], created_at="2026-11-04", status="failed", verdict="AUDIT_FAILED")
-    assert store.articles()["items"][0]["ref"] == ref
+    assert store.articles()["items"][0]["ref"] == other
     assert store.articles(verdict="MOVED")["total"] == 0
     assert store.articles(status="failed")["items"][0]["latest_run_id"] == second["id"]
     for query in ("WIRE", "PAPER.EXAMPLE", "/FICTIONAL", "PERMIT"):
-        assert store.articles(q=query)["items"][0]["ref"] == ref
+        assert ref in {row["ref"] for row in store.articles(q=query)["items"]}
     assert store.articles(offset=2)["items"] == []
     store.close()
 

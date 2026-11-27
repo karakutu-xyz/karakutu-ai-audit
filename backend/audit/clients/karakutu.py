@@ -21,6 +21,7 @@ class KarakutuClient:
         self.http = httpx.AsyncClient(timeout=15)
         self.auth = ArweaveWalletAuth(wallet_path=wallet_path, wallet_json=wallet_json, base_url=self.base_url) if wallet_path or wallet_json else None
 
+        self.listing_reason = None
         self.state: ArchiveState = (
             (self.auth.wallet_state if self.auth else None) or "unchecked"
         ) if self.enabled else "disabled"
@@ -128,30 +129,53 @@ class KarakutuClient:
     async def audits_created_between(self, date_from, date_to, statuses=(0, 1, 2, 3, 4),
                                     *, require_complete=False):
         """Keep partial results for interactive Import; polling requires every page."""
-        rows, any_ok, complete = [], False, True
+        rows, any_ok = [], False
+        reason = None
         for status in statuses:
             for page in range(1, 31):
-                body = await self._get('/audits', {'view':'public','status':status,'date_from':date_from,'date_to':date_to,'page':page,'page_size':100,'sort_by':'created_at','sort_order':'desc'})
+                params = {
+                    'view': 'public', 'status': status, 'date_from': date_from,
+                    'date_to': date_to, 'page': page, 'page_size': 100,
+                    'sort_by': 'created_at', 'sort_order': 'desc',
+                }
+                body = await self._get('/audits', params)
+                if body is None and require_complete:
+                    # Polling retries once; partial reads retain their existing behavior.
+                    body = await self._get('/audits', params)
                 if body is None:
-                    complete = False
+                    reason = reason or 'archive_page_failed'
                     break
                 any_ok = True
                 if not isinstance(body, dict) or not isinstance(body.get('items'), list):
-                    complete = False
+                    reason = reason or 'archive_page_malformed'
                     break
                 items = body['items']
                 for item in items:
                     if not isinstance(item, dict):
-                        complete = False
+                        reason = reason or 'archive_page_malformed'
                         continue
                     art = item.get('article') or {}
-                    rows.append({'audit_id':item.get('id'),'article_id':art.get('id'),'url':art.get('link') or '', 'title':art.get('title') or '', 'newspaper':art.get('newspaper') or '', 'status':item.get('status',status),'decision':item.get('decision'),'created_at':item.get('created_at'),'publish_date':art.get('publish_date')})
+                    if not isinstance(art, dict):
+                        reason = reason or 'archive_page_malformed'
+                        continue
+                    rows.append({
+                        'audit_id': item.get('id'), 'article_id': art.get('id'),
+                        'url': art.get('link') or '', 'title': art.get('title') or '',
+                        'newspaper': art.get('newspaper') or '',
+                        'status': item.get('status', status),
+                        'decision': item.get('decision'),
+                        'created_at': item.get('created_at'),
+                        'publish_date': art.get('publish_date'),
+                    })
                 if len(items) < 100:
                     break
             else:
                 # The page cap is a safety bound, not proof the listing ended.
-                complete = False
-        if require_complete and not complete:
+                reason = reason or 'archive_page_cap'
+        # Publish only the completed call, so concurrent workflow reads cannot
+        # overwrite a poll listing's completeness while its pages are in flight.
+        self.listing_reason = reason
+        if require_complete and reason:
             return None
         return rows if any_ok else None
 

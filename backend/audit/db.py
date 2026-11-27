@@ -14,7 +14,7 @@ from unicodedata import normalize
 from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import (
-    JSON, Identity, Integer, Index, ForeignKey, and_, bindparam, case, cast, or_, String, Text,
+    JSON, Identity, Integer, Index, ForeignKey, and_, bindparam, case, cast, delete, or_, String, Text,
     UniqueConstraint, create_engine, event, func, inspect, literal_column, select, update,
 )
 from sqlalchemy.engine import Connection
@@ -135,6 +135,7 @@ class ArticleRow(Base):
     source: Mapped[str | None] = mapped_column(Text, nullable=True)
     host: Mapped[str] = mapped_column(Text)
     published_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    detected_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     removed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     archive_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     language: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -144,6 +145,36 @@ class ArticleRow(Base):
     origin: Mapped[str] = mapped_column(String(20))
     created_at: Mapped[str] = mapped_column(String(40))
     updated_at: Mapped[str] = mapped_column(String(40))
+
+
+class PollState(Base):
+    __tablename__ = "poll_state"
+    singleton: Mapped[int] = mapped_column(Integer, primary_key=True)
+    last_success_at: Mapped[str] = mapped_column(String(40))
+
+
+class PollCycleRow(Base):
+    __tablename__ = "poll_cycles"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    seq: Mapped[int | None] = mapped_column(Integer, Identity(), nullable=True)
+    cycle: Mapped[dict] = mapped_column(JSON_VALUE)
+
+
+def archive_detection_time(value):
+    """Normalize archive audit creation time, leaving unusable dates unknown."""
+    try:
+        if isinstance(value, (int, float)) or (
+                isinstance(value, str) and LEGACY_NUMBER.fullmatch(value.strip())):
+            stamp = datetime.fromtimestamp(float(value), timezone.utc)
+        elif isinstance(value, str):
+            stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                return None
+        else:
+            return None
+        return stamp.astimezone(timezone.utc).isoformat()
+    except (ValueError, OverflowError, OSError):
+        return None
 
 
 def article_search_text(title: str, source: str | None, host: str, url: str) -> str:
@@ -360,9 +391,17 @@ def _portable_storage(connection: Connection):
                 connection.exec_driver_sql(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE TEXT")
 
 
+def _poll_sync(connection: Connection):
+    PollState.__table__.create(connection, checkfirst=True)
+    PollCycleRow.__table__.create(connection, checkfirst=True)
+    columns = {column["name"] for column in inspect(connection).get_columns("articles")}
+    if "detected_at" not in columns:
+        connection.exec_driver_sql("ALTER TABLE articles ADD COLUMN detected_at VARCHAR(40)")
+
+
 MIGRATIONS: list[tuple[int, Callable[[Connection], None]]] = [
     (1, _baseline), (2, _prompt_tables), (3, _model_assignments), (4, _articles),
-    (5, _portable_storage),
+    (5, _portable_storage), (6, _poll_sync),
 ]
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 # Insertion order defines "newest", even when timestamps tie or clocks change.
@@ -444,6 +483,28 @@ class Store:
         except Exception:
             self.engine.dispose()
             raise
+
+    def poll_status(self) -> dict:
+        with Session(self.engine) as session:
+            position = session.get(PollState, 1)
+            history = session.scalars(select(PollCycleRow).order_by(
+                insertion_order(PollCycleRow).desc()).limit(20)).all()
+            return {"last_success_at": position.last_success_at if position else None,
+                    "history": [row.cycle for row in history]}
+
+    def save_poll_position(self, stamp: str):
+        with Session(self.engine) as session, session.begin():
+            begin_write(session.connection())
+            session.merge(PollState(singleton=1, last_success_at=stamp))
+
+    def save_poll_cycle(self, cycle: dict):
+        with Session(self.engine) as session, session.begin():
+            begin_write(session.connection())
+            session.add(PollCycleRow(id=str(uuid4()), cycle=cycle))
+            session.flush()
+            retained = select(PollCycleRow.id).order_by(
+                insertion_order(PollCycleRow).desc()).limit(20)
+            session.execute(delete(PollCycleRow).where(PollCycleRow.id.not_in(retained)))
 
     def has_demo_data(self) -> bool:
         """True when the database holds a demo workflow (`wf_demo_*`), on any backend.
@@ -638,7 +699,7 @@ class Store:
         return select(*fields, checked, status, latest.c.latest_run_id, latest.c.latest_run_status,
                       latest.c.latest_verdict, latest.c.latest_run_at,
                       func.coalesce(latest.c.run_count, 0).label("run_count"),
-                      func.coalesce(latest.c.latest_run_at, ArticleRow.created_at).label("activity")
+                      func.coalesce(ArticleRow.detected_at, ArticleRow.created_at).label("activity")
         ).outerjoin(latest, (latest.c.article_ref == ArticleRow.ref) & (latest.c.position == 1))
 
     def articles(self, *, status=None, verdict=None, category=None, q=None, limit=50, offset=0):
@@ -762,12 +823,16 @@ class Store:
                 if row is None:
                     values = article_values({"url": url, "title": item.get("title") or "", "content": "",
                                              "published_at": item.get("publish_date")}, "live", "archive")
-                    row = ArticleRow(**{**values, "ref": ref, "archive_id": str(archive_id), "source": source})
+                    row = ArticleRow(**{**values, "ref": ref, "archive_id": str(archive_id), "source": source,
+                                        "detected_at": archive_detection_time(item.get("created_at"))})
                     session.add(row)
                     session.flush()
                     counts["imported"] += 1
                 else:
                     values = {"archive_id": str(archive_id), "source": source}
+                    detected = archive_detection_time(item.get("created_at"))
+                    if detected is not None:
+                        values["detected_at"] = max(row.detected_at or detected, detected)
                     if row.origin == "archive" or row.ref.startswith("ka-"):
                         values.update(url=url, host=parts.hostname, title=item.get("title") or row.title,
                                       published_at=item.get("publish_date") or row.published_at)

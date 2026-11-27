@@ -33,6 +33,9 @@ const pollReasons: Record<PollReason, string> = {
   ...archiveLabels,
   archive_error: "Archive read failed",
   archive_incomplete: "Archive listing incomplete",
+  archive_page_failed: "Archive page read failed",
+  archive_page_malformed: "Archive page malformed",
+  archive_page_cap: "Archive page limit reached",
   poll_error: "Polling failed",
   import_in_progress: "Import in progress",
   queue_paused: "Queue paused",
@@ -108,6 +111,7 @@ export function SettingsPage() {
                 ? `On (up to ${status.polling.auto_audit_max_per_poll} per poll)`
                 : "Off",
             },
+            { label: "Sync lookback", value: `${status.polling.lookback_days} days` },
             { label: "Last poll", value: lastPoll(status.polling) },
             {
               label: "Prompts editable via API",
@@ -118,6 +122,30 @@ export function SettingsPage() {
             { label: "Archive writes", value: "Disabled" },
           ]}
         />
+      )}
+      {status && status.polling.history.length > 0 && (
+        <section className="ruled-section" aria-labelledby="sync-history-title">
+          <h2 id="sync-history-title">Sync history</h2>
+          <div className="table-scroll" role="region"
+            aria-label="Recent archive sync cycles" tabIndex={0}>
+            <table className="sync-history">
+              <thead><tr>
+                <th scope="col">Time</th><th scope="col">Outcome</th>
+                <th scope="col">Found</th><th scope="col">New</th>
+                <th scope="col">Updated</th><th scope="col">Queued</th>
+              </tr></thead>
+              <tbody>{status.polling.history.map((cycle, index) => (
+                <tr key={`${cycle.started_at}-${index}`}>
+                  <td>{date(cycle.finished_at)}</td>
+                  <td>{cycle.outcome === "ok" ? "OK" : "Skipped"}
+                    {cycle.reason && ` · ${pollReasons[cycle.reason]}`}</td>
+                  <td>{cycle.found}</td><td>{cycle.new}</td>
+                  <td>{cycle.updated}</td><td>{cycle.queued}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </section>
       )}
       <section className="ruled-section">
         <div className="subsection-title">

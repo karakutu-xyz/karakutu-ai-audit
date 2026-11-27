@@ -1,10 +1,22 @@
 """Single-process, read-only archive intake. Public diagnostics are fixed labels only."""
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import get_args
 
 from audit.clients.karakutu import ArchiveState
 
+
+logger = logging.getLogger(__name__)
+
+
+def enable_cycle_log():
+    """Uvicorn configures only its own loggers; give the one-line cycle log a stderr handler."""
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s:     %(message)s"))
+        logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 # A failed text read, or an article that cannot be submitted, waits this long before retry.
 ARCHIVE_TEXT_RETRY_SECONDS = 10 * 60
@@ -50,6 +62,11 @@ class ArchivePoller:
                         and client is not None and client.enabled)
         self.last = None
         self.last_success = None
+        self.history = []
+        self.loaded = False
+        self.next_wait = settings.poll_interval_minutes * 60
+        self.archive_skips = 0
+        self.window_days = 0
         # Where the last read-bounded sweep stopped; the next sweep resumes after it so
         # unreadable older articles cannot use up every cycle's reads.
         self.sweep_after = None
@@ -62,7 +79,22 @@ class ArchivePoller:
             "auto_audit_enabled": self.enabled and self.settings.auto_audit_enabled,
             "auto_audit_max_per_poll": self.settings.auto_audit_max_per_poll,
             "last": self.last,
+            "lookback_days": self.settings.poll_lookback_days,
+            "history": self.history,
+            "last_success_at": self.last_success.isoformat() if self.last_success else None,
         }
+
+    async def load_state(self):
+        try:
+            saved = await store_in_thread(self.state.store.poll_status)
+            self.history = saved["history"]
+            self.last_success = (datetime.fromisoformat(saved["last_success_at"])
+                                 if saved["last_success_at"] else None)
+            self.loaded = True
+        except Exception:
+            # The cycle will retry and report poll_error, never persistence text.
+            return False
+        return True
 
     def archive_failure(self, fallback="archive_error"):
         state = getattr(self.client, "state", None)
@@ -73,15 +105,18 @@ class ArchivePoller:
         await self.sleep(self.startup_delay)
         while True:
             await self.run_cycle()
-            await self.sleep(self.settings.poll_interval_minutes * 60)
+            await self.sleep(self.next_wait)
 
     async def run_cycle(self):
         """Run one cycle without sleeping; clocks and scheduling are injectable."""
         async with self.cycle_lock:
             cycle = {"started_at": self.clock().isoformat(), "finished_at": None,
                      "outcome": "ok", "reason": None, "found": 0, "new": 0,
-                     "queued": 0, "unreadable": 0}
+                     "updated": 0, "queued": 0, "unreadable": 0}
+            self.window_days = 0
             try:
+                if not self.loaded and not await self.load_state():
+                    raise RuntimeError("poll_error")
                 reason = await self._cycle(cycle)
             except asyncio.CancelledError:
                 raise
@@ -91,8 +126,31 @@ class ArchivePoller:
             if reason:
                 cycle.update(outcome="skipped", reason=reason)
             cycle["finished_at"] = self.clock().isoformat()
-            self.last = cycle
-            return cycle
+            try:
+                await store_in_thread(self.state.store.save_poll_cycle, cycle)
+                self.history = [cycle, *self.history][:20]
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                cycle.update(outcome="skipped", reason="poll_error")
+            reason = cycle["reason"]
+            base = self.settings.poll_interval_minutes * 60
+            if cycle["outcome"] == "ok":
+                self.archive_skips = 0
+                self.next_wait = base
+            elif reason in ARCHIVE_FAILURES or (reason or "").startswith("archive_"):
+                # Every archive skip doubles the wait, from the first one, up to an hour.
+                self.archive_skips += 1
+                self.next_wait = min(base * 2 ** min(self.archive_skips, 12), 3600)
+            else:
+                self.next_wait = base
+            logger.info(
+                "poll outcome=%s reason=%s found=%d new=%d updated=%d queued=%d window_days=%.3f",
+                cycle["outcome"], cycle["reason"], cycle["found"], cycle["new"],
+                cycle["updated"], cycle["queued"], self.window_days)
+            # Keep the original last-cycle contract; history adds update counts.
+            self.last = {key: value for key, value in cycle.items() if key != "updated"}
+            return self.last
 
     async def _cycle(self, cycle):
         if not self.enabled:
@@ -102,19 +160,24 @@ class ArchivePoller:
             return "import_in_progress"
         async with lock:
             end = self.clock()
-            start = (self.last_success - timedelta(days=1) if self.last_success
-                     else end - timedelta(days=30))
-            start = max(end - timedelta(days=30), min(start, end - timedelta(days=2)))
+            oldest = end - timedelta(days=self.settings.poll_lookback_days)
+            start = (max(oldest, min(self.last_success - timedelta(days=1),
+                                    end - timedelta(days=2)))
+                     if self.last_success else oldest)
+            self.window_days = (end - start).total_seconds() / 86400
             try:
                 items = await self.client.audits_created_between(
                     int(start.timestamp()), int(end.timestamp()), require_complete=True)
             except Exception:
                 return self.archive_failure()
             if items is None:
-                return self.archive_failure("archive_incomplete")
+                return (getattr(self.client, "listing_reason", None)
+                        or self.archive_failure("archive_page_failed"))
             cycle["found"] = len(items)
             counts = await store_in_thread(self.state.store.import_articles, items)
             cycle["new"] = counts["imported"]
+            cycle["updated"] = counts["updated"]
+            await store_in_thread(self.state.store.save_poll_position, end.isoformat())
             self.last_success = end
         if not self.settings.auto_audit_enabled:
             return None

@@ -95,6 +95,7 @@ class SafeErrorResponse(BaseModel):
 
 
 PollReason = ArchiveState | Literal[
+    "archive_page_failed", "archive_page_malformed", "archive_page_cap",
     "archive_error", "archive_incomplete", "poll_error", "import_in_progress", "queue_paused"]
 
 
@@ -109,12 +110,19 @@ class PollCycle(BaseModel):
     unreadable: int = Field(ge=0)
 
 
+class PollHistoryCycle(PollCycle):
+    updated: int = Field(ge=0)
+
+
 class PollingStatus(BaseModel):
     enabled: bool
     interval_minutes: int = Field(ge=0, le=1440)
     auto_audit_enabled: bool
     auto_audit_max_per_poll: int = Field(ge=1, le=50)
     last: PollCycle | None
+    lookback_days: int = Field(ge=1, le=30)
+    history: list[PollHistoryCycle] = Field(max_length=20)
+    last_success_at: str | None = Field(json_schema_extra={"format": "date-time"})
 
 
 class ServiceStatus(BaseModel):

@@ -134,6 +134,7 @@ export type SearchState =
   | "disabled" | "unchecked" | "ok" | "unreachable" | "rejected" | "degraded";
 
 export type PollReason = ArchiveState | "archive_error" | "poll_error"
+  | "archive_page_failed" | "archive_page_malformed" | "archive_page_cap"
   | "archive_incomplete" | "import_in_progress" | "queue_paused";
 
 export interface PollCycle {
@@ -147,12 +148,19 @@ export interface PollCycle {
   unreadable: number;
 }
 
+export interface PollHistoryCycle extends PollCycle {
+  updated: number;
+}
+
 export interface PollingStatus {
   enabled: boolean;
   interval_minutes: number;
   auto_audit_enabled: boolean;
   auto_audit_max_per_poll: number;
   last: PollCycle | null;
+  lookback_days: number;
+  history: PollHistoryCycle[];
+  last_success_at: string | null;
 }
 
 export interface ServiceStatus {

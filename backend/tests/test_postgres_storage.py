@@ -9,7 +9,7 @@ from sqlalchemy.schema import CreateIndex, CreateTable
 
 from audit.config import Settings
 from audit.db import (
-    ArticleRow, Base, MIGRATIONS, ModelAssignment, PromptActivation, Run,
+    ArticleRow, Base, MIGRATIONS, ModelAssignment, PollCycleRow, PromptActivation, Run,
     SCHEMA_VERSION, Store, begin_write, get_version, insertion_order, set_version,
 )
 
@@ -82,7 +82,7 @@ def test_postgres_ddl_and_ordering_compile_offline():
             assert "IDENTITY NULL" not in ddl
     index = next(index for index in ArticleRow.__table__.indexes if index.name == "uq_articles_archive_id")
     assert "WHERE archive_id IS NOT NULL" in str(CreateIndex(index).compile(dialect=dialect))
-    for table in (PromptActivation, ModelAssignment, Run):
+    for table in (PromptActivation, ModelAssignment, PollCycleRow, Run):
         query = select(table.id).order_by(insertion_order(table))
         assert ".rowid" in str(query.compile(dialect=sqlite.dialect()))
         expected = ".id" if table is Run else ".seq"
@@ -105,10 +105,10 @@ def test_version_four_upgrade_retains_rows_and_runs_only_five(tmp_path):
 
     def migrate(connection):
         calls.append(5)
-        MIGRATIONS[-1][1](connection)
+        MIGRATIONS[4][1](connection)
 
     for _ in range(2):
-        store = Store(url, migrations=[*MIGRATIONS[:-1], (5, migrate)])
+        store = Store(url, migrations=[*MIGRATIONS[:4], (5, migrate)])
         assert store.active_prompts() == expected
         assert store.model_assignments() == {"relevance": "invented-model"}
         for table in ("prompt_activations", "model_assignments"):
@@ -127,11 +127,11 @@ def test_migration_five_failure_rolls_back(tmp_path):
         connection.execute("PRAGMA user_version=4")
 
     def fail(connection):
-        MIGRATIONS[-1][1](connection)
+        MIGRATIONS[4][1](connection)
         raise RuntimeError("invented failure")
 
     with pytest.raises(RuntimeError, match="invented failure"):
-        Store(url, migrations=[*MIGRATIONS[:-1], (5, fail)])
+        Store(url, migrations=[*MIGRATIONS[:4], (5, fail)])
     with sqlite3.connect(tmp_path / "rollback.sqlite3") as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
         for table in ("prompt_activations", "model_assignments"):

@@ -10,11 +10,12 @@ number formatting, key order and `\u0000` escapes. Test mode and demo seeding re
 | Table | Contents |
 | --- | --- |
 | `workflows` | Immutable fingerprint and source/configuration/dependency snapshot. |
-| `articles` | Stable URL identity, title/source/host, publication/removal dates, content and bounded archive version metadata; category and origin (`run`, `archive`, `demo`). |
+| `articles` | Stable URL identity, title/source/host, publication/removal/detection dates, content and bounded archive version metadata; category and origin (`run`, `archive`, `demo`). |
 | `runs` | Nullable indexed `article_ref` links an article; immutable submitted input and workflow ID; category/origin; execution lifecycle; prediction; step/model/evidence traces; optional expected verdict. |
 | `reactions` | Append-only reviewer reaction, note, optional expected verdict, run ID and the same workflow ID. |
 | `prompt_versions` | Append-only prompt name/version, exact text, UTF-8 SHA-256, origin (`default` or `api`), author, note and timestamp; unique name/version. |
 | `model_assignments` | Append-only step, nullable model override, author, note and timestamp. Newest insertion per step wins. |
+| `poll_state`, `poll_cycles` | Successful sync position and the last 20 metadata polling cycles. |
 | `prompt_activations` | Append-only name/version reference, kind (`seed`, `activate`, `rollback`, `default_update`), author, note and timestamp. The newest activation selects the active version. |
 
 `benchmark` and `live` are separate categories in the same local database. Routes assign the category; a caller-supplied category is rejected. A benchmark may exercise real LM Studio and search without becoming live data. Manual audits use `POST /api/articles/{ref}/audit` (origin `article`), which keeps the article's category. Opt-in archive auto-audits use origin `poll` and category `live`. Historical runs with origin `api` or `webhook` remain readable and filterable. Export does not reclassify data. Karakutu intake uses background polling; manual archive import remains available.
@@ -38,19 +39,33 @@ one cycle at a time and waits the configured interval after each cycle. Shutdown
 cancels it with the other tasks. Test mode never creates a poller task.
 
 Each cycle uses the same Unix-second archive audit listing and metadata-only
-`import_articles` as manual Import. The first window is 30 days. Later windows
-start one day before this process's last successful listing/import, clamped to
-2–30 days ending now. Restart resets the window to 30 days. An overlapping manual
-import skips the cycle with `import_in_progress`. Polling requires every status and
-page to succeed and reach the end before the page cap. Each page must be an object
-with an `items` list of objects; malformed pages are incomplete. Manual Import
-keeps readable entries from partial or malformed listings. Incomplete polling listings register
-nothing, queue nothing and leave the successful window unchanged. They use a fixed
-archive failure state or `archive_incomplete`. Listing exceptions use a fixed
+`import_articles` as manual Import. The first window is `POLL_LOOKBACK_DAYS`
+(default 7, range 1–30). Later windows start one day before the persisted successful
+listing/import end, at least two days back but never beyond the lookback. A one-day
+lookback caps that overlap at one day. Restarts resume from the database position.
+Manual Import keeps its own `days` parameter. An overlapping manual import skips
+the cycle with `import_in_progress`. Polling requires every status and page to
+succeed and reach the end before the 30-page cap. Each page must be an object
+with an `items` list of objects. A failed page read retries that exact page once.
+Incomplete listings register nothing, queue nothing and retain the sync position:
+`archive_page_failed` means both page reads failed; `archive_page_malformed` means
+a malformed body or item; `archive_page_cap` means the cap was reached. Manual
+Import still keeps readable partial rows with its existing read behavior. After
+each archive skip the next wait doubles: twice the interval after the first skip, four
+times after the second, capped at one hour; a successful cycle resets it. Each cycle
+writes one log line with its outcome, reason label, counts and window length. Listing exceptions use a fixed
 archive failure state or `archive_error`; other cycle failures use `poll_error` and
 the next cycle still runs. No upstream bodies or exception messages enter status
 or logs. Listing counts include invalid/duplicate entries; `new` counts only
-newly registered articles. Both polling and manual Import persist metadata in a worker
+newly registered articles; `updated` counts changed metadata rows.
+`GET /api/status` preserves `polling.last` and adds `polling.lookback_days`,
+`polling.last_success_at` (ISO timestamp or null) and `polling.history`. History
+holds at most 20 persisted cycles, newest first: `started_at`, `finished_at`,
+`outcome` (`ok` or `skipped`), fixed `reason` or null, `found`, `new`, `updated`,
+`queued` and `unreadable`. Settings shows the lookback and history; Articles shows
+the last successful sync when polling is enabled. One log line per cycle contains
+only outcome, fixed reason, safe counts and window days.
+Both polling and manual Import persist metadata in a worker
 thread under the shared import lock; candidate queries also run off the event loop.
 Imports commit at most 100 listing rows per transaction, releasing the writer lock
 and connection between batches so foreground reads and writes can proceed. URL
@@ -102,8 +117,8 @@ summaries and hashes, with full bodies only for `RECORD_FULL_EVIDENCE=true`.
 `last` (null until a cycle finishes). `last` holds RFC 3339 `started_at` and
 `finished_at`, `outcome` (`ok` or `skipped`), `reason` (a fixed label or null),
 `found`, `new`, `queued` and `unreadable`. Counts remain visible on a partial failed cycle.
-This state stays in memory and resets on restart. Settings displays it; Articles
-continues to offer manual selection and Run audit.
+Only `last` resets on restart; the sync position and 20-cycle history persist.
+Settings displays both; Articles continues to offer manual selection and Run audit.
 
 ### Schema changes
 
@@ -137,6 +152,14 @@ SQLite already accepts arbitrary lengths and needs no physical width change.
 URL, title and content are Text; nullable `snapshot` is JSON (`json` on PostgreSQL)
 containing version titles, check dates and hashes, never duplicated full text.
 Source, publication/removal dates, archive ID and language are nullable.
+
+Migration 6 adds singleton `poll_state` (the last successful metadata sync end),
+`poll_cycles` (20 retained cycle records in insertion order), and nullable
+`articles.detected_at`. Import stores the archive audit's `created_at` as the
+normalized UTC detection date. Existing rows without it fall back to their local
+registration time until imported again. Articles sort by detection date newest
+first, falling back to registration time; running another audit does not reorder
+the ledger. Removal dates retain their separate archive-check meaning.
 
 Migration 4 processes runs in batches of 500 in creation order (SQLite insertion
 order breaks ties), creates one article per normalized URL, and links runs with batch
@@ -249,7 +272,7 @@ The generated [OpenAPI contract](../openapi.yaml) (YAML; the running API still s
 | `GET /api/workflow` | Current immutable workflow snapshot. |
 | `GET /api/workflows/{id}` | Snapshot used by a historical run. |
 | `POST /api/benchmarks/runs` | Submit a benchmark, return 202 and its lean queued `AuditResult`. |
-| `GET /api/articles` | Paginated articles with latest audit status/verdict, run count and activity. |
+| `GET /api/articles` | Paginated articles, newest detection first, with latest audit status/verdict and run count. |
 | `GET /api/articles/{ref}` | Stored content, archive metadata/links and newest-first run history with computed summaries; unknown refs return 404. |
 | `POST /api/articles/{ref}/audit` | First audit or re-run; 202 `AuditResult`, origin `article`; preserves every previous run. |
 | `POST /api/articles/import?days=30` | Read archive audit listings and upsert local article metadata; 200 `{imported, updated, skipped}`. |
@@ -304,9 +327,9 @@ omit for both), `q` (at most 200 characters), `limit` (1–200, default 50) and 
 (nonnegative). Search normalizes `q` with NFKC and Unicode casefolding, then matches
 a literal substring of the stored `search_text` over title, source, host and URL.
 Non-ASCII case variants match consistently; percent, underscore and backslash are
-escaped as literal characters. Results sort by newest
-run creation time, otherwise article creation time; refs break ties. `total` counts
-all filtered matches before pagination. A SQL window query selects the latest run
+escaped as literal characters. Results sort by newest archive detection date
+(the audit listing's `created_at`), falling back to local registration time; refs
+break ties. `total` counts all filtered matches before pagination. A SQL window query selects the latest run
 and counts runs without reading their input/output/step JSON. Run ID breaks ties
 between equal creation timestamps.
 
