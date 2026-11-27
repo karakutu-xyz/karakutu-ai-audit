@@ -147,13 +147,13 @@ def old_database(path):
 
 
 def test_old_schema_upgrades_once_and_column_migration(tmp_path):
-    from audit.db import MIGRATIONS
+    from audit.db import MIGRATIONS, SCHEMA_VERSION
     path = tmp_path / "old.sqlite3"
     old_database(path)
     calls = []
 
     def add_column(connection):
-        calls.append(7)
+        calls.append(SCHEMA_VERSION + 1)
         connection.exec_driver_sql("ALTER TABLE workflows ADD COLUMN migration_marker TEXT")
         connection.exec_driver_sql("UPDATE workflows SET migration_marker='preserved'")
 
@@ -164,7 +164,7 @@ def test_old_schema_upgrades_once_and_column_migration(tmp_path):
         return wrapped
 
     migrations = [(version, counted(version, migration)) for version, migration in MIGRATIONS]
-    migrations.append((7, add_column))
+    migrations.append((SCHEMA_VERSION + 1, add_column))
     for _ in range(2):
         store = Store(f"sqlite:///{path}", migrations=migrations)
         assert store.workflow("wf_old") == {"retained": True}
@@ -172,10 +172,10 @@ def test_old_schema_upgrades_once_and_column_migration(tmp_path):
         assert store.run("run_old")["reactions"][0]["id"] == "rx_old"
         assert {"prompt_versions", "prompt_activations"} <= set(inspect(store.engine).get_table_names())
         with store.engine.connect() as connection:
-            assert connection.exec_driver_sql("PRAGMA user_version").scalar_one() == 7
+            assert connection.exec_driver_sql("PRAGMA user_version").scalar_one() == SCHEMA_VERSION + 1
             assert connection.exec_driver_sql("SELECT migration_marker FROM workflows").scalar_one() == "preserved"
         store.close()
-    assert calls == [1, 2, 3, 4, 5, 6, 7]
+    assert calls == list(range(1, SCHEMA_VERSION + 2))
 
 
 def test_failed_migration_rolls_back_ddl_rows_and_version(tmp_path):
@@ -335,7 +335,7 @@ def test_version_two_migrates_assignments_without_changing_existing_data(tmp_pat
         assert store.active_prompts() == prompts
         assert store.model_assignments() == {}
         with store.engine.connect() as connection:
-            assert connection.exec_driver_sql('PRAGMA user_version').scalar_one() == SCHEMA_VERSION == 6
+            assert connection.exec_driver_sql('PRAGMA user_version').scalar_one() == SCHEMA_VERSION == 7
         store.close()
 
 
@@ -441,7 +441,7 @@ def test_sync_migration_preserves_existing_articles(tmp_path):
     for _ in range(2):
         store = Store(f"sqlite:///{path}")
         with store.engine.connect() as connection:
-            assert get_version(connection) == 6
+            assert get_version(connection) == 7
         assert store.article("ka-1")["title"] == "Invented retained report"
         assert store.poll_status() == {"history": [], "last_success_at": None}
         with Session(store.engine) as session:

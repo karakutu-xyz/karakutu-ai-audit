@@ -152,8 +152,31 @@ export interface PollHistoryCycle extends PollCycle {
   updated: number;
 }
 
+export interface PollValues {
+  polling_enabled: boolean;
+  interval_minutes: number;
+  lookback_days: number;
+  auto_audit_enabled: boolean;
+  auto_audit_max_per_poll: number;
+}
+
+export type PollSettingName = keyof PollValues;
+export type PollSettings = {
+  [Name in PollSettingName]: {
+    value: PollValues[Name];
+    default: PollValues[Name];
+    source: "env" | "ui";
+  };
+};
+
 export interface PollingStatus {
   enabled: boolean;
+  polling_enabled: boolean;
+  paused: boolean;
+  running: boolean;
+  reason: "test_mode" | "archive_disabled" | null;
+  next_poll_at: string | null;
+  source: Record<PollSettingName, "env" | "ui">;
   interval_minutes: number;
   auto_audit_enabled: boolean;
   auto_audit_max_per_poll: number;

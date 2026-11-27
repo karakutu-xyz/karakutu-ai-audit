@@ -841,6 +841,26 @@ components:
       - source
       title: ModelStepValue
       type: object
+    PollBoolSetting:
+      properties:
+        default:
+          title: Default
+          type: boolean
+        source:
+          enum:
+          - env
+          - ui
+          title: Source
+          type: string
+        value:
+          title: Value
+          type: boolean
+      required:
+      - value
+      - default
+      - source
+      title: PollBoolSetting
+      type: object
     PollCycle:
       properties:
         finished_at:
@@ -980,6 +1000,99 @@ components:
       - updated
       title: PollHistoryCycle
       type: object
+    PollNumberSetting:
+      properties:
+        default:
+          title: Default
+          type: integer
+        source:
+          enum:
+          - env
+          - ui
+          title: Source
+          type: string
+        value:
+          title: Value
+          type: integer
+      required:
+      - value
+      - default
+      - source
+      title: PollNumberSetting
+      type: object
+    PollSettings:
+      properties:
+        auto_audit_enabled:
+          $ref: '#/components/schemas/PollBoolSetting'
+        auto_audit_max_per_poll:
+          $ref: '#/components/schemas/PollNumberSetting'
+        interval_minutes:
+          $ref: '#/components/schemas/PollNumberSetting'
+        lookback_days:
+          $ref: '#/components/schemas/PollNumberSetting'
+        polling_enabled:
+          $ref: '#/components/schemas/PollBoolSetting'
+      required:
+      - polling_enabled
+      - interval_minutes
+      - lookback_days
+      - auto_audit_enabled
+      - auto_audit_max_per_poll
+      title: PollSettings
+      type: object
+    PollSettingsInput:
+      additionalProperties: false
+      properties:
+        auto_audit_enabled:
+          anyOf:
+          - type: boolean
+          - type: "null"
+          title: Auto Audit Enabled
+        auto_audit_max_per_poll:
+          anyOf:
+          - maximum: 50.0
+            minimum: 1.0
+            type: integer
+          - type: "null"
+          title: Auto Audit Max Per Poll
+        interval_minutes:
+          anyOf:
+          - maximum: 1440.0
+            minimum: 1.0
+            type: integer
+          - type: "null"
+          title: Interval Minutes
+        lookback_days:
+          anyOf:
+          - maximum: 30.0
+            minimum: 1.0
+            type: integer
+          - type: "null"
+          title: Lookback Days
+        polling_enabled:
+          anyOf:
+          - type: boolean
+          - type: "null"
+          title: Polling Enabled
+      title: PollSettingsInput
+      type: object
+    PollSettingsReset:
+      additionalProperties: false
+      properties:
+        names:
+          items:
+            enum:
+            - polling_enabled
+            - interval_minutes
+            - lookback_days
+            - auto_audit_enabled
+            - auto_audit_max_per_poll
+            type: string
+          maxItems: 5
+          title: Names
+          type: array
+      title: PollSettingsReset
+      type: object
     PollingStatus:
       properties:
         auto_audit_enabled:
@@ -1019,8 +1132,52 @@ components:
           minimum: 1.0
           title: Lookback Days
           type: integer
+        next_poll_at:
+          anyOf:
+          - type: string
+          - type: "null"
+          format: date-time
+          title: Next Poll At
+        paused:
+          title: Paused
+          type: boolean
+        polling_enabled:
+          title: Polling Enabled
+          type: boolean
+        reason:
+          anyOf:
+          - enum:
+            - test_mode
+            - archive_disabled
+            type: string
+          - type: "null"
+          title: Reason
+        running:
+          title: Running
+          type: boolean
+        source:
+          additionalProperties:
+            enum:
+            - env
+            - ui
+            type: string
+          propertyNames:
+            enum:
+            - polling_enabled
+            - interval_minutes
+            - lookback_days
+            - auto_audit_enabled
+            - auto_audit_max_per_poll
+          title: Source
+          type: object
       required:
       - enabled
+      - polling_enabled
+      - paused
+      - running
+      - reason
+      - next_poll_at
+      - source
       - interval_minutes
       - auto_audit_enabled
       - auto_audit_max_per_poll
@@ -2874,6 +3031,255 @@ paths:
                 $ref: '#/components/schemas/SafeErrorResponse'
           description: Internal Server Error
       summary: Assign Model
+  /api/polling/run:
+    post:
+      operationId: poll_now_api_polling_run_post
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PollHistoryCycle'
+          description: Successful Response
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Internal Server Error
+      summary: Poll Now
+  /api/polling/settings:
+    get:
+      operationId: polling_settings_api_polling_settings_get
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PollSettings'
+          description: Successful Response
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Internal Server Error
+      summary: Polling Settings
+    put:
+      operationId: update_polling_settings_api_polling_settings_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PollSettingsInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PollSettings'
+          description: Successful Response
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Internal Server Error
+      summary: Update Polling Settings
+  /api/polling/settings/reset:
+    post:
+      operationId: reset_polling_settings_api_polling_settings_reset_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/PollSettingsReset'
+              - type: "null"
+              title: Body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PollSettings'
+          description: Successful Response
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeErrorResponse'
+          description: Internal Server Error
+      summary: Reset Polling Settings
   /api/prompts:
     get:
       operationId: prompts_list_api_prompts_get

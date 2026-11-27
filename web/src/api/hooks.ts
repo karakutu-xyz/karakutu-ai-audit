@@ -1,9 +1,9 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ApiContext, type RunsResponse } from "./context";
-import { request, errorMessage, ApiError, withheldRunId } from "./client";
+import { request, errorMessage, ApiError, withheldRunId, pollingError } from "./client";
 import { pending } from "../format";
 import type {
-  ArticleDetail, ArticleList, QueueState, Run, Workflow,
+  ArticleDetail, ArticleList, PollSettings, PollValues, QueueState, Run, Workflow,
 } from "../types";
 
 const ledgerCacheLimit = 20;
@@ -297,4 +297,52 @@ export function useRunControl() {
     }
   }
   return { mutate, busy, error };
+}
+
+export function usePollingSettings() {
+  return useResource<PollSettings>("/api/polling/settings", 5000);
+}
+
+export function usePollingControl(onSettings: (settings: PollSettings) => void) {
+  const { token, epoch, retryStatus } = useApi();
+  const controller = useRef<AbortController | null>(null);
+  const [action, setAction] = useState<"save" | "reset" | "run" | null>(null);
+  const busy = action !== null;
+  const [error, setError] = useState("");
+  useEffect(() => {
+    setAction(null);
+    setError("");
+    return () => controller.current?.abort();
+  }, [token, epoch]);
+
+  async function mutate(
+    action: "save" | "reset" | "run",
+    values?: Partial<PollValues> | { names: string[] },
+  ) {
+    if (controller.current && !controller.current.signal.aborted) return false;
+    const active = new AbortController();
+    controller.current = active;
+    setAction(action);
+    setError("");
+    const path = action === "save" ? "settings"
+      : action === "reset" ? "settings/reset" : "run";
+    try {
+      const result = await request<PollSettings>(`/api/polling/${path}`, token, {
+        method: action === "save" ? "PUT" : "POST",
+        ...(values ? { body: JSON.stringify(values) } : {}),
+        signal: active.signal,
+      });
+      if (active.signal.aborted) return false;
+      if (action !== "run") onSettings(result);
+      retryStatus();
+      return true;
+    } catch (error) {
+      if (!active.signal.aborted) setError(pollingError(error));
+      return false;
+    } finally {
+      if (!active.signal.aborted) setAction(null);
+      if (controller.current === active) controller.current = null;
+    }
+  }
+  return { mutate, busy, error, action };
 }

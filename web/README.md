@@ -132,7 +132,12 @@ The mode pill stays in the sticky top bar. Service capabilities and
 the in-memory API token control live in Settings; 401 errors link there.
 Settings shows fixed search health labels (disabled, not checked, reachable,
 unreachable at SEARXNG_URL, or refused with a JSON-output hint) alongside archive
-state. The backend caches its bounded reachability probe for 30 seconds.
+state. Its Polling block loads effective settings through `api/hooks.ts` and
+supports persisted local overrides, per-field resets, pause/resume and a manual
+one-off cycle. Number drafts reset on service/token changes; mutations are aborted
+and their feedback discarded on those changes. Status supplies scheduling and
+cycle availability independently of the editable values. The backend caches its
+bounded reachability probe for 30 seconds.
 Reloading clears the token; nothing uses local/session storage.
 
 A run's immutable workflow id loads independently of run polling and has a

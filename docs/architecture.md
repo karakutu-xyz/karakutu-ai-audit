@@ -31,6 +31,7 @@ web and archive boxes are not used at all (see [Test and live mode](#test-and-li
 | Path | What it owns |
 | --- | --- |
 | [`backend/audit/api.py`](../backend/audit/api.py) | FastAPI app, startup order, request guards (host, token, origin, body size), routes, the in-process run queue. |
+| [`backend/audit/poll_controls.py`](../backend/audit/poll_controls.py) | Effective environment defaults and database-persisted polling overrides; independent of immutable workflow settings. |
 | [`backend/audit/poller.py`](../backend/audit/poller.py) | Single background archive intake task, overlapping metadata windows and opt-in bounded automatic audits; started and cancelled by the API lifespan. |
 | [`backend/audit/engine.py`](../backend/audit/engine.py) | The LangGraph graph (`AuditEngine`), the step wrapper that records every step, the SearXNG client (`Search`), model discovery. |
 | [`backend/audit/workflow/`](../backend/audit/workflow) | One module per step, the prompts ([`prompts.py`](../backend/audit/workflow/prompts.py)), the prompt registry ([`prompt_registry.py`](../backend/audit/workflow/prompt_registry.py)) and the verdict rules ([`pipeline.py`](../backend/audit/workflow/pipeline.py)). |
