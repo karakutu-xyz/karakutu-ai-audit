@@ -878,6 +878,9 @@ components:
             - rejected
             type: string
           - enum:
+            - archive_page_failed
+            - archive_page_malformed
+            - archive_page_cap
             - archive_error
             - archive_incomplete
             - poll_error
@@ -905,6 +908,78 @@ components:
       - unreadable
       title: PollCycle
       type: object
+    PollHistoryCycle:
+      properties:
+        finished_at:
+          format: date-time
+          title: Finished At
+          type: string
+        found:
+          minimum: 0.0
+          title: Found
+          type: integer
+        new:
+          minimum: 0.0
+          title: New
+          type: integer
+        outcome:
+          enum:
+          - ok
+          - skipped
+          title: Outcome
+          type: string
+        queued:
+          minimum: 0.0
+          title: Queued
+          type: integer
+        reason:
+          anyOf:
+          - enum:
+            - disabled
+            - unchecked
+            - ok
+            - wallet_missing
+            - wallet_unreadable
+            - auth_unavailable
+            - unreachable
+            - rejected
+            type: string
+          - enum:
+            - archive_page_failed
+            - archive_page_malformed
+            - archive_page_cap
+            - archive_error
+            - archive_incomplete
+            - poll_error
+            - import_in_progress
+            - queue_paused
+            type: string
+          - type: "null"
+          title: Reason
+        started_at:
+          format: date-time
+          title: Started At
+          type: string
+        unreadable:
+          minimum: 0.0
+          title: Unreadable
+          type: integer
+        updated:
+          minimum: 0.0
+          title: Updated
+          type: integer
+      required:
+      - started_at
+      - finished_at
+      - outcome
+      - reason
+      - found
+      - new
+      - queued
+      - unreadable
+      - updated
+      title: PollHistoryCycle
+      type: object
     PollingStatus:
       properties:
         auto_audit_enabled:
@@ -918,6 +993,12 @@ components:
         enabled:
           title: Enabled
           type: boolean
+        history:
+          items:
+            $ref: '#/components/schemas/PollHistoryCycle'
+          maxItems: 20
+          title: History
+          type: array
         interval_minutes:
           maximum: 1440.0
           minimum: 0.0
@@ -927,12 +1008,26 @@ components:
           anyOf:
           - $ref: '#/components/schemas/PollCycle'
           - type: "null"
+        last_success_at:
+          anyOf:
+          - type: string
+          - type: "null"
+          format: date-time
+          title: Last Success At
+        lookback_days:
+          maximum: 30.0
+          minimum: 1.0
+          title: Lookback Days
+          type: integer
       required:
       - enabled
       - interval_minutes
       - auto_audit_enabled
       - auto_audit_max_per_poll
       - last
+      - lookback_days
+      - history
+      - last_success_at
       title: PollingStatus
       type: object
     PromptActivateInput:

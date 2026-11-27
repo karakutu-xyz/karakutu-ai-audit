@@ -82,7 +82,7 @@ async def test_register_only_and_status_and_windows(tmp_path):
                          "outcome": "ok", "reason": None, "found": 8, "new": 8,
                          "queued": 0, "unreadable": 0}
         assert archive.windows == [
-            (int((stamp - timedelta(days=30)).timestamp()), int(stamp.timestamp()))]
+            (int((stamp - timedelta(days=7)).timestamp()), int(stamp.timestamp()))]
         assert runs(app) == [] and archive.reads == []
         assert app.state.store.article("ka-1")["content"] == ""
         async with httpx.AsyncClient(
@@ -90,7 +90,9 @@ async def test_register_only_and_status_and_windows(tmp_path):
         ) as client:
             status = (await client.get("/api/status")).json()["polling"]
         assert status == {"enabled": True, "interval_minutes": 5, "auto_audit_enabled": False,
-                          "auto_audit_max_per_poll": 5, "last": cycle}
+                          "auto_audit_max_per_poll": 5, "last": cycle,
+                          "lookback_days": 7, "last_success_at": stamp.isoformat(),
+                          "history": [{**cycle, "updated": 0}]}
         stamp += timedelta(minutes=5)
         assert (await poller.run_cycle())["new"] == 0
         assert archive.windows[-1][0] == int((stamp - timedelta(days=2)).timestamp())
@@ -99,7 +101,7 @@ async def test_register_only_and_status_and_windows(tmp_path):
         assert archive.windows[-1][0] == int((stamp - timedelta(days=6)).timestamp())
         stamp += timedelta(days=50)
         await poller.run_cycle()
-        assert archive.windows[-1][0] == int((stamp - timedelta(days=30)).timestamp())
+        assert archive.windows[-1][0] == int((stamp - timedelta(days=7)).timestamp())
 
 
 async def test_auto_audit_oldest_no_previous_attempt_and_budget(tmp_path):
@@ -171,7 +173,7 @@ async def test_overlapping_cycles_and_manual_audit_race(tmp_path):
 
 @pytest.mark.parametrize("failure,state,reason", [
     ("none", "unreachable", "unreachable"), ("exception", "rejected", "rejected"),
-    ("exception", "unchecked", "archive_error"), ("none", "ok", "archive_incomplete"),
+    ("exception", "unchecked", "archive_error"), ("none", "ok", "archive_page_failed"),
 ])
 async def test_archive_failure_is_safe(tmp_path, caplog, failure, state, reason):
     async with service(tmp_path, auto_audit_enabled=True) as (app, archive, _):
@@ -246,7 +248,8 @@ async def test_no_task_when_off_or_archive_unavailable_or_test_mode(tmp_path, ca
         assert app.state.tasks == set()
         assert app.state.poller.status() == {
             "enabled": False, "interval_minutes": 0, "auto_audit_enabled": False,
-            "auto_audit_max_per_poll": 5, "last": None}
+            "auto_audit_max_per_poll": 5, "last": None,
+            "lookback_days": 7, "history": [], "last_success_at": None}
 
 
 async def test_lifespan_cancels_polling_task_without_startup_wait(tmp_path):
@@ -326,7 +329,7 @@ async def test_incomplete_listing_retries_full_window(tmp_path, failed_page):
             assert await archive.audits_created_between(0, 1)
             cycle = await poller.run_cycle()
             assert archive.state == "ok"  # Later successful statuses mask the first failure.
-            assert cycle["reason"] == "archive_incomplete"
+            assert cycle["reason"] == "archive_page_failed"
             assert cycle["found"] == cycle["new"] == cycle["queued"] == 0
             assert poller.last_success is None and runs(app) == []
             assert app.state.store.articles()["total"] == 0
@@ -335,13 +338,13 @@ async def test_incomplete_listing_retries_full_window(tmp_path, failed_page):
             cycle = await poller.run_cycle()
             assert cycle["new"] == 105 and cycle["queued"] == 1
             assert poller.last_success == stamp
-            assert requests[-1][2] == int((stamp - timedelta(days=30)).timestamp())
+            assert requests[-1][2] == int((stamp - timedelta(days=7)).timestamp())
             # A later incomplete listing must also preserve the previous successful window.
             app.state.store.cancel_run(runs(app)[0].id)
             previous_success = poller.last_success
             incomplete = True
             stamp += timedelta(days=5)
-            assert (await poller.run_cycle())["reason"] == "archive_incomplete"
+            assert (await poller.run_cycle())["reason"] == "archive_page_failed"
             assert poller.last_success == previous_success
             assert len(runs(app)) == 1
             incomplete = False
@@ -526,6 +529,7 @@ async def test_listing_page_cap_is_incomplete():
         assert len(await archive.audits_created_between(0, 1, statuses=(0,))) == 3000
         assert await archive.audits_created_between(
             0, 1, statuses=(0,), require_complete=True) is None
+        assert archive.listing_reason == "archive_page_cap"
     finally:
         await archive.close()
 
@@ -800,9 +804,187 @@ async def test_malformed_listing_page_is_incomplete_but_import_keeps_readable_ro
     try:
         assert await archive.audits_created_between(
             0, 1, statuses=(0, 1), require_complete=True) is None
+        assert archive.listing_reason == "archive_page_malformed"
         rows = await archive.audits_created_between(0, 1, statuses=(0, 1))
         assert len(rows) == 1 + readable and rows[-1]["article_id"] == 1
         partial = await archive.audits_created_between(0, 1, statuses=(0,))
         assert len(partial) == readable
+    finally:
+        await archive.close()
+
+
+@pytest.mark.parametrize("lookback", [1, 7, 30])
+async def test_lookback_bounds_first_and_later_windows(tmp_path, lookback):
+    async with service(tmp_path, poll_lookback_days=lookback) as (app, archive, _):
+        stamp = datetime(2026, 11, 20, tzinfo=timezone.utc)
+        poller = app.state.poller
+        poller.clock = lambda: stamp
+        await poller.run_cycle()
+        assert archive.windows[-1][0] == int((stamp - timedelta(days=lookback)).timestamp())
+        for elapsed in (timedelta(minutes=5), timedelta(days=3), timedelta(days=60)):
+            previous = poller.last_success
+            stamp += elapsed
+            await poller.run_cycle()
+            expected = max(stamp - timedelta(days=lookback),
+                           min(previous - timedelta(days=1), stamp - timedelta(days=2)))
+            assert archive.windows[-1] == (int(expected.timestamp()), int(stamp.timestamp()))
+
+
+async def test_restart_resumes_position_and_keeps_history_ring(tmp_path, caplog):
+    stamp = datetime(2026, 11, 20, tzinfo=timezone.utc)
+    caplog.set_level("INFO", logger="audit.poller")
+    async with service(tmp_path) as (app, archive, _):
+        poller = app.state.poller
+        poller.clock = lambda: stamp
+        for i in range(23):
+            archive.items[0]["title"] = f"Invented revision {i}"
+            await poller.run_cycle()
+            stamp += timedelta(minutes=5)
+        saved = poller.status()
+        assert len(saved["history"]) == 20
+        with Session(app.state.store.engine) as session:
+            assert len(session.scalars(select(db.PollCycleRow.id)).all()) == 20
+        assert saved["history"][0]["updated"] == 1
+        assert saved["history"][-1]["started_at"] == (
+            stamp - timedelta(minutes=100)).isoformat()
+        assert len(caplog.records) == 23
+        assert all("updated=" in record.message and "window_days=" in record.message
+                   for record in caplog.records)
+        assert "Invented" not in caplog.text and "https://" not in caplog.text
+    # Lifespan creates a new Store and poller and loads state before serving status.
+    async with service(tmp_path) as (app, archive, _):
+        poller = app.state.poller
+        poller.clock = lambda: stamp
+        assert poller.status()["history"] == saved["history"]
+        assert poller.status()["last_success_at"] == saved["last_success_at"]
+        assert poller.status()["last"] is None
+        await poller.run_cycle()
+        assert archive.windows == [
+            (int((stamp - timedelta(days=2)).timestamp()), int(stamp.timestamp()))]
+        assert len(poller.history) == 20
+        assert poller.history[0]["started_at"] == stamp.isoformat()
+
+
+async def test_single_page_failure_retried_once_then_success(tmp_path):
+    requests = []
+
+    def handle(request):
+        params = dict(request.url.params)
+        requests.append(params)
+        if len(requests) == 1:
+            return httpx.Response(503)
+        return httpx.Response(200, json={"items": []})
+
+    archive = KarakutuClient("https://archive.example")
+    await archive.http.aclose()
+    archive.http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    async with service(tmp_path, archive=archive) as (app, _, _):
+        cycle = await app.state.poller.run_cycle()
+        assert cycle["outcome"] == "ok" and cycle["reason"] is None
+        assert requests[0] == requests[1]
+        assert len(requests) == 6
+        assert archive.listing_reason is None
+
+
+@pytest.mark.parametrize("reason", ["archive_page_malformed", "archive_page_cap"])
+async def test_incomplete_reason_reaches_poller(tmp_path, reason):
+    def handle(request):
+        if request.url.params["status"] != "0":
+            body = {"items": []}
+        elif reason == "archive_page_malformed":
+            body = {"items": [None]}
+        else:
+            body = {"items": [{"article": {"id": 1}}] * 100}
+        return httpx.Response(200, json=body)
+
+    archive = KarakutuClient("https://archive.example")
+    await archive.http.aclose()
+    archive.http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    async with service(tmp_path, archive=archive) as (app, _, _):
+        cycle = await app.state.poller.run_cycle()
+        assert cycle["reason"] == reason
+        assert app.state.poller.history[0]["reason"] == reason
+        assert app.state.poller.last_success is None
+
+
+async def test_archive_backoff_doubles_caps_and_resets(tmp_path):
+    async with service(tmp_path) as (app, archive, _):
+        poller = app.state.poller
+        archive.failure = "none"
+        delays = []
+
+        async def advance(seconds):
+            delays.append(seconds)
+            if len(delays) == 7:
+                archive.failure = None
+            if len(delays) == 8:
+                assert poller.last["outcome"] == "ok"
+                archive.failure = "none"
+            if len(delays) == 9:
+                raise asyncio.CancelledError
+
+        poller.sleep = advance
+        with pytest.raises(asyncio.CancelledError):
+            await poller.run()
+        assert delays == [1, 600, 1200, 2400, 3600, 3600, 3600, 300, 600]
+        assert all(end - start <= 7 * 86400 for start, end in archive.windows)
+
+
+@pytest.mark.parametrize("method", ["poll_status", "save_poll_position", "save_poll_cycle"])
+async def test_poll_persistence_failures_are_safe(tmp_path, monkeypatch, caplog, method):
+    async with service(tmp_path) as (app, _, _):
+        poller = app.state.poller
+
+        def fail(*_args):
+            raise RuntimeError("PRIVATE persistence failure")
+
+        monkeypatch.setattr(app.state.store, method, fail)
+        if method == "poll_status":
+            poller.loaded = False
+        cycle = await poller.run_cycle()
+        assert cycle["reason"] == "poll_error"
+        assert "PRIVATE" not in str(poller.status()) + caplog.text
+
+
+async def test_concurrent_partial_read_cannot_clear_poll_incomplete_reason(monkeypatch):
+    archive = KarakutuClient("https://archive.example")
+    waiting, release = asyncio.Event(), asyncio.Event()
+
+    async def get(_path, params):
+        if params["date_from"] == 0:
+            if params["status"] == 0:
+                return {"items": [None]}
+            waiting.set()
+            await release.wait()
+        return {"items": []}
+
+    monkeypatch.setattr(archive, "_get", get)
+    try:
+        poll = asyncio.create_task(archive.audits_created_between(
+            0, 1, statuses=(0, 1), require_complete=True))
+        await waiting.wait()
+        assert await archive.audits_created_between(2, 3, statuses=(0,)) == []
+        release.set()
+        assert await poll is None
+        assert archive.listing_reason == "archive_page_malformed"
+    finally:
+        release.set()
+        await archive.close()
+
+
+async def test_partial_read_does_not_retry_failed_page(monkeypatch):
+    archive = KarakutuClient("https://archive.example")
+    calls = []
+
+    async def get(_path, params):
+        calls.append((params["status"], params["page"]))
+        return None if params["status"] == 0 else {"items": [{"article": {"id": 2}}]}
+
+    monkeypatch.setattr(archive, "_get", get)
+    try:
+        rows = await archive.audits_created_between(0, 1, statuses=(0, 1))
+        assert [row["article_id"] for row in rows] == [2]
+        assert calls == [(0, 1), (1, 1)]
+        assert archive.listing_reason == "archive_page_failed"
     finally:
         await archive.close()

@@ -369,6 +369,8 @@ def test_web_port_80_adds_origins_the_way_browsers_send_them():
 @pytest.mark.parametrize("field,value,message", [
     ("poll_interval_minutes", -1, "POLL_INTERVAL_MINUTES must be between 0 and 1440"),
     ("poll_interval_minutes", 1441, "POLL_INTERVAL_MINUTES must be between 0 and 1440"),
+    ("poll_lookback_days", 0, "POLL_LOOKBACK_DAYS must be between 1 and 30"),
+    ("poll_lookback_days", 31, "POLL_LOOKBACK_DAYS must be between 1 and 30"),
     ("auto_audit_max_per_poll", 0, "AUTO_AUDIT_MAX_PER_POLL must be between 1 and 50"),
     ("auto_audit_max_per_poll", 51, "AUTO_AUDIT_MAX_PER_POLL must be between 1 and 50"),
 ])
@@ -385,9 +387,13 @@ def test_poll_settings_environment_and_test_mode(monkeypatch, tmp_path):
     monkeypatch.setenv("AUTO_AUDIT_ENABLED", "true")
     monkeypatch.setenv("AUTO_AUDIT_MAX_PER_POLL", "9")
     config = Settings.from_env()
+    assert config.poll_lookback_days == 7
+    monkeypatch.setenv("POLL_LOOKBACK_DAYS", "3")
+    assert Settings.from_env().poll_lookback_days == 3
     assert (config.poll_interval_minutes, config.auto_audit_enabled,
             config.auto_audit_max_per_poll) == (17, True, 9)
     monkeypatch.setenv("RUN_MODE", "test")
+    monkeypatch.setenv("POLL_LOOKBACK_DAYS", "PRIVATE invalid input")
     monkeypatch.setenv("POLL_INTERVAL_MINUTES", "PRIVATE invalid input")
     monkeypatch.setenv("AUTO_AUDIT_ENABLED", "PRIVATE invalid input")
     monkeypatch.setenv("AUTO_AUDIT_MAX_PER_POLL", "PRIVATE invalid input")
@@ -397,6 +403,9 @@ def test_poll_settings_environment_and_test_mode(monkeypatch, tmp_path):
 @pytest.mark.parametrize("name,value,message", [
     ("POLL_INTERVAL_MINUTES", "-1", "POLL_INTERVAL_MINUTES must be between 0 and 1440"),
     ("POLL_INTERVAL_MINUTES", "PRIVATE", "POLL_INTERVAL_MINUTES must be between 0 and 1440"),
+    ("POLL_LOOKBACK_DAYS", "0", "POLL_LOOKBACK_DAYS must be between 1 and 30"),
+    ("POLL_LOOKBACK_DAYS", "31", "POLL_LOOKBACK_DAYS must be between 1 and 30"),
+    ("POLL_LOOKBACK_DAYS", "PRIVATE", "POLL_LOOKBACK_DAYS must be between 1 and 30"),
     ("AUTO_AUDIT_MAX_PER_POLL", "0", "AUTO_AUDIT_MAX_PER_POLL must be between 1 and 50"),
 ])
 def test_poll_env_validation_uses_fixed_messages(monkeypatch, tmp_path, name, value, message):

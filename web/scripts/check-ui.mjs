@@ -1502,6 +1502,7 @@ test("history restoration expires after five seconds without moving later conten
 const pollingFixture = {
   enabled: true, interval_minutes: 5, auto_audit_enabled: false,
   auto_audit_max_per_poll: 5, last: null,
+  lookback_days: 7, history: [], last_success_at: null,
 };
 
 test("Settings waits for service and workflow content, or ends on either error", () => {
@@ -1590,6 +1591,7 @@ test("Settings waits for service and workflow content, or ends on either error",
       outcome: "ok", reason: null, found: 7, new: 4, queued: 2, unreadable: 3,
     } }, ["On (up to 5 per poll)", "found 7, new 4, queued 2", "unreadable 3"]],
     ...["import_in_progress", "queue_paused", "archive_error", "archive_incomplete",
+      "archive_page_failed", "archive_page_malformed", "archive_page_cap",
       "poll_error"].map(
       (reason) => [{ ...pollingFixture, last: {
         started_at: "2026-11-01T00:00:00Z",
@@ -1599,12 +1601,25 @@ test("Settings waits for service and workflow content, or ends on either error",
         import_in_progress: "Import in progress", queue_paused: "Queue paused",
         archive_error: "Archive read failed", poll_error: "Polling failed",
         archive_incomplete: "Archive listing incomplete",
+        archive_page_failed: "Archive page read failed",
+        archive_page_malformed: "Archive page malformed",
+        archive_page_cap: "Archive page limit reached",
       }[reason], "unreadable 1"]],
     ),
   ]) {
     status = { mode: "live", polling };
     const html = renderToStaticMarkup(runtime.render(() => page.SettingsPage()));
     for (const text of expected) assert.ok(html.includes(text), text);
+  }
+  status = { mode: "live", polling: { ...pollingFixture, history: [{
+    started_at: "2026-11-01T00:00:00Z", finished_at: "2026-11-01T00:00:01Z",
+    outcome: "skipped", reason: "archive_page_cap", found: 11, new: 5,
+    updated: 3, queued: 2, unreadable: 1,
+  }] } };
+  const historyHtml = renderToStaticMarkup(runtime.render(() => page.SettingsPage()));
+  for (const text of ["7 days", "Sync history", "Updated", "Archive page limit reached",
+    "<td>11</td>", "<td>5</td>", "<td>3</td>", "<td>2</td>"]) {
+    assert.ok(historyHtml.includes(text), text);
   }
   runtime.unmount();
 });
@@ -2137,7 +2152,8 @@ test("Articles offers archive import only in live mode with archive reads, and g
   const { ArticlesPage } = load(path.join(root, "pages/ArticlesPage.tsx"));
   const originalApi = hooks.useApi;
   const originalInventory = hooks.useArticleInventory;
-  const withStatus = (status) => () => ({ ...originalApi(), status, articlesCache: new Map() });
+  const withStatus = (status) => () => ({ ...originalApi(),
+    status: { polling: pollingFixture, ...status }, articlesCache: new Map() });
   const live = { mode: "live", archive_reads_enabled: true };
   try {
     hooks.useArticleInventory = () => ({ data: { total: 0 }, loading: false });
@@ -2147,6 +2163,13 @@ test("Articles offers archive import only in live mode with archive reads, and g
     let html = render(ArticlesPage);
     assert.ok(html.includes("Import from archive"));
     assert.ok(html.includes("Use Import from archive above"));
+    assert.ok(!html.includes("Last sync"));
+    hooks.useApi = withStatus({ ...live, polling: { ...pollingFixture,
+      last_success_at: "2026-11-01T10:15:00Z" } });
+    assert.ok(render(ArticlesPage).includes("Last sync"));
+    hooks.useApi = withStatus({ ...live, polling: { ...pollingFixture,
+      enabled: false, last_success_at: "2026-11-01T10:15:00Z" } });
+    assert.ok(!render(ArticlesPage).includes("Last sync"));
     hooks.useApi = withStatus({ mode: "live", archive_reads_enabled: false });
     html = render(ArticlesPage);
     assert.ok(!html.includes(">Import from archive<"));

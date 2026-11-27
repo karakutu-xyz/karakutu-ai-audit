@@ -28,7 +28,7 @@ from audit.config import MODEL_STEPS, Settings, canonical_request_host
 from audit.db import ArticleStoreError, PromptStoreError, Store
 from audit.domain import AuditRequest, Verdict
 from audit.engine import AuditEngine
-from audit.poller import ARCHIVE_TEXT_RETRY_SECONDS, ArchivePoller, store_in_thread
+from audit.poller import ARCHIVE_TEXT_RETRY_SECONDS, ArchivePoller, enable_cycle_log, store_in_thread
 from audit.record import RecordError, build_result
 from audit.provenance import build_base, models_from_config, with_prompts
 from audit.schemas import (
@@ -287,7 +287,9 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
             app.state.workflow = store.save_workflow(with_prompts(app.state.workflow_base, active_texts(), current_models()))
             app.state.poller = ArchivePoller(
                 settings, app.state, archive_client(), fill_archive_text, submit)
+            await app.state.poller.load_state()
             if app.state.poller.enabled:
+                enable_cycle_log()
                 task = asyncio.create_task(app.state.poller.run())
                 app.state.tasks.add(task)
             yield

@@ -289,3 +289,14 @@ tbody tr:last-child > * {
   font-size: var(--text-xs);
   white-space: nowrap;
 }
+
+/* Sync cycles are read-only, with compact counts rather than linked story rows. */
+.sync-history th,
+.sync-history td {
+  padding: var(--space-1);
+}
+
+.sync-history th:nth-child(n+3),
+.sync-history td:nth-child(n+3) {
+  text-align: right;
+}

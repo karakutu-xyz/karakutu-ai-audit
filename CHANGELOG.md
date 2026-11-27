@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Bound archive sync with `POLL_LOOKBACK_DAYS` (default 7 days), persist its position across restarts and show the last 20 cycles with update counts in Settings and the last sync on Articles. Incomplete listings now explain page failures, malformed pages or the page cap, retry failed pages once and back off up to one hour; Articles lists newest archive detections first, falling back to local registration time.
+
 - Preserve poller shutdown cancellation even when its persistence worker fails. Import metadata in 100-row transactions so foreground database calls can proceed between batches. Bound automatic text reads per cycle, stop on archive outages, and reject malformed listing pages as incomplete while preserving readable manual Import results.
 
 - Archive polling now requires complete listings, preserves its retry window on partial reads, and imports metadata off the API event loop. Automatic audits use numeric archive-id order and refresh cached text before submission; failed text reads become retryable after ten minutes and appear as unreadable counts in Settings.

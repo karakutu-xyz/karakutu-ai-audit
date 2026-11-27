@@ -2,7 +2,7 @@ import { useLayoutEffect, type MouseEvent } from "react";
 import { useApi, useArticles, useArticleInventory } from "../api/hooks";
 import { Link, navigate, useRoute, useScrollRestoration } from "../router";
 import { VERDICTS, type ArticleStatus, type ArticleSummary } from "../types";
-import { articleDate } from "../format";
+import { articleDate, date } from "../format";
 import { VerdictChip, verdictLabel } from "../components/VerdictChip";
 import {
   ArticleStatusChip, articleStatuses,
@@ -105,6 +105,11 @@ export function ArticlesPage() {
         <div className="ledger-title">
           <p className="eyebrow">Newsroom ledger</p>
           <h1 id="articles-title">Articles</h1>
+          {service?.polling.enabled && service.polling.last_success_at && (
+            <p className="help">
+              Last sync {date(service.polling.last_success_at)}
+            </p>
+          )}
         </div>
         <div className="actions ledger-refresh">
           {refreshing && <span className="help" role="status">Refreshing…</span>}

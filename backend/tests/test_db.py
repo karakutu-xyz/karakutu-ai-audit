@@ -153,7 +153,7 @@ def test_old_schema_upgrades_once_and_column_migration(tmp_path):
     calls = []
 
     def add_column(connection):
-        calls.append(6)
+        calls.append(7)
         connection.exec_driver_sql("ALTER TABLE workflows ADD COLUMN migration_marker TEXT")
         connection.exec_driver_sql("UPDATE workflows SET migration_marker='preserved'")
 
@@ -164,7 +164,7 @@ def test_old_schema_upgrades_once_and_column_migration(tmp_path):
         return wrapped
 
     migrations = [(version, counted(version, migration)) for version, migration in MIGRATIONS]
-    migrations.append((6, add_column))
+    migrations.append((7, add_column))
     for _ in range(2):
         store = Store(f"sqlite:///{path}", migrations=migrations)
         assert store.workflow("wf_old") == {"retained": True}
@@ -172,10 +172,10 @@ def test_old_schema_upgrades_once_and_column_migration(tmp_path):
         assert store.run("run_old")["reactions"][0]["id"] == "rx_old"
         assert {"prompt_versions", "prompt_activations"} <= set(inspect(store.engine).get_table_names())
         with store.engine.connect() as connection:
-            assert connection.exec_driver_sql("PRAGMA user_version").scalar_one() == 6
+            assert connection.exec_driver_sql("PRAGMA user_version").scalar_one() == 7
             assert connection.exec_driver_sql("SELECT migration_marker FROM workflows").scalar_one() == "preserved"
         store.close()
-    assert calls == [1, 2, 3, 4, 5, 6]
+    assert calls == [1, 2, 3, 4, 5, 6, 7]
 
 
 def test_failed_migration_rolls_back_ddl_rows_and_version(tmp_path):
@@ -189,7 +189,7 @@ def test_failed_migration_rolls_back_ddl_rows_and_version(tmp_path):
         raise RuntimeError("fabricated migration failure")
 
     with pytest.raises(RuntimeError, match="fabricated migration failure"):
-        Store(f"sqlite:///{path}", migrations=[*MIGRATIONS, (6, fail)])
+        Store(f"sqlite:///{path}", migrations=[*MIGRATIONS, (SCHEMA_VERSION + 1, fail)])
     with sqlite3.connect(path) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert "abandoned" not in [row[1] for row in connection.execute("PRAGMA table_info(workflows)")]
@@ -335,7 +335,7 @@ def test_version_two_migrates_assignments_without_changing_existing_data(tmp_pat
         assert store.active_prompts() == prompts
         assert store.model_assignments() == {}
         with store.engine.connect() as connection:
-            assert connection.exec_driver_sql('PRAGMA user_version').scalar_one() == SCHEMA_VERSION == 5
+            assert connection.exec_driver_sql('PRAGMA user_version').scalar_one() == SCHEMA_VERSION == 6
         store.close()
 
 
@@ -422,3 +422,53 @@ def test_record_lineage_selects_only_latest_eligible_id(database_url):
         assert store.previous_record_run_id({**current, "category": "benchmark"}) is None
     finally:
         store.close()
+
+
+def test_sync_migration_preserves_existing_articles(tmp_path):
+    from audit.db import ArticleRow, get_version
+    from sqlalchemy.orm import Session
+    path = tmp_path / "old-sync.sqlite3"
+    store = Store(f"sqlite:///{path}")
+    store.import_articles([{"article_id": 1, "url": "https://paper.example/fiction",
+                            "title": "Invented retained report"}])
+    store.close()
+    # Reproduce the schema shipped before sync persistence, including existing rows.
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP TABLE poll_state")
+        connection.execute("DROP TABLE poll_cycles")
+        connection.execute("ALTER TABLE articles DROP COLUMN detected_at")
+        connection.execute("PRAGMA user_version=5")
+    for _ in range(2):
+        store = Store(f"sqlite:///{path}")
+        with store.engine.connect() as connection:
+            assert get_version(connection) == 6
+        assert store.article("ka-1")["title"] == "Invented retained report"
+        assert store.poll_status() == {"history": [], "last_success_at": None}
+        with Session(store.engine) as session:
+            assert session.get(ArticleRow, "ka-1").detected_at is None
+        store.close()
+
+
+def test_article_order_uses_detection_then_registration_not_runs(database_url):
+    from audit.db import ArticleRow
+    from sqlalchemy.orm import Session
+    store = Store(database_url)
+    workflow(store)
+    # Deliberately import newest first: registration order must not reverse detection.
+    store.import_articles([
+        {"article_id": 3, "url": "https://paper.example/new", "created_at": 1795132800},
+        {"article_id": 1, "url": "https://paper.example/old",
+         "created_at": "2026-11-18T01:00:00+01:00"},
+        {"article_id": 2, "url": "https://paper.example/fallback"},
+    ])
+    with Session(store.engine) as session, session.begin():
+        session.get(ArticleRow, "ka-2").created_at = "2026-11-19T00:00:00+00:00"
+        session.get(ArticleRow, "ka-1").content = "Invented prose for a manual audit."
+    store.create_run(workflow_id="wf_test", category="live", origin="article",
+                     input=INPUT, article_ref="ka-1")
+    assert [row["ref"] for row in store.articles()["items"]] == ["ka-3", "ka-2", "ka-1"]
+    # Reimport fills old rows without a detection date and counts the metadata update.
+    assert store.import_articles([{"article_id": 2, "url": "https://paper.example/fallback",
+                                   "created_at": "2026-11-21T00:00:00Z"}])["updated"] == 1
+    assert store.articles()["items"][0]["ref"] == "ka-2"
+    store.close()
