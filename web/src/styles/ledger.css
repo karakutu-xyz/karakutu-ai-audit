@@ -300,3 +300,26 @@ tbody tr:last-child > * {
 .sync-history td:nth-child(n+3) {
   text-align: right;
 }
+
+.poll-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: var(--space-3);
+  margin-block: var(--space-3);
+}
+
+.poll-setting-source,
+.poll-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.poll-setting-source {
+  margin-top: var(--space-1);
+}
+
+.poll-toggle input {
+  width: auto;
+}

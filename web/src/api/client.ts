@@ -103,3 +103,14 @@ export function articleAuditError(error: unknown) {
   }
   return errorMessage(error);
 }
+
+export function pollingError(error: unknown) {
+  if (error instanceof ApiError) {
+    if (error.code === "poll_running") return "An archive poll is already running.";
+    if (error.code === "test_mode") return "Polling is off in test mode.";
+    if (error.code === "archive_disabled") return "Enable archive reads to poll.";
+    if (error.status === 403) return "This connection cannot change polling settings.";
+    if (error.status === 422) return "Check the polling values and their allowed ranges.";
+  }
+  return errorMessage(error);
+}

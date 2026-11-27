@@ -16,6 +16,7 @@ number formatting, key order and `\u0000` escapes. Test mode and demo seeding re
 | `prompt_versions` | Append-only prompt name/version, exact text, UTF-8 SHA-256, origin (`default` or `api`), author, note and timestamp; unique name/version. |
 | `model_assignments` | Append-only step, nullable model override, author, note and timestamp. Newest insertion per step wins. |
 | `poll_state`, `poll_cycles` | Successful sync position and the last 20 metadata polling cycles. |
+| `poll_setting_overrides` | Local polling overrides; one JSON scalar per setting name. |
 | `prompt_activations` | Append-only name/version reference, kind (`seed`, `activate`, `rollback`, `default_update`), author, note and timestamp. The newest activation selects the active version. |
 
 `benchmark` and `live` are separate categories in the same local database. Routes assign the category; a caller-supplied category is rejected. A benchmark may exercise real LM Studio and search without becoming live data. Manual audits use `POST /api/articles/{ref}/audit` (origin `article`), which keeps the article's category. Opt-in archive auto-audits use origin `poll` and category `live`. Historical runs with origin `api` or `webhook` remain readable and filterable. Export does not reclassify data. Karakutu intake uses background polling; manual archive import remains available.
@@ -33,10 +34,32 @@ concurrent audits of the same article. An external durable worker is not impleme
 
 ### Archive polling
 
-In live mode with an enabled archive client and `POLL_INTERVAL_MINUTES > 0`,
-the lifespan starts one background task after a one-second startup delay. It runs
-one cycle at a time and waits the configured interval after each cycle. Shutdown
-cancels it with the other tasks. Test mode never creates a poller task.
+In live mode with an enabled archive client, the lifespan starts one background
+task even when polling is paused. An enabled schedule starts after a one-second
+startup delay. It runs one cycle at a time and waits the effective interval after
+each cycle. Shutdown cancels it with the other tasks. Test mode never creates a
+poller task, regardless of saved controls.
+
+Settings can override five environment defaults without a restart:
+`polling_enabled` (boolean), `interval_minutes` (1–1440), `lookback_days` (1–30),
+`auto_audit_enabled` (boolean), and `auto_audit_max_per_poll` (1–50).
+Overrides persist in the database on SQLite and PostgreSQL. Each setting reports
+`value`, `default` and `source` (`env` or `ui`). An environment interval of 0
+means paused by default; its usable interval defaults to 5 minutes until overridden.
+Resetting one override, or all overrides, restores the current environment defaults.
+The environment Settings object stays unchanged; `poll_controls.py` owns effective
+values, and the poller owns their application and scheduling.
+
+Pausing interrupts normal and backoff waits immediately. A running cycle finishes
+its metadata listing and registration but stops automatic submissions at the next
+decision point. Queued and running audits continue. Resuming or changing the interval
+interrupts the wait and schedules from now. Lookback and batch changes apply to the
+next cycle; turning auto-audit off stops submissions at the next decision point.
+`POST /api/polling/run` runs one cycle immediately, including while paused, and
+returns the full cycle record with `updated`. It leaves pause unchanged and resets
+archive backoff on success. Concurrent requests receive 409 `poll_running`; unavailable
+polling receives 409 `test_mode` or `archive_disabled`. Manual cycles still honor the
+pause on automatic audit submissions.
 
 Each cycle uses the same Unix-second archive audit listing and metadata-only
 `import_articles` as manual Import. The first window is `POLL_LOOKBACK_DAYS`
@@ -118,7 +141,12 @@ summaries and hashes, with full bodies only for `RECORD_FULL_EVIDENCE=true`.
 `finished_at`, `outcome` (`ok` or `skipped`), `reason` (a fixed label or null),
 `found`, `new`, `queued` and `unreadable`. Counts remain visible on a partial failed cycle.
 Only `last` resets on restart; the sync position and 20-cycle history persist.
-Settings displays both; Articles continues to offer manual selection and Run audit.
+Status also includes `polling_enabled` (the requested schedule state), `paused`,
+`running` (a cycle currently holds the lock), `next_poll_at` (ISO timestamp or null),
+`reason` (`test_mode`, `archive_disabled` or null), and `source` (one `env`/`ui` entry
+per setting). Existing `enabled`, interval and auto-audit fields retain their off-state
+meaning. Settings displays the controls and history; Articles continues to offer
+manual selection and Run audit.
 
 ### Schema changes
 
@@ -136,6 +164,10 @@ commit or rollback. It does not coordinate the in-process execution queue across
 and assignment selection, so timestamps and random IDs never select the newest row.
 
 For every schema change, add a numbered migration; never edit an applied one. Test upgrades with retained rows, repeat startup, and failure rollback. JSON fields allow evidence formats to evolve without routine column migrations. Back up data before upgrading. Use a consistent SQLite backup (the SQLite backup API, or stop the service first); copying only a live `.sqlite3` file can omit WAL data.
+
+Migration 7 adds `poll_setting_overrides` with a setting-name primary key and a
+JSON scalar value. Updates and resets use the existing transaction writer lock;
+prior article data, poll history and sync positions are preserved.
 
 ### Article identity and history
 
@@ -260,6 +292,10 @@ The generated [OpenAPI contract](../openapi.yaml) (YAML; the running API still s
 | --- | --- |
 | `GET /health` | Minimal local liveness and the run `mode` (`test` or `live`). |
 | `GET /api/status` | Run `mode` and model/search/read/live posture; `search_provider` identifies configuration; `search` is the safe current search state; `archive` is the safe current archive state and `archive_reads_enabled` remains the configuration boolean; `writes_enabled` is always false for archive writes; `prompts_editable` reports whether a token is configured; `model_provider` and `response_format` identify the inference profile. |
+| `GET /api/polling/settings` | Effective polling values, environment defaults and sources. |
+| `PUT /api/polling/settings` | Partial override update; strict booleans/integers, ranges above; unknown fields and null values return 422. |
+| `POST /api/polling/settings/reset` | Body `{ "names": ["interval_minutes"] }`; missing body, empty object or empty names resets all. Unknown names return 422. |
+| `POST /api/polling/run` | One immediate cycle; 409 `poll_running`, `test_mode` or `archive_disabled`. |
 | `GET /api/models` | Provider chat-model names (`available`), safe `error` code or null, resolved `default`, and per-step `override` (nullable), `effective` name and `source` (`config` or `api`). |
 | `POST /api/models/steps` | Assign `{step, model: <name or null>, author, note?}` for new runs; return step/override/effective/source and `workflow_id`. |
 | `GET /api/prompts` | List the six prompt names, stages, active summaries and version counts. |
@@ -532,6 +568,11 @@ Hosts are normalized to lowercase and must be plain hostnames or IP literals (un
 
 Docker reads `.env` at runtime, stores default SQLite under `/data` in a named volume
 (or connects to PostgreSQL through `DATABASE_URL`), and overrides local search/model paths for the container network. `KARAKUTU_BIND_ADDRESS` controls published API/UI interfaces (default `127.0.0.1`), independently of the allowed Host list. `CONTAINER_MODEL_BASE_URL` selects the container's model endpoint; `MODEL_BASE_URL` remains the local/Tilt setting. Preserve Host through reverse proxies so the backend can validate the browser's actual host. Remote use should terminate TLS before the API/UI. SearXNG remains loopback-only on port 2202.
+
+Polling routes use the same request guards as audit runs. Loopback without
+`API_AUTH_TOKEN` needs no token. With a token configured, every call requires it;
+writes also require a trusted host and origin. Polling controls do not use the
+additional token-only rule for prompt writes.
 
 Prompt POST routes always require a configured `API_AUTH_TOKEN` and matching bearer token, including on a loopback service with other reads open. With no configured token they return 403 `prompt_writes_require_token` before parsing the body; a missing/wrong bearer token when configured returns 401. Model assignment POSTs use the same guard; without a configured token they return 403 `model_writes_require_token`, and missing/wrong bearer tokens return 401. The same browser-origin check applies. Prompt edits change verdict semantics: benchmark before relying on a new version. `writes_enabled: false` continues to describe archive writes only.
 

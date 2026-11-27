@@ -114,8 +114,60 @@ class PollHistoryCycle(PollCycle):
     updated: int = Field(ge=0)
 
 
+PollSettingName = Literal[
+    "polling_enabled", "interval_minutes", "lookback_days",
+    "auto_audit_enabled", "auto_audit_max_per_poll"]
+
+
+class PollSettingsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    polling_enabled: bool | None = None
+    interval_minutes: int | None = Field(default=None, ge=1, le=1440)
+    lookback_days: int | None = Field(default=None, ge=1, le=30)
+    auto_audit_enabled: bool | None = None
+    auto_audit_max_per_poll: int | None = Field(default=None, ge=1, le=50)
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def non_null(cls, value):
+        if value is None:
+            raise ValueError("invalid_value")
+        return value
+
+
+class PollSettingsReset(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    names: list[PollSettingName] = Field(default_factory=list, max_length=5)
+
+
+class PollBoolSetting(BaseModel):
+    value: bool
+    default: bool
+    source: Literal["env", "ui"]
+
+
+class PollNumberSetting(BaseModel):
+    value: int
+    default: int
+    source: Literal["env", "ui"]
+
+
+class PollSettings(BaseModel):
+    polling_enabled: PollBoolSetting
+    interval_minutes: PollNumberSetting
+    lookback_days: PollNumberSetting
+    auto_audit_enabled: PollBoolSetting
+    auto_audit_max_per_poll: PollNumberSetting
+
+
 class PollingStatus(BaseModel):
     enabled: bool
+    polling_enabled: bool
+    paused: bool
+    running: bool
+    reason: Literal["test_mode", "archive_disabled"] | None
+    next_poll_at: str | None = Field(json_schema_extra={"format": "date-time"})
+    source: dict[PollSettingName, Literal["env", "ui"]]
     interval_minutes: int = Field(ge=0, le=1440)
     auto_audit_enabled: bool
     auto_audit_max_per_poll: int = Field(ge=1, le=50)

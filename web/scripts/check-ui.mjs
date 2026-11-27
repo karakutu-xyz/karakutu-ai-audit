@@ -67,6 +67,10 @@ let runState;
 let snapshotState;
 let articlesState;
 let articleState;
+const pollSettingsFixture = Object.fromEntries(Object.entries({
+  polling_enabled: true, interval_minutes: 5, lookback_days: 7,
+  auto_audit_enabled: false, auto_audit_max_per_poll: 5,
+}).map(([name, value]) => [name, { value, default: value, source: "env" }]));
 const hooks = {
   useApi: () => ({
     token: "",
@@ -91,6 +95,10 @@ const hooks = {
     error: "",
     refresh() {},
   }),
+  usePollingSettings: () => ({
+    data: pollSettingsFixture, error: "", refresh() {},
+  }),
+  usePollingControl: () => ({ mutate: async () => {}, busy: false, error: "" }),
   useRunControl: () => ({ mutate: async () => true, busy: false, error: "" }),
   useRun: () => runState,
   useWorkflow: () => snapshotState,
@@ -751,7 +759,8 @@ function hookRuntime(context = {}) {
 }
 
 function resourceHarness() {
-  const api = { token: "", epoch: 0, runsCache: new Map(), articlesCache: new Map() };
+  const api = { token: "", epoch: 0, runsCache: new Map(), articlesCache: new Map(),
+    retryStatus: () => { api.statusRefreshes = (api.statusRefreshes || 0) + 1; } };
   let cacheToken = api.token;
   let cacheEpoch = api.epoch;
   const runtime = hookRuntime(api);
@@ -771,9 +780,10 @@ function resourceHarness() {
         return {
           ApiError: client.ApiError,
           withheldRunId: client.withheldRunId,
+          pollingError: client.pollingError,
           errorMessage: (error) => error.message,
-          request: (path, token, { signal, method }) => new Promise((resolve, reject) => {
-            requests.push({ path, token, signal, method, resolve, reject });
+          request: (path, token, { signal, method, body }) => new Promise((resolve, reject) => {
+            requests.push({ path, token, signal, method, body, resolve, reject });
           }),
         };
       }
@@ -1503,6 +1513,9 @@ const pollingFixture = {
   enabled: true, interval_minutes: 5, auto_audit_enabled: false,
   auto_audit_max_per_poll: 5, last: null,
   lookback_days: 7, history: [], last_success_at: null,
+  polling_enabled: true, paused: false, running: false,
+  reason: null, next_poll_at: null,
+  source: Object.fromEntries(Object.keys(pollSettingsFixture).map((name) => [name, "env"])),
 };
 
 test("Settings waits for service and workflow content, or ends on either error", () => {
@@ -2785,4 +2798,271 @@ test("poll origin has a readable label and server filter", () => {
   assert.equal(capturedQuery.get("origin"), "poll");
   assert.ok(html.includes('value="poll"'));
   assert.ok(html.includes("Live · Auto-audit"));
+});
+
+
+test("polling controls load, save, reset and run through the guarded API", async () => {
+  const harness = resourceHarness();
+  harness.render("usePollingSettings");
+  assert.equal(harness.requests[0].path, "/api/polling/settings");
+  harness.requests[0].resolve(pollSettingsFixture);
+  await settle();
+  assert.equal(harness.render().data, pollSettingsFixture);
+  assert.equal([...harness.timers.values()][0].interval, 5000);
+  harness.unmount();
+
+  const control = resourceHarness();
+  const saved = [];
+  const onSettings = (data) => saved.push(data);
+  let state = control.render("usePollingControl", onSettings);
+  const saving = state.mutate("save", { interval_minutes: 12 });
+  let call = control.requests.at(-1);
+  assert.equal(call.path, "/api/polling/settings");
+  assert.equal(call.method, "PUT");
+  assert.deepEqual(JSON.parse(call.body), { interval_minutes: 12 });
+  assert.equal(control.render().busy, true);
+  await control.render().mutate("reset", { names: [] });
+  assert.equal(control.requests.length, 1, "settings mutations cannot overlap");
+  call.resolve(pollSettingsFixture);
+  await saving;
+  state = control.render();
+  assert.deepEqual(saved, [pollSettingsFixture]);
+  assert.equal(control.api.statusRefreshes, 1);
+  assert.equal(state.busy, false);
+
+  const reset = state.mutate("reset", { names: ["interval_minutes"] });
+  call = control.requests.at(-1);
+  assert.equal(call.path, "/api/polling/settings/reset");
+  assert.equal(call.method, "POST");
+  assert.deepEqual(JSON.parse(call.body), { names: ["interval_minutes"] });
+  call.resolve(pollSettingsFixture);
+  await reset;
+  const { ApiError } = load(path.join(root, "api/client.ts"));
+  for (const [code, expected] of [
+    ["poll_running", "An archive poll is already running."],
+    ["test_mode", "Polling is off in test mode."],
+    ["archive_disabled", "Enable archive reads to poll."],
+  ]) {
+    const polling = control.render().mutate("run");
+    call = control.requests.at(-1);
+    assert.equal(call.path, "/api/polling/run");
+    assert.equal(call.method, "POST");
+    assert.equal(control.render().runPending, true);
+    assert.equal(control.render().busy, false);
+    call.reject(new ApiError(409, code));
+    await polling;
+    assert.equal(control.render().error, expected);
+  }
+  const stale = control.render().mutate("save", { polling_enabled: false });
+  call = control.requests.at(-1);
+  control.api.epoch++;
+  state = control.render();
+  assert.equal(call.signal.aborted, true);
+  assert.equal(state.error, "");
+  assert.equal(state.busy, false);
+  call.resolve(pollSettingsFixture);
+  await stale;
+  assert.equal(saved.length, 2, "a stale response cannot replace current controls");
+  control.unmount();
+});
+
+test("pending Poll now allows settings mutations and blocks a second cycle", async () => {
+  const control = resourceHarness();
+  const saved = [];
+  const state = control.render("usePollingControl", (data) => saved.push(data));
+  const polling = state.mutate("run");
+  const pollCall = control.requests.at(-1);
+  assert.equal(control.render().runPending, true);
+  assert.equal(control.render().busy, false);
+  assert.equal(await state.mutate("run"), false);
+  assert.equal(control.requests.length, 1);
+
+  for (const [action, values] of [
+    ["save", { polling_enabled: false }],
+    ["save", { auto_audit_enabled: false }],
+    ["save", { interval_minutes: 12 }],
+    ["reset", { names: ["interval_minutes"] }],
+    ["reset", { names: [] }],
+  ]) {
+    const saving = control.render().mutate(action, values);
+    const call = control.requests.at(-1);
+    assert.notEqual(call, pollCall);
+    assert.deepEqual(JSON.parse(call.body), values);
+    assert.equal(control.render().busy, true);
+    assert.equal(control.render().runPending, true);
+    assert.equal(await state.mutate("save", {}), false);
+    call.resolve(pollSettingsFixture);
+    assert.equal(await saving, true);
+    assert.equal(control.render().busy, false);
+    assert.equal(control.render().runPending, true);
+    assert.equal(pollCall.signal.aborted, false);
+  }
+  pollCall.resolve({});
+  assert.equal(await polling, true);
+  assert.equal(control.render().runPending, false);
+  assert.equal(saved.length, 5);
+
+  // Completing the poll must not release an in-flight settings mutation.
+  const saving = state.mutate("save", { lookback_days: 3 });
+  const saveCall = control.requests.at(-1);
+  const nextPoll = state.mutate("run");
+  control.requests.at(-1).resolve({});
+  await nextPoll;
+  assert.equal(control.render().runPending, false);
+  assert.equal(control.render().busy, true);
+  assert.equal(await state.mutate("reset", { names: [] }), false);
+  saveCall.resolve(pollSettingsFixture);
+  await saving;
+  assert.equal(control.render().busy, false);
+  control.unmount();
+});
+
+test("polling control cancels both requests when identity or service changes", async () => {
+  for (const change of ["token", "epoch", "unmount"]) {
+    const control = resourceHarness();
+    const saved = [];
+    const state = control.render("usePollingControl", (data) => saved.push(data));
+    const polling = state.mutate("run");
+    const saving = state.mutate("save", { auto_audit_enabled: false });
+    if (change === "unmount") control.unmount();
+    else {
+      control.api[change] = change === "token" ? "fictional-token" : 1;
+      const current = control.render();
+      assert.equal(current.busy, false);
+      assert.equal(current.runPending, false);
+      assert.equal(current.error, "");
+    }
+    for (const call of control.requests) {
+      assert.equal(call.signal.aborted, true);
+      call.resolve(pollSettingsFixture);
+    }
+    assert.equal(await polling, false);
+    assert.equal(await saving, false);
+    assert.equal(saved.length, 0);
+    assert.equal(control.api.statusRefreshes, undefined);
+    if (change !== "unmount") control.unmount();
+  }
+});
+
+test("Polling form keeps ranges, sources, pause and manual-run reasons visible", async () => {
+  const runtime = hookRuntime();
+  const api = { token: "", epoch: 0 };
+  const actions = [];
+  let data = pollSettingsFixture;
+  let onSettings;
+  const controlState = { busy: false, runPending: false };
+  const component = evaluateModule(
+    path.join(root, "features/polling/PollingControls.tsx"),
+    (name) => {
+      if (name === "react") return runtime.reactHooks;
+      if (name === "../../api/hooks") return {
+        useApi: () => api,
+        usePollingSettings: () => ({ data, error: "", refresh() {} }),
+        usePollingControl: (callback) => {
+          onSettings = callback;
+          return { ...controlState, error: "", mutate: async (...args) => {
+            actions.push(JSON.parse(JSON.stringify(args)));
+            return true;
+          } };
+        },
+      };
+      if (name.startsWith(".")) {
+        return load(path.resolve(root, "features/polling", name) + ".tsx");
+      }
+      return require(name);
+    },
+  );
+  let polling = { ...pollingFixture };
+  let mode = "live";
+  const render = () => runtime.render(() => component.PollingControls({ polling, mode }));
+  let tree = render();
+  for (const max of [1440, 30, 50]) {
+    const input = findNode(tree, (node) => node.props?.type === "number"
+      && node.props.max === max);
+    assert.equal(input.props.min, 1);
+    assert.equal(input.props.step, 1);
+    assert.equal(input.props.required, true);
+  }
+  const button = (label) => findNode(render(), (node) => node.type === "button"
+    && node.props.children === label);
+  assert.equal(button("Reset all to default").props.disabled, true);
+  button("Pause polling").props.onClick();
+  assert.deepEqual(actions.at(-1), ["save", { polling_enabled: false }]);
+  const toggle = findNode(tree, (node) => node.props?.type === "checkbox");
+  toggle.props.onChange({ target: { checked: true } });
+  assert.deepEqual(actions.at(-1), ["save", { auto_audit_enabled: true }]);
+  const interval = findNode(tree, (node) => node.props?.type === "number"
+    && node.props.max === 1440);
+  interval.props.onChange({ target: { valueAsNumber: 14 } });
+  tree = render();
+  await findNode(tree, (node) => node.type === "form")
+    .props.onSubmit({ preventDefault() {} });
+  assert.deepEqual(actions.at(-1), ["save", { interval_minutes: 14 }]);
+  onSettings({ ...data,
+    interval_minutes: { value: 14, default: 5, source: "ui" },
+    auto_audit_enabled: { value: true, default: false, source: "ui" },
+  });
+  tree = render();
+  assert.match(renderToStaticMarkup(tree), /Set here/);
+  assert.equal(button("Reset all to default").props.disabled, false);
+  const reset = findNode(tree, (node) => node.props?.["aria-label"]
+    === "Reset interval minutes to default");
+  assert.equal(reset.props.disabled, false);
+  await reset.props.onClick();
+  assert.deepEqual(actions.at(-1), ["reset", { names: ["interval_minutes"] }]);
+  interval.props.onChange({ target: { valueAsNumber: 15 } });
+  polling = { ...pollingFixture, enabled: false, paused: true };
+  assert.equal(button("Poll now").props.disabled, false);
+  button("Poll now").props.onClick();
+  assert.deepEqual(actions.at(-1), ["run"]);
+  controlState.runPending = true;
+  assert.equal(button("Poll now").props.disabled, true);
+  assert.equal(button("Pause polling").props.disabled, false);
+  button("Pause polling").props.onClick();
+  assert.deepEqual(actions.at(-1), ["save", { polling_enabled: false }]);
+  tree = render();
+  const autoAudit = findNode(tree, (node) => node.props?.type === "checkbox");
+  assert.equal(autoAudit.props.checked, true);
+  assert.equal(autoAudit.props.disabled, false);
+  autoAudit.props.onChange({ target: { checked: false } });
+  assert.deepEqual(actions.at(-1), ["save", { auto_audit_enabled: false }]);
+  assert.equal(button("Save").props.disabled, false);
+  assert.equal(button("Reset all to default").props.disabled, false);
+  assert.equal(findNode(tree, (node) => node.props?.["aria-label"]
+    === "Reset interval minutes to default").props.disabled, false);
+  for (const input of [1440, 30, 50]) {
+    assert.equal(findNode(tree, (node) => node.props?.type === "number"
+      && node.props.max === input).props.disabled, false);
+  }
+  assert.match(renderToStaticMarkup(tree), /Polling now/);
+  controlState.runPending = false;
+  polling.running = true;
+  assert.equal(button("Poll now").props.disabled, true);
+  assert.match(renderToStaticMarkup(render()), /Polling now/);
+  for (const [runMode, reason, message] of [
+    ["live", "archive_disabled", "Enable archive reads to poll."],
+    ["live", "test_mode", "Polling is off in test mode."],
+    ["test", null, "Polling is off in test mode."],
+  ]) {
+    polling = { ...pollingFixture, reason };
+    mode = runMode;
+    assert.equal(button("Poll now").props.disabled, true);
+    const schedule = button("Polling unavailable");
+    assert.equal(schedule.props.disabled, true);
+    assert.equal(schedule.props["aria-pressed"], false);
+    tree = render();
+    const explanation = findNode(tree, (node) => node.props?.id
+      === schedule.props["aria-describedby"]);
+    assert.equal(explanation.props.children, message);
+    assert.equal(findNode(tree, (node) => node.props?.type === "number"
+      && node.props.max === 1440).props.disabled, false);
+    assert.equal(button("Save").props.disabled, false);
+  }
+  api.epoch++;
+  tree = render();
+  assert.match(renderToStaticMarkup(tree), /From .env/);
+  assert.equal(button("Reset all to default").props.disabled, true);
+  assert.equal(findNode(tree, (node) => node.props?.type === "number"
+    && node.props.max === 1440).props.value, 5);
+  runtime.unmount();
 });

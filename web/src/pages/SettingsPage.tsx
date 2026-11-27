@@ -7,6 +7,7 @@ import { ConnectionDialog } from "../dialogs/ConnectionDialog";
 import { FactsGrid } from "../components/FactsGrid";
 import { ErrorState } from "../components/ErrorState";
 import { Loading } from "../components/Loading";
+import { PollingControls } from "../features/polling/PollingControls";
 import { WorkflowView } from "../features/workflow/WorkflowView";
 
 const archiveLabels: Record<ArchiveState, string> = {
@@ -123,6 +124,7 @@ export function SettingsPage() {
           ]}
         />
       )}
+      {status && <PollingControls polling={status.polling} mode={status.mode} />}
       {status && status.polling.history.length > 0 && (
         <section className="ruled-section" aria-labelledby="sync-history-title">
           <h2 id="sync-history-title">Sync history</h2>

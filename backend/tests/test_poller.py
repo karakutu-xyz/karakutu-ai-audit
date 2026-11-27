@@ -92,7 +92,11 @@ async def test_register_only_and_status_and_windows(tmp_path):
         assert status == {"enabled": True, "interval_minutes": 5, "auto_audit_enabled": False,
                           "auto_audit_max_per_poll": 5, "last": cycle,
                           "lookback_days": 7, "last_success_at": stamp.isoformat(),
-                          "history": [{**cycle, "updated": 0}]}
+                          "history": [{**cycle, "updated": 0}],
+                          "polling_enabled": True, "paused": False, "running": False,
+                          "reason": None,
+                          "next_poll_at": (stamp + timedelta(minutes=5)).isoformat(),
+                          "source": {name: "env" for name in poller.controls.defaults}}
         stamp += timedelta(minutes=5)
         assert (await poller.run_cycle())["new"] == 0
         assert archive.windows[-1][0] == int((stamp - timedelta(days=2)).timestamp())
@@ -226,6 +230,7 @@ async def test_cycle_crash_recovers_on_next_interval(tmp_path, monkeypatch, capl
             if len(delays) == 3:
                 raise asyncio.CancelledError
 
+        poller.clock = lambda: datetime(2026, 11, 20, tzinfo=timezone.utc)
         poller.sleep = advance
         with pytest.raises(asyncio.CancelledError):
             await poller.run()
@@ -235,7 +240,7 @@ async def test_cycle_crash_recovers_on_next_interval(tmp_path, monkeypatch, capl
 
 
 @pytest.mark.parametrize("case", ["off", "missing", "disabled", "test"])
-async def test_no_task_when_off_or_archive_unavailable_or_test_mode(tmp_path, case):
+async def test_dormant_task_when_off_and_no_task_when_unavailable(tmp_path, case):
     engine = FakeEngine()
     engine.archive = Archive() if case != "missing" else None
     if case == "disabled":
@@ -245,11 +250,17 @@ async def test_no_task_when_off_or_archive_unavailable_or_test_mode(tmp_path, ca
                       auto_audit_enabled=True)
     app = create_app(config, engine)
     async with app.router.lifespan_context(app):
-        assert app.state.tasks == set()
-        assert app.state.poller.status() == {
+        assert len(app.state.tasks) == (1 if case == "off" else 0)
+        poller = app.state.poller
+        assert poller.status() == {
             "enabled": False, "interval_minutes": 0, "auto_audit_enabled": False,
             "auto_audit_max_per_poll": 5, "last": None,
-            "lookback_days": 7, "history": [], "last_success_at": None}
+            "lookback_days": 7, "history": [], "last_success_at": None,
+            "polling_enabled": case != "off", "paused": case == "off", "running": False,
+            "next_poll_at": None,
+            "reason": ("test_mode" if case == "test" else
+                       None if case == "off" else "archive_disabled"),
+            "source": {name: "env" for name in poller.controls.defaults}}
 
 
 async def test_lifespan_cancels_polling_task_without_startup_wait(tmp_path):
@@ -923,6 +934,7 @@ async def test_archive_backoff_doubles_caps_and_resets(tmp_path):
             if len(delays) == 9:
                 raise asyncio.CancelledError
 
+        poller.clock = lambda: datetime(2026, 11, 20, tzinfo=timezone.utc)
         poller.sleep = advance
         with pytest.raises(asyncio.CancelledError):
             await poller.run()

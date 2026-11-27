@@ -35,6 +35,7 @@ from audit.schemas import (
     ArticleDetail, ArticleList, ArticleImported, ArticleStatus,
     AuditResult, Health, Reaction, ReactionInput, RunDetail, RunInput, RunList,
     SafeErrorResponse, ServiceStatus,
+    PollSettings, PollSettingsInput, PollSettingsReset, PollHistoryCycle,
     WorkflowSnapshot, PromptList, PromptDetail, PromptVersion, PromptVersionInput,
     ModelList, ModelStepInput, ModelAssigned, QueueState, QueueCancelled,
     PromptActivateInput, PromptAuthorInput, PromptActivated, PromptDiff,
@@ -288,7 +289,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
             app.state.poller = ArchivePoller(
                 settings, app.state, archive_client(), fill_archive_text, submit)
             await app.state.poller.load_state()
-            if app.state.poller.enabled:
+            if app.state.poller.can_run:
                 enable_cycle_log()
                 task = asyncio.create_task(app.state.poller.run())
                 app.state.tasks.add(task)
@@ -357,6 +358,28 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
                 "archive": archive_state(),
                 "polling": app.state.poller.status(),
                 "writes_enabled": False, "prompts_editable": bool(settings.api_auth_token)}
+
+    @app.get("/api/polling/settings", response_model=PollSettings)
+    async def polling_settings():
+        return app.state.poller.controls.describe()
+
+    @app.put("/api/polling/settings", response_model=PollSettings)
+    async def update_polling_settings(body: PollSettingsInput):
+        return await app.state.poller.update_controls(body.model_dump(exclude_unset=True))
+
+    @app.post("/api/polling/settings/reset", response_model=PollSettings)
+    async def reset_polling_settings(body: PollSettingsReset | None = None):
+        return await app.state.poller.update_controls({}, reset=body.names if body else [])
+
+    @app.post("/api/polling/run", response_model=PollHistoryCycle)
+    async def poll_now():
+        poller = app.state.poller
+        if not poller.can_run:
+            return JSONResponse(status_code=409,
+                                content={"error": {"code": poller.unavailable_reason}})
+        if poller.cycle_lock.locked():
+            return JSONResponse(status_code=409, content={"error": {"code": "poll_running"}})
+        return await poller.run_cycle(manual=True)
 
     def current_overrides(assignments=None):
         return {**settings.model_overrides(), **(app.state.model_assignments if assignments is None else assignments)}

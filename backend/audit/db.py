@@ -147,6 +147,12 @@ class ArticleRow(Base):
     updated_at: Mapped[str] = mapped_column(String(40))
 
 
+class PollSettingOverride(Base):
+    __tablename__ = "poll_setting_overrides"
+    name: Mapped[str] = mapped_column(String(40), primary_key=True)
+    value: Mapped[Any] = mapped_column(JSON_VALUE)
+
+
 class PollState(Base):
     __tablename__ = "poll_state"
     singleton: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -399,9 +405,13 @@ def _poll_sync(connection: Connection):
         connection.exec_driver_sql("ALTER TABLE articles ADD COLUMN detected_at VARCHAR(40)")
 
 
+def _poll_controls(connection: Connection):
+    PollSettingOverride.__table__.create(connection, checkfirst=True)
+
+
 MIGRATIONS: list[tuple[int, Callable[[Connection], None]]] = [
     (1, _baseline), (2, _prompt_tables), (3, _model_assignments), (4, _articles),
-    (5, _portable_storage), (6, _poll_sync),
+    (5, _portable_storage), (6, _poll_sync), (7, _poll_controls),
 ]
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 # Insertion order defines "newest", even when timestamps tie or clocks change.
@@ -483,6 +493,21 @@ class Store:
         except Exception:
             self.engine.dispose()
             raise
+
+    def poll_overrides(self) -> dict:
+        with Session(self.engine) as session:
+            return {row.name: row.value for row in session.scalars(select(PollSettingOverride))}
+
+    def update_poll_overrides(self, values: dict, reset: list[str] | None = None):
+        with Session(self.engine) as session, session.begin():
+            begin_write(session.connection())
+            if reset is not None:
+                statement = delete(PollSettingOverride)
+                if reset:
+                    statement = statement.where(PollSettingOverride.name.in_(reset))
+                session.execute(statement)
+            for name, value in values.items():
+                session.merge(PollSettingOverride(name=name, value=value))
 
     def poll_status(self) -> dict:
         with Session(self.engine) as session:
