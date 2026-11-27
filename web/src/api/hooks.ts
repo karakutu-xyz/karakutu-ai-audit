@@ -305,24 +305,33 @@ export function usePollingSettings() {
 
 export function usePollingControl(onSettings: (settings: PollSettings) => void) {
   const { token, epoch, retryStatus } = useApi();
-  const controller = useRef<AbortController | null>(null);
-  const [action, setAction] = useState<"save" | "reset" | "run" | null>(null);
+  const settingsController = useRef<AbortController | null>(null);
+  const pollController = useRef<AbortController | null>(null);
+  const [action, setAction] = useState<"save" | "reset" | null>(null);
+  const [runPending, setRunPending] = useState(false);
   const busy = action !== null;
   const [error, setError] = useState("");
   useEffect(() => {
     setAction(null);
+    setRunPending(false);
     setError("");
-    return () => controller.current?.abort();
+    return () => {
+      settingsController.current?.abort();
+      pollController.current?.abort();
+    };
   }, [token, epoch]);
 
   async function mutate(
     action: "save" | "reset" | "run",
     values?: Partial<PollValues> | { names: string[] },
   ) {
+    // Manual cycles can be slow; keep settings changes independently available.
+    const controller = action === "run" ? pollController : settingsController;
     if (controller.current && !controller.current.signal.aborted) return false;
     const active = new AbortController();
     controller.current = active;
-    setAction(action);
+    if (action === "run") setRunPending(true);
+    else setAction(action);
     setError("");
     const path = action === "save" ? "settings"
       : action === "reset" ? "settings/reset" : "run";
@@ -340,9 +349,12 @@ export function usePollingControl(onSettings: (settings: PollSettings) => void) 
       if (!active.signal.aborted) setError(pollingError(error));
       return false;
     } finally {
-      if (!active.signal.aborted) setAction(null);
+      if (!active.signal.aborted) {
+        if (action === "run") setRunPending(false);
+        else setAction(null);
+      }
       if (controller.current === active) controller.current = null;
     }
   }
-  return { mutate, busy, error, action };
+  return { mutate, busy, error, action, runPending };
 }

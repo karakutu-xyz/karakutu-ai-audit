@@ -33,11 +33,13 @@ export function PollingControls({ polling, mode }: {
   });
   const local = saved?.token === token && saved.epoch === epoch ? saved.data : null;
   const data = local ?? settings.data;
-  const running = polling.running || control.action === "run";
-  const reason = mode === "test" ? "Polling is off in test mode."
+  const running = polling.running || control.runPending;
+  const testMode = mode === "test" || polling.reason === "test_mode";
+  const unavailable = testMode || polling.reason === "archive_disabled";
+  const reason = testMode ? "Polling is off in test mode."
     : polling.reason === "archive_disabled" ? "Enable archive reads to poll."
     : running ? "An archive poll is already running." : "";
-  const state = mode === "test" ? "Off in test mode"
+  const state = testMode ? "Off in test mode"
     : polling.reason === "archive_disabled" ? "Off · archive reads disabled"
     : polling.paused ? "Paused" : "Running";
 
@@ -78,11 +80,14 @@ export function PollingControls({ polling, mode }: {
       <div className="poll-settings-grid">
         <div>
           <button type="button" className="button secondary"
-            aria-pressed={data.polling_enabled.value} disabled={control.busy}
+            aria-pressed={!unavailable && data.polling_enabled.value}
+            disabled={control.busy || unavailable}
+            aria-describedby={unavailable ? "poll-now-reason" : undefined}
             onClick={() => void control.mutate("save", {
               polling_enabled: !data.polling_enabled.value,
             })}>
-            {data.polling_enabled.value ? "Pause polling" : "Resume polling"}
+            {unavailable ? "Polling unavailable"
+              : data.polling_enabled.value ? "Pause polling" : "Resume polling"}
           </button>
           {marker("polling_enabled")}
         </div>
@@ -112,14 +117,15 @@ export function PollingControls({ polling, mode }: {
       <div className="run-row-controls">
         <button className="button" disabled={control.busy
           || Object.keys(draft).length === 0}>Save</button>
-        <button type="button" className="button secondary" disabled={control.busy}
+        <button type="button" className="button secondary" disabled={control.busy
+          || !Object.values(data).some((setting) => setting.source === "ui")}
           onClick={async () => {
             if (await control.mutate("reset", { names: [] })) setDraft({});
           }}>
           Reset all to default
         </button>
         <button type="button" className="button secondary"
-          disabled={control.busy || !!reason} aria-describedby="poll-now-reason"
+          disabled={!!reason} aria-describedby="poll-now-reason"
           onClick={() => void control.mutate("run")}>
           Poll now
         </button>

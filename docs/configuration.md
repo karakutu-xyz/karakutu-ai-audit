@@ -101,6 +101,11 @@ Settings to return to the current environment defaults. `POLL_INTERVAL_MINUTES=0
 sets `polling_enabled=false` by default, with 5 minutes as the usable interval
 when resumed unless the interval is also overridden. Pausing leaves queued and
 running audits alone. Test mode never polls, including with saved UI overrides.
+While Poll now is pending, settings saves, pause/resume, auto-audit changes and
+resets remain available; a second manual cycle is blocked. When test mode or
+disabled archive reads prevent polling, the schedule toggle is disabled with an
+explanation, while other values can still be edited and saved. Reset all is
+available only when at least one setting has a saved UI override.
 
 ## Secrets
 

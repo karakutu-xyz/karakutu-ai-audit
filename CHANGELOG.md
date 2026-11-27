@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep polling settings usable during a slow Poll now request, including pause and auto-audit off. Explain the disabled schedule toggle when polling is unavailable, and disable Reset all when there are no saved UI overrides.
+
 - Control archive polling and auto-audits in Settings without restarting: pause or resume, change intervals, lookback and batch size, reset database-persisted overrides to environment defaults, or poll once while paused. Test mode keeps polling off.
 
 - Bound archive sync with `POLL_LOOKBACK_DAYS` (default 7 days), persist its position across restarts and show the last 20 cycles with update counts in Settings and the last sync on Articles. Incomplete listings now explain page failures, malformed pages or the page cap, retry failed pages once and back off up to one hour; Articles lists newest archive detections first, falling back to local registration time.
